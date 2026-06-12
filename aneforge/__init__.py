@@ -73,7 +73,12 @@ state round-trip remains). See examples/train_mnist_mlp.py.
 Layout: graph.py (Tensor + ops), _compile.py (per-op emit registry + compile),
 _blob.py (weight packing), autograd.py (on-ANE autograd), models.py (pretrained loaders).
 """
-__version__ = "0.1.0"
+try:
+    from ._version import __version__            # written by hatch-vcs at build time
+except ImportError:                              # raw source checkout, not yet built
+    from importlib.metadata import version, PackageNotFoundError
+    try: __version__ = version("aneforge")
+    except PackageNotFoundError: __version__ = "0+unknown"
 
 from ._op_catalog import (OP_CATALOG, op_info, device_status, is_native, ops_on,
                           min_native_family, walled_everywhere, categories)

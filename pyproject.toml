@@ -1,11 +1,11 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "aneforge"
-# Single-sourced: the version lives in aneforge/__init__.py (__version__),
-# read by hatchling via [tool.hatch.version] below.
+# The version is derived from the git tag at build time (hatch-vcs); cut a release
+# by tagging vX.Y.Z. aneforge.__version__ reads it back from the installed metadata.
 dynamic = ["version"]
 description = "Direct Apple Neural Engine (ANE) backend. A CoreML-free Python frontend that compiles operator graphs into a single fused e5rt program and dispatches them to the ANE."
 readme = "README.md"
@@ -76,7 +76,10 @@ Documentation = "https://aneforge.readthedocs.io"
 Issues = "https://github.com/sbryngelson/ANEForge/issues"
 
 [tool.hatch.version]
-path = "aneforge/__init__.py"
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "aneforge/_version.py"
 
 [tool.hatch.build.targets.wheel]
 # Ship the aneforge package and everything tracked under it — including the e5rt

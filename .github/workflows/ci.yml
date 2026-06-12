@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # hatch-vcs derives the version from tags
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -35,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # hatch-vcs derives the version from tags
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -51,6 +55,8 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # hatch-vcs derives the version from tags
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
@@ -66,6 +72,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # hatch-vcs derives the version from tags
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -78,6 +86,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # hatch-vcs derives the version from tags
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -89,6 +99,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # hatch-vcs derives the version from tags
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
