@@ -1,6 +1,8 @@
 # ANEForge
 
 [![CI](https://github.com/sbryngelson/ANEForge/actions/workflows/ci.yml/badge.svg)](https://github.com/sbryngelson/ANEForge/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/aneforge?color=2e6b69)](https://pypi.org/project/aneforge/)
+[![Docs](https://readthedocs.org/projects/aneforge/badge/?version=latest)](https://aneforge.readthedocs.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e6b69.svg)](LICENSE)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-macOS%2014%2B-b84310.svg)](#install)
 
