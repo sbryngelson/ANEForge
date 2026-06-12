@@ -1,12 +1,13 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "ANEForge: a direct, CoreML-free Apple Neural Engine backend"
+title: "ANEForge: Python for direct computation on the Apple Neural Engine"
 type: software
 authors:
   - family-names: Bryngelson
     given-names: "Spencer H."
     affiliation: "Georgia Institute of Technology"
 repository-code: "https://github.com/sbryngelson/ANEForge"
+doi: 10.5281/zenodo.20672609
 license: MIT
 version: "0.1.0"
 date-released: "2026-06-10"
