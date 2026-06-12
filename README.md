@@ -57,25 +57,18 @@ into one program and reused across calls, near a 70 us dispatch floor.
 
 ## Install
 
-Apple Silicon Mac, macOS 14+, Xcode command-line tools, Python 3.10+. ANEForge is
-not on PyPI: the dispatch dylib links Apple frameworks and builds on your Mac, so
-install from source.
+Apple Silicon Mac, macOS 14+, Xcode command-line tools, Python 3.10+.
 
 ```sh
 git clone https://github.com/sbryngelson/ANEForge.git
 cd ANEForge
-
-# 1. Install the package (core dependency is just NumPy).
-pip install -e .
-
-# 2. Build the e5rt dispatch dylib (links Apple frameworks, so it builds on your Mac).
-#    Loaded lazily on first dispatch; not tracked, so re-run after a clone or a pull
-#    that touches aneforge/_lib/ane_e5rt_dispatch.mm.
-sh aneforge/_lib/build.sh
-
-# 3. Compile and run each op on the ANE.
-PYTHONPATH=. python3 tests/op_smoketest.py
+pip install -e .                              # core dependency is just NumPy
+PYTHONPATH=. python3 tests/op_smoketest.py    # compile + run each op on the ANE
 ```
+
+The `e5rt` dispatch shim links Apple frameworks, so it compiles from source on your
+Mac. That happens automatically the first time you dispatch to the ANE; build it
+ahead of time with `python -m aneforge.build` if you prefer.
 
 Optional extras: `pip install -e ".[models]"` (torch / torchvision / transformers
 for the pretrained loaders) and `".[bench]"` (mlx / torch for the GPU-comparison

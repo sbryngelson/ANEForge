@@ -72,6 +72,8 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/sbryngelson/ANEForge"
 Repository = "https://github.com/sbryngelson/ANEForge"
+Documentation = "https://aneforge.readthedocs.io"
+Issues = "https://github.com/sbryngelson/ANEForge/issues"
 
 [tool.hatch.version]
 path = "aneforge/__init__.py"

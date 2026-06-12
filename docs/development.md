@@ -5,19 +5,23 @@ How to build, test, and extend the `aneforge` package.
 ## Building
 
 The package is an editable install with a numpy-only core. The one native
-artifact it needs at runtime is the e5rt dispatch shim, built once with
+artifact it needs at runtime is the e5rt dispatch shim, compiled with
 `xcrun clang++` from the source that ships in the package.
 
 ```sh
 pip install -e .                 # core: numpy only
-sh aneforge/_lib/build.sh        # build aneforge/_lib/libane_e5rt_dispatch.dylib
+python -m aneforge.build         # build aneforge/_lib/libane_e5rt_dispatch.dylib (optional)
 ```
 
-`build.sh` compiles `aneforge/_lib/ane_e5rt_dispatch.mm` against Apple's
-frameworks, so it must run on the target Mac. The resulting `.dylib` is a build
-artifact (not tracked); re-run `build.sh` after a clone and after any pull that
-touches `ane_e5rt_dispatch.mm`. The dylib loads lazily, so `import aneforge` works
-without it; compiling or dispatching to the ANE raises a build hint until it is built.
+The shim compiles `aneforge/_lib/ane_e5rt_dispatch.mm` against Apple's frameworks,
+so it must build on the target Mac. It builds automatically the first time you
+dispatch to the ANE (cached next to the source, or in `~/.cache/aneforge/<version>/`
+if the package tree is read-only); `python -m aneforge.build` does it ahead of time,
+and `sh aneforge/_lib/build.sh` still works for an in-tree build. The resulting
+`.dylib` is a build artifact (not tracked); it rebuilds after a pull that touches
+`ane_e5rt_dispatch.mm`. The dylib loads lazily, so `import aneforge` works without
+it; only compiling or dispatching to the ANE needs it. Set `ANEFORGE_NO_AUTOBUILD=1`
+to require an explicit build.
 
 ## Python environment
 

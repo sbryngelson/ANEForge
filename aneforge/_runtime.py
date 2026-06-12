@@ -25,12 +25,18 @@ _DYLIB = "libane_e5rt_dispatch.dylib"
 
 
 def _find_dylib() -> Path:
-    """Locate libane_e5rt_dispatch.dylib.
+    """Locate libane_e5rt_dispatch.dylib, building it on first use if needed.
 
-    The package ships its own copy in `aneforge/_lib/` (self-contained, built by
-    `aneforge/_lib/build.sh`); that is the canonical location. As a fallback we
-    also honor a legacy out-of-tree build at `<repo>/ane_build/lib/` so existing
-    checkouts keep working."""
+    Lookup order: an explicit ``ANEFORGE_DYLIB`` override, the package's own
+    `aneforge/_lib/` copy (the canonical location, built by `aneforge/_lib/build.sh`
+    or on demand), a legacy out-of-tree `<repo>/ane_build/lib/` build, then the
+    per-version build cache. If none exists and we are on macOS, the dylib is
+    compiled from the packaged source and cached, so a plain `pip install aneforge`
+    works on first dispatch. Set ``ANEFORGE_NO_AUTOBUILD=1`` to require an explicit
+    build (`python -m aneforge.build`) instead."""
+    override = os.environ.get("ANEFORGE_DYLIB")
+    if override and Path(override).expanduser().exists():
+        return Path(override).expanduser()
     here = Path(__file__).resolve()
     bundled = here.parent / "_lib" / _DYLIB
     if bundled.exists():
@@ -39,10 +45,16 @@ def _find_dylib() -> Path:
         candidate = here.parents[up] / "ane_build" / "lib" / _DYLIB
         if candidate.exists():
             return candidate
-    raise FileNotFoundError(
-        f"{_DYLIB} not built. Build it with:\n"
-        "  sh aneforge/_lib/build.sh"
-    )
+    from .build import _cache_dir, build_dylib
+    cached = _cache_dir() / _DYLIB
+    if cached.exists():
+        return cached
+    if os.environ.get("ANEFORGE_NO_AUTOBUILD"):
+        raise FileNotFoundError(
+            f"{_DYLIB} not built. Build it with:\n"
+            "  python -m aneforge.build      # or: sh aneforge/_lib/build.sh"
+        )
+    return build_dylib()
 
 
 class _Dylib:
@@ -67,7 +79,7 @@ class _Dylib:
         except AttributeError as e:
             raise RuntimeError(
                 f"{_DYLIB} is stale (missing symbol: {e}). Rebuild it with:\n"
-                "  sh aneforge/_lib/build.sh"
+                "  python -m aneforge.build      # or: sh aneforge/_lib/build.sh"
             ) from e
         self._lib = lib
         return lib
