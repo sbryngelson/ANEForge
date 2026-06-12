@@ -60,19 +60,24 @@ into one program and reused across calls, near a 70 us dispatch floor.
 Apple Silicon Mac, macOS 14+, Xcode command-line tools, Python 3.10+.
 
 ```sh
-git clone https://github.com/sbryngelson/ANEForge.git
-cd ANEForge
-pip install -e .                              # core dependency is just NumPy
-PYTHONPATH=. python3 tests/op_smoketest.py    # compile + run each op on the ANE
+pip install aneforge
 ```
 
 The `e5rt` dispatch shim links Apple frameworks, so it compiles from source on your
-Mac. That happens automatically the first time you dispatch to the ANE; build it
-ahead of time with `python -m aneforge.build` if you prefer.
+Mac the first time you dispatch to the ANE (or ahead of time with
+`python -m aneforge.build`). Optional extras: `pip install "aneforge[models]"` for
+the pretrained loaders (torch / torchvision / transformers).
 
-Optional extras: `pip install -e ".[models]"` (torch / torchvision / transformers
-for the pretrained loaders) and `".[bench]"` (mlx / torch for the GPU-comparison
-tools). Then browse [`examples/`](examples/), starting with
+For the examples, tests, and benchmarks, work from a checkout:
+
+```sh
+git clone https://github.com/sbryngelson/ANEForge.git
+cd ANEForge
+pip install -e ".[dev]"
+PYTHONPATH=. python3 tests/op_smoketest.py    # compile + run each op on the ANE
+```
+
+Then browse [`examples/`](examples/), starting with
 [`examples/quickstart.py`](examples/quickstart.py).
 
 ## How it compares
