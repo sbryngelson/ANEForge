@@ -1,0 +1,35 @@
+#!/bin/sh
+# Pre-commit gate for ANEForge: the off-hardware CI checks, run before every commit so
+# broken code cannot land. Mirrors .github/workflows/ci.yml's lint + build jobs:
+#   1. ruff check          (lint)
+#   2. compileall aneforge (every module byte-compiles)
+# The on-device corpus (tests/run_corpus.py) and pytest suites need ANE hardware, so they
+# are NOT run here (they gate separately; see docs development.md).
+#
+# Enable once per clone (git does not auto-trust committed hooks):
+#   git config core.hooksPath .githooks
+# Bypass a single commit with:  git commit --no-verify
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+if [ -x .venv/bin/ruff ]; then RUFF=.venv/bin/ruff
+elif command -v ruff >/dev/null 2>&1; then RUFF=ruff
+else echo "pre-commit: ruff not found - run: pip install -e '.[dev]'" >&2; exit 1; fi
+
+if [ -x .venv/bin/python ]; then PY=.venv/bin/python
+elif command -v python3 >/dev/null 2>&1; then PY=python3
+else echo "pre-commit: python3 not found" >&2; exit 1; fi
+
+echo "pre-commit: ruff check"
+if ! "$RUFF" check; then
+    echo "pre-commit: BLOCKED - ruff check failed. Fix (or '$RUFF check --fix'), or bypass with 'git commit --no-verify'." >&2
+    exit 1
+fi
+
+echo "pre-commit: compileall aneforge"
+if ! "$PY" -m compileall -q aneforge; then
+    echo "pre-commit: BLOCKED - a module in aneforge/ failed to byte-compile." >&2
+    exit 1
+fi
+
+echo "pre-commit: OK"

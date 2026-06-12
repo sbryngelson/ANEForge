@@ -1,0 +1,158 @@
+{
+  "meta": {
+    "warmup": 8,
+    "reps": 30,
+    "seed": 0,
+    "weights": "deterministic random (no torch on host); latency+footprint faithful, int4 accuracy-gate pessimistic",
+    "host_python": "3.12.13"
+  },
+  "models": {
+    "resnet18": {
+      "kind": "conv",
+      "n_ops": 49,
+      "fp16_ms": 0.3449375508353114,
+      "variants": {
+        "int4": {
+          "compress": "int4",
+          "compress_atol": 0.05,
+          "ms": 0.34847960341721773,
+          "speedup": 0.9898356961292062,
+          "cosine": 0.9999745827156996,
+          "weights_bytes": 22862240,
+          "size_frac": 0.9781819202456802,
+          "encoding": {
+            "int4_lut": 0,
+            "sparse": 0,
+            "int8": 1,
+            "fp16": 41
+          }
+        },
+        "int4_forced": {
+          "compress": "int4",
+          "compress_atol": 0.3,
+          "ms": 0.30591641552746296,
+          "speedup": 1.1275548918830263,
+          "cosine": 0.9808571967245334,
+          "weights_bytes": 5869840,
+          "size_frac": 0.2511464914520582,
+          "encoding": {
+            "int4_lut": 20,
+            "sparse": 0,
+            "int8": 0,
+            "fp16": 62
+          }
+        },
+        "auto": {
+          "compress": "auto",
+          "compress_atol": 0.05,
+          "ms": 0.3412918886169791,
+          "speedup": 1.010681948033121,
+          "cosine": 0.9999745827156996,
+          "weights_bytes": 22862240,
+          "size_frac": 0.9781819202456802,
+          "encoding": {
+            "int4_lut": 0,
+            "sparse": 0,
+            "int8": 1,
+            "fp16": 41
+          }
+        }
+      },
+      "fp16_weights_bytes": 23372176
+    },
+    "vit_b16": {
+      "kind": "matmul+conv",
+      "n_ops": 299,
+      "fp16_ms": 21.361041464842856,
+      "variants": {
+        "int4": {
+          "compress": "int4",
+          "compress_atol": 0.05,
+          "ms": 20.99008345976472,
+          "speedup": 1.0176730123912663,
+          "cosine": 0.9998117870987632,
+          "weights_bytes": 87314151,
+          "size_frac": 0.5051604918269311,
+          "encoding": {
+            "int4_lut": 0,
+            "sparse": 0,
+            "int8": 74,
+            "fp16": 125
+          }
+        },
+        "int4_forced": {
+          "error": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/int4bench_vit_b16_m1kfppb4/model.mil, mask=0x4). See stderr for the a"
+        },
+        "auto": {
+          "compress": "auto",
+          "compress_atol": 0.05,
+          "ms": 20.99989599082619,
+          "speedup": 1.0171974887006314,
+          "cosine": 0.9998112883127027,
+          "weights_bytes": 87313979,
+          "size_frac": 0.5051594967121233,
+          "encoding": {
+            "int4_lut": 0,
+            "sparse": 1,
+            "int8": 73,
+            "fp16": 127
+          }
+        }
+      },
+      "fp16_weights_bytes": 172844378
+    },
+    "minilm_l6": {
+      "kind": "matmul",
+      "n_ops": 144,
+      "fp16_ms": 1.0315000545233488,
+      "variants": {
+        "int4": {
+          "compress": "int4",
+          "compress_atol": 0.05,
+          "ms": 0.9903330355882645,
+          "speedup": 1.041568863660729,
+          "cosine": 0.9998970617470312,
+          "weights_bytes": 10726720,
+          "size_frac": 0.5036071740848355,
+          "encoding": {
+            "int4_lut": 0,
+            "sparse": 0,
+            "int8": 36,
+            "fp16": 60
+          }
+        },
+        "int4_forced": {
+          "compress": "int4",
+          "compress_atol": 0.3,
+          "ms": 0.9991665137931705,
+          "speedup": 1.0323605127712192,
+          "cosine": 0.9795099398741681,
+          "weights_bytes": 5377984,
+          "size_frac": 0.2524901670327425,
+          "encoding": {
+            "int4_lut": 36,
+            "sparse": 0,
+            "int8": 0,
+            "fp16": 132
+          }
+        },
+        "auto": {
+          "compress": "auto",
+          "compress_atol": 0.05,
+          "ms": 0.9919379372149706,
+          "speedup": 1.0398836618946699,
+          "cosine": 0.9998970617470312,
+          "weights_bytes": 10726720,
+          "size_frac": 0.5036071740848355,
+          "encoding": {
+            "int4_lut": 0,
+            "sparse": 0,
+            "int8": 36,
+            "fp16": 60
+          }
+        }
+      },
+      "fp16_weights_bytes": 21299776
+    }
+  }
+}

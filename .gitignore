@@ -1,0 +1,111 @@
+# =====================================================================
+# ANEForge .gitignore
+#
+# Source only. Everything generated (compiled binaries, traces, model
+# dumps, runtime sweeps) stays local and is not tracked.
+# =====================================================================
+
+# Generated artifacts: runtime outputs, traces, model dumps.
+ane_artifacts/
+
+# Build outputs: per-machine compiled invoker/probe binaries, dSYM bundles, cache.
+# Invokers rebuild from aneforge/_invokers/; the dispatch dylib from aneforge/_lib/.
+ane_build/
+
+# The package's bundled dispatch dylib is built on the target Mac (sh
+# aneforge/_lib/build.sh); we ship the source, not the per-machine binary.
+aneforge/_lib/*.dylib
+
+# Local RE/paper test tooling (fuzzers, capability census + its sweep data).
+# Untracked on purpose: not user-facing proof, not collected by pytest, not shipped.
+utils/
+
+# Python build artifacts (python -m build / setuptools).
+build/
+dist/
+
+# =====================================================================
+# macOS / OS junk
+# =====================================================================
+.DS_Store
+._.DS_Store
+**/.DS_Store
+
+# =====================================================================
+# Python
+# =====================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.venv/
+venv/
+.venv/
+
+# =====================================================================
+# Editors
+# =====================================================================
+*.swp
+*.swo
+*.swn
+.vscode/
+.idea/
+.cursor/
+
+# =====================================================================
+# Local scratch / temp output the fuzzer or probes may drop into the repo
+# =====================================================================
+/tmp_*/
+/scratch_*/
+*.tmp
+
+# =====================================================================
+# Local AI-tool session files
+# =====================================================================
+.codex/
+.claude/
+
+# =====================================================================
+# Secrets — defensive, none expected in this tree
+# =====================================================================
+*.env
+*.env.local
+.env.*
+credentials.json
+*_credentials.json
+*.pem
+*.key
+auth.json
+
+# =====================================================================
+# Example outputs and on-disk caches (regenerated on demand)
+# =====================================================================
+.aneforge_cache/
+examples/sd15_out.png
+
+# vhs intermediate; the shipped README asset is demo.png (APNG), see demo.tape.
+docs/assets/demo.gif
+
+# LaTeX figure build artifacts
+docs/figures/*.aux
+docs/figures/*.log
+docs/figures/*.synctex.gz
+
+# Full-MNIST loader cache (fetched, never committed)
+examples/data/mnist_cache/
+
+# Debug matrix dumps from the solver probes
+.dbg_slmat/
+
+# CIFAR-10 dataset downloaded by examples/cifar_data.py (large, regenerated on demand)
+examples/data/cifar10/
+examples/data/cifar_cnn.npz
+
+# MkDocs build output
+site/

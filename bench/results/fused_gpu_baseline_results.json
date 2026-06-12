@@ -1,0 +1,301 @@
+{
+  "backends": {
+    "ane": true,
+    "mlx": true,
+    "sudo": true
+  },
+  "window_s": 6.0,
+  "idle_pkg_mW": 1171.0,
+  "idle_mW": {
+    "ane": 0.0,
+    "cpu": 1170.0,
+    "gpu": 2.0
+  },
+  "results": {
+    "layer_norm (197, 768)": {
+      "rows": [
+        {
+          "variant": "GPU default",
+          "lat_ms": 0.24791699252091348,
+          "relerr": 0.0006144672219128381,
+          "Gelem_s": 0.610268777712916,
+          "active_pkg_W": 8.4215,
+          "pkg_cv_pct": 7.6642034483910315,
+          "energy_iter_ms": 0.17850570745647015,
+          "flags": [],
+          "perf_per_W": 0.10064353595015586,
+          "perf_unit": "Gelem/s/W"
+        },
+        {
+          "variant": "GPU mx.compile",
+          "lat_ms": 0.1438750041415915,
+          "relerr": 0.0006156670418745934,
+          "Gelem_s": 1.0515794658195479,
+          "active_pkg_W": 10.5645,
+          "pkg_cv_pct": 17.790403351199664,
+          "energy_iter_ms": 0.16370978921365098,
+          "flags": [],
+          "perf_per_W": 0.08747900797364469,
+          "perf_unit": "Gelem/s/W"
+        },
+        {
+          "variant": "ANE (aneforge)",
+          "lat_ms": 0.18445801106281579,
+          "relerr": 0.0006721924948683699,
+          "Gelem_s": 0.8202191877070457,
+          "active_pkg_W": 6.5625,
+          "pkg_cv_pct": 8.036644461436879,
+          "energy_iter_ms": 0.20302268166154905,
+          "flags": [],
+          "perf_per_W": 0.11355691089659635,
+          "perf_unit": "Gelem/s/W"
+        }
+      ]
+    },
+    "gelu (197, 768)": {
+      "rows": [
+        {
+          "variant": "GPU default",
+          "lat_ms": 0.2188749931519851,
+          "relerr": 0.0003924608734059304,
+          "Gelem_s": 0.6912438822782336,
+          "active_pkg_W": 8.418,
+          "pkg_cv_pct": 5.981698480836181,
+          "energy_iter_ms": 0.17185940295586627,
+          "flags": [],
+          "perf_per_W": 0.10457917851820338,
+          "perf_unit": "Gelem/s/W"
+        },
+        {
+          "variant": "GPU mx.compile",
+          "lat_ms": 0.11908300803042948,
+          "relerr": 0.0003924608734059304,
+          "Gelem_s": 1.270508719105744,
+          "active_pkg_W": 7.766,
+          "pkg_cv_pct": 7.775566933325538,
+          "energy_iter_ms": 0.14820419418451594,
+          "flags": [],
+          "perf_per_W": 0.13145271658672902,
+          "perf_unit": "Gelem/s/W"
+        },
+        {
+          "variant": "ANE (aneforge)",
+          "lat_ms": 0.08433300536125898,
+          "relerr": 0.0024046250554411483,
+          "Gelem_s": 1.7940306923948732,
+          "active_pkg_W": 8.817,
+          "pkg_cv_pct": 4.673405744886109,
+          "energy_iter_ms": 0.10017109996899151,
+          "flags": [],
+          "perf_per_W": 0.17130268204199411,
+          "perf_unit": "Gelem/s/W"
+        }
+      ]
+    },
+    "attention (S=197,D=768,H=12)": {
+      "rows": [
+        {
+          "variant": "GPU default",
+          "lat_ms": 0.2625839988468215,
+          "relerr": 0.0012055163561300035,
+          "GFLOPs": 3994.0890404818942,
+          "active_pkg_W": 15.598,
+          "pkg_cv_pct": 8.148891575295076,
+          "energy_iter_ms": 0.3246015517955878,
+          "flags": [],
+          "perf_per_W": 207.141202236053,
+          "perf_unit": "GFLOP/s/W"
+        },
+        {
+          "variant": "GPU mx.compile",
+          "lat_ms": 0.2907499874709174,
+          "relerr": 0.0012055163561300035,
+          "GFLOPs": 3607.16738501977,
+          "active_pkg_W": 16.5585,
+          "pkg_cv_pct": 5.752580050584055,
+          "energy_iter_ms": 0.3233913216359294,
+          "flags": [],
+          "perf_per_W": 195.8558944819904,
+          "perf_unit": "GFLOP/s/W"
+        },
+        {
+          "variant": "ANE (aneforge)",
+          "lat_ms": 0.2252910053357482,
+          "relerr": 0.0016295418085633957,
+          "GFLOPs": 4655.240764881009,
+          "active_pkg_W": 9.47,
+          "pkg_cv_pct": 11.64934873557595,
+          "energy_iter_ms": 0.22793974653324617,
+          "flags": [],
+          "perf_per_W": 485.8653860527679,
+          "perf_unit": "GFLOP/s/W"
+        }
+      ]
+    },
+    "conv stack (C=256,32x32,k=3,depth=16)": {
+      "rows": [
+        {
+          "variant": "GPU default",
+          "lat_ms": 3.1439580052392557,
+          "relerr": 0.001353853523278909,
+          "GFLOPs": 5859.29682817062,
+          "active_pkg_W": 32.4555,
+          "pkg_cv_pct": 6.16388375711073,
+          "energy_iter_ms": 3.213608544465893,
+          "flags": [],
+          "perf_per_W": 176.62043842169913,
+          "perf_unit": "GFLOP/s/W"
+        },
+        {
+          "variant": "GPU mx.compile",
+          "lat_ms": 3.1307919998653233,
+          "relerr": 0.001353853523278909,
+          "GFLOPs": 5883.937089654129,
+          "active_pkg_W": 32.373,
+          "pkg_cv_pct": 0.7204317041243439,
+          "energy_iter_ms": 3.203564596926712,
+          "flags": [],
+          "perf_per_W": 177.62570032321716,
+          "perf_unit": "GFLOP/s/W"
+        },
+        {
+          "variant": "ANE (aneforge)",
+          "lat_ms": 0.7642079872312024,
+          "relerr": 0.003343217049092961,
+          "GFLOPs": 24105.195805061405,
+          "active_pkg_W": 10.5815,
+          "pkg_cv_pct": 13.588167730868584,
+          "energy_iter_ms": 0.7849370936398732,
+          "flags": [],
+          "perf_per_W": 2217.890735619744,
+          "perf_unit": "GFLOP/s/W"
+        }
+      ]
+    },
+    "stencil 5pt (256x256, steps=32)": {
+      "rows": [
+        {
+          "variant": "GPU default",
+          "lat_ms": 1.323333999607712,
+          "relerr": 0.0006584152464940523,
+          "GFLOPs": 28.52547883693021,
+          "active_pkg_W": 33.0165,
+          "pkg_cv_pct": 0.9047738306858417,
+          "energy_iter_ms": 1.3305180092696864,
+          "flags": [],
+          "perf_per_W": 0.8593114999048826,
+          "perf_unit": "GFLOP/s/W"
+        },
+        {
+          "variant": "GPU mx.compile",
+          "lat_ms": 1.2807080056518316,
+          "relerr": 0.0006584152464940523,
+          "GFLOPs": 29.474896567689786,
+          "active_pkg_W": 33.16,
+          "pkg_cv_pct": 0.9455302602834688,
+          "energy_iter_ms": 1.3264703127824267,
+          "flags": [],
+          "perf_per_W": 0.858203650459635,
+          "perf_unit": "GFLOP/s/W"
+        },
+        {
+          "variant": "ANE (aneforge)",
+          "lat_ms": 0.1323750038864091,
+          "relerr": 0.013931483142566859,
+          "GFLOPs": 285.1651361037327,
+          "active_pkg_W": 7.2815,
+          "pkg_cv_pct": 3.320135210533058,
+          "energy_iter_ms": 0.13555033913820325,
+          "flags": [],
+          "perf_per_W": 38.24555360326019,
+          "perf_unit": "GFLOP/s/W"
+        }
+      ]
+    },
+    "_verdict_summary": {
+      "layer_norm (197, 768)": {
+        "gpu_default_ms": 0.24791699252091348,
+        "gpu_fused_ms": 0.1438750041415915,
+        "fusion_speedup": 1.7231415144004536,
+        "gpu_default_W": 8.4215,
+        "gpu_fused_W": 10.5645,
+        "gpu_default_perfW": 0.10064353595015586,
+        "gpu_fused_perfW": 0.08747900797364469,
+        "ane_ms": 0.18445801106281579,
+        "ane_W": 6.5625,
+        "ane_perfW": 0.11355691089659635,
+        "ane_faster_than_gpu_default": true,
+        "ane_faster_than_gpu_fused": false,
+        "latency_verdict_flipped": true,
+        "ane_efficiency_wins_vs_default": true,
+        "ane_efficiency_wins_vs_fused": true,
+        "efficiency_verdict_flipped": false
+      },
+      "gelu (197, 768)": {
+        "gpu_default_ms": 0.2188749931519851,
+        "gpu_fused_ms": 0.11908300803042948,
+        "fusion_speedup": 1.8380035638338563,
+        "gpu_default_W": 8.418,
+        "gpu_fused_W": 7.766,
+        "gpu_default_perfW": 0.10457917851820338,
+        "gpu_fused_perfW": 0.13145271658672902,
+        "ane_ms": 0.08433300536125898,
+        "ane_W": 8.817,
+        "ane_perfW": 0.17130268204199411,
+        "ane_faster_than_gpu_default": true,
+        "ane_faster_than_gpu_fused": true,
+        "latency_verdict_flipped": false,
+        "ane_efficiency_wins_vs_default": true,
+        "ane_efficiency_wins_vs_fused": true,
+        "efficiency_verdict_flipped": false
+      },
+      "attention (S=197,D=768,H=12)": {
+        "gpu_default_ms": 0.2625839988468215,
+        "gpu_fused_ms": 0.2907499874709174,
+        "fusion_speedup": 0.903126432200059,
+        "gpu_default_W": 15.598,
+        "gpu_fused_W": 16.5585,
+        "gpu_default_perfW": 207.141202236053,
+        "gpu_fused_perfW": 195.8558944819904,
+        "ane_ms": 0.2252910053357482,
+        "ane_W": 9.47,
+        "ane_perfW": 485.8653860527679,
+        "ane_faster_than_gpu_default": true,
+        "ane_faster_than_gpu_fused": true,
+        "latency_verdict_flipped": false,
+        "ane_efficiency_wins_vs_default": true,
+        "ane_efficiency_wins_vs_fused": true,
+        "efficiency_verdict_flipped": false
+      },
+      "conv stack (C=256,32x32,k=3,depth=16)": {
+        "gpu_default_ms": 3.1439580052392557,
+        "gpu_fused_ms": 3.1307919998653233,
+        "fusion_speedup": 1.0042053273978273,
+        "gpu_default_W": 32.4555,
+        "gpu_fused_W": 32.373,
+        "gpu_default_perfW": 176.62043842169913,
+        "gpu_fused_perfW": 177.62570032321716,
+        "ane_ms": 0.7642079872312024,
+        "ane_W": 10.5815,
+        "ane_perfW": 2217.890735619744,
+        "ane_faster_than_gpu_default": true,
+        "ane_faster_than_gpu_fused": true,
+        "latency_verdict_flipped": false,
+        "ane_efficiency_wins_vs_default": true,
+        "ane_efficiency_wins_vs_fused": true,
+        "efficiency_verdict_flipped": false
+      },
+      "stencil 5pt (256x256, steps=32)": {
+        "gpu_default_ms": 1.323333999607712,
+        "gpu_fused_ms": 1.2807080056518316,
+        "fusion_speedup": 1.0332831478898934,
+        "ane_ms": 0.1323750038864091,
+        "ane_faster_than_gpu_fused": true,
+        "ane_perfW": 38.24555360326019,
+        "gpu_fused_perfW": 0.858203650459635,
+        "ane_perfW_x_over_gpu_fused": 44.564659661814204,
+        "note": "stencil measured in a separate session; active W is idle-subtracted so comparable. idle_pkg 965 mW."
+      }
+    }
+  }
+}

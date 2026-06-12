@@ -1,0 +1,89 @@
+{
+  "window_s": 6.0,
+  "idle_pkg_mW": 1083.5,
+  "results": {
+    "ResNet-18 forward (1x3x224x224)": {
+      "rows": [
+        {
+          "device": "GPU(MPS)",
+          "dtype": "fp32",
+          "lat_ms": 2.021833002800122,
+          "relerr": 6.963490992991265e-07,
+          "active_pkg_W": 15.2235,
+          "pkg_cv_pct": 10.612026333953182,
+          "mJ_per_inf": 39.073004131169554
+        },
+        {
+          "device": "GPU(MPS)",
+          "dtype": "fp16",
+          "lat_ms": 2.0331670093582943,
+          "relerr": 0.0017387605149443025,
+          "active_pkg_W": 12.8995,
+          "pkg_cv_pct": 8.524093254239032,
+          "mJ_per_inf": 35.1101890399696
+        }
+      ]
+    },
+    "MiniLM encoder (1 sentence)": {
+      "rows": [
+        {
+          "device": "GPU(MPS)",
+          "dtype": "fp32",
+          "lat_ms": 2.4122500035446137,
+          "relerr": 7.245216870655127e-07,
+          "active_pkg_W": 12.46,
+          "pkg_cv_pct": 5.7800783071924355,
+          "mJ_per_inf": 28.80036992810055
+        },
+        {
+          "device": "GPU(MPS)",
+          "dtype": "fp16",
+          "lat_ms": 1.9202499970560893,
+          "relerr": 0.0009965471845007146,
+          "active_pkg_W": 10.321,
+          "pkg_cv_pct": 3.1237803502453776,
+          "mJ_per_inf": 21.093402307892212
+        }
+      ]
+    },
+    "ViT-B/16 forward (1x3x224x224, 197 tokens)": {
+      "rows": [
+        {
+          "device": "GPU(MPS)",
+          "dtype": "fp32",
+          "lat_ms": 27.431917013018392,
+          "relerr": 2.5213450243421003e-06,
+          "active_pkg_W": 50.023,
+          "pkg_cv_pct": 0.6290051911898581,
+          "mJ_per_inf": 1382.6911140610353
+        },
+        {
+          "device": "GPU(MPS)",
+          "dtype": "fp16",
+          "lat_ms": 15.91599998937454,
+          "relerr": 0.0005541370204347201,
+          "active_pkg_W": 38.1105,
+          "pkg_cv_pct": 1.9931098845601358,
+          "mJ_per_inf": 612.3841841658975
+        }
+      ]
+    },
+    "_summary": {
+      "ResNet-18 forward (1x3x224x224)": {
+        "ane_mJ_per_inf": 2.1996127848755846,
+        "energy_ratio_vs_fp32": 17.76358293597553,
+        "energy_ratio_vs_fp16": 15.961986255665227
+      },
+      "MiniLM encoder (1 sentence)": {
+        "ane_mJ_per_inf": 2.366358346581276,
+        "energy_ratio_vs_fp32": 12.170755950682198,
+        "energy_ratio_vs_fp16": 8.913866464209134
+      },
+      "ViT-B/16 forward (1x3x224x224, 197 tokens)": {
+        "ane_mJ_per_inf": 74.66627066823953,
+        "energy_ratio_vs_fp32": 18.51828277596278,
+        "energy_ratio_vs_fp16": 8.201617392769888
+      }
+    }
+  }
+}

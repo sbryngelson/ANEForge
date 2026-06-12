@@ -1,0 +1,94 @@
+{
+  "ridge_weight_path": 71.0,
+  "ridge_activation_path": 424.0,
+  "blocks": [
+    {
+      "C": 256,
+      "HW": [
+        32,
+        32
+      ],
+      "flops": 141557760.0,
+      "n_ops": 4,
+      "act_bytes": 524288,
+      "weight_bytes": 132096,
+      "fused": {
+        "lat_ms": 0.14029200247023255,
+        "gflops": 1009.0223070986248,
+        "bytes_moved": 1180672,
+        "ai_eff": 119.8959236773634,
+        "relerr": 0.0034350957374905157
+      },
+      "standalone": {
+        "lat_ms": 0.5124570016050711,
+        "gflops": 276.23343920880325,
+        "bytes_moved": 4326400,
+        "ai_eff": 32.71952662721893,
+        "ops": [
+          {
+            "op": "conv1x1",
+            "lat_ms": 0.1336249988526106
+          },
+          {
+            "op": "group_norm",
+            "lat_ms": 0.13141600356902927
+          },
+          {
+            "op": "gelu",
+            "lat_ms": 0.12158299796283245
+          },
+          {
+            "op": "gelu2",
+            "lat_ms": 0.12583300122059882
+          }
+        ]
+      },
+      "ai_lever_crosses_weight_ridge": true,
+      "fusion_speedup": 3.652788416886453
+    },
+    {
+      "C": 512,
+      "HW": [
+        16,
+        16
+      ],
+      "flops": 137887744.0,
+      "n_ops": 4,
+      "act_bytes": 262144,
+      "weight_bytes": 526336,
+      "fused": {
+        "lat_ms": 0.3312500048195943,
+        "gflops": 416.2648814906329,
+        "bytes_moved": 1050624,
+        "ai_eff": 131.24366471734893,
+        "relerr": 0.003503866426471205
+      },
+      "standalone": {
+        "lat_ms": 0.7647079764865339,
+        "gflops": 180.31424836645223,
+        "bytes_moved": 2623488,
+        "ai_eff": 52.558938329430134,
+        "ops": [
+          {
+            "op": "conv1x1",
+            "lat_ms": 0.15995799913071096
+          },
+          {
+            "op": "group_norm",
+            "lat_ms": 0.30524999601766467
+          },
+          {
+            "op": "gelu",
+            "lat_ms": 0.14962498971726745
+          },
+          {
+            "op": "gelu2",
+            "lat_ms": 0.1498749916208908
+          }
+        ]
+      },
+      "ai_lever_crosses_weight_ridge": true,
+      "fusion_speedup": 2.308552348257353
+    }
+  ]
+}

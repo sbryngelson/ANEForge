@@ -1,0 +1,15 @@
+/* ANEForge brand palette (seagreen / rust), matching the papers' figure style. */
+:root {
+  --md-primary-fg-color:        #2e6b69;  /* seagreen */
+  --md-primary-fg-color--light: #3d8a87;
+  --md-primary-fg-color--dark:  #1f4a48;
+  --md-primary-bg-color:        #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+  --md-accent-fg-color:         #b84310;  /* rust */
+  --md-accent-fg-color--transparent: #b8431014;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #3d8a87;
+  --md-accent-fg-color:         #d65c2a;
+}

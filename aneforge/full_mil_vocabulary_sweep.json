@@ -1,0 +1,1662 @@
+[
+  {
+    "op": "abs",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "acos",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_acos_3jtyarkw/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_unary_math"
+  },
+  {
+    "op": "add",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00033,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "affine",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "argsort",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_argsort_23hd8mca/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_reductions"
+  },
+  {
+    "op": "asin",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_asin_mo2q9p4q/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_unary_math"
+  },
+  {
+    "op": "atan",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.01881,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "atanh",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_atanh_95vzsb0e/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_unary_math"
+  },
+  {
+    "op": "avg_pool",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00021,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "band_part",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_band_part_qe0hjtzj/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "batch_norm",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00037,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "batch_to_space",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "cast",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_cast_zrugvzd7/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "ceil",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "clamped_relu",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 9e-05,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "classify",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_classify_g6ritiwj/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "clip",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "concat",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "cond",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_cond_dbtq76tj/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "constexpr_affine_dequantize",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0005,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "constexpr_blockwise_shift_scale",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00038,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "constexpr_cast",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "constexpr_lut_to_dense",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "constexpr_lut_to_sparse",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "constexpr_sparse_blockwise_shift_scale",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "constexpr_sparse_to_dense",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "conv",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00028,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "conv_quantized",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_conv_quantized_3r90g4pj/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "conv_transpose",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00025,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "cos",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00056,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "cosh",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_cosh_b9cs1r6z/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_unary_math"
+  },
+  {
+    "op": "crop",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "crop_resize",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_crop_resize_04s4vwha/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_vision"
+  },
+  {
+    "op": "cumsum",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_cumsum_rhkkfmv2/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_reductions"
+  },
+  {
+    "op": "depth_to_space",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "dequantize",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00027,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "einsum",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0002,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "elu",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00506,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "equal",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "erf",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0007,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "exp",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00047,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "exp2",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00048,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "expand_dims",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "fill",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00034,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "fill_like",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00029,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "flatten2d",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "floor",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "floor_div",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "gather",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_gather_psr2et_n/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "gather_along_axis",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_gather_along_axis_w0ltman2/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "gather_nd",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_gather_nd_mxq04yzl/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "gelu_exact",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00239,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "gelu_sigmoid_approx",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "gelu_tanh_approx",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "greater",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "greater_equal",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "gru",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_gru_jq4vxqwu/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "identity",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_identity_nvjejczk/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "instance_norm",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00076,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "inverse",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00028,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "l2_norm",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "l2_pool",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00041,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "layer_norm",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00039,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "leaky_relu",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 1e-05,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "less",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "less_equal",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "linear",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0003,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "linear_activation",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 9e-05,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "list_gather",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_list_gather_8b6tmoq9/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "list_length",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_list_length_hxq8u995/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "list_read",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_list_read_9s688bnl/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "list_scatter",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_list_scatter_0_i7_rqy/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "list_write",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_list_write_079at7ns/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "local_response_norm",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00014,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "log",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0008,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "logical_and",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_logical_and_upvur9xm/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "logical_not",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "logical_or",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_logical_or_ptco9djo/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "logical_xor",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_logical_xor_qbn0htak/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "lstm",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_lstm_rwk9igm0/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "make_list",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_make_list_sbxb3v7k/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "matmul",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0003,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "max_pool",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "maximum",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "minimum",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "mod",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_mod_gs_tgq5p/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "mul",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00017,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "non_maximum_suppression",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "non_zero",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_non_zero_k8ek3_i8/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "not_equal",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "one_hot",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_one_hot_56pe7jru/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "pad",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00021,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "pixel_shuffle",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "pixel_unshuffle",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "pow",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00018,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "prelu",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "quantize",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00027,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "random_bernoulli",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_random_bernoulli_dkc166oa/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "random_categorical",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_random_categorical_ax3zvk0z/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "random_normal",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_random_normal_blsvhwz9/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "random_uniform",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_random_uniform_gmkcmjzm/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "range_1d",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00025,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "read_state",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_read_state_8yfjutfg/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "real_div",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00017,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "reduce_argmax",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_reduce_argmax_qq25mh6b/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_argmin",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_reduce_argmin_6u5e7ma7/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_l1_norm",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00071,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_l2_norm",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00051,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_log_sum",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00091,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_log_sum_exp",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00077,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_max",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_mean",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0008,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_min",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_prod",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_reduce_prod__7plc003/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_sum",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0008,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "reduce_sum_square",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00054,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "relu",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "relu6",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "reshape",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "reshape_like",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_reshape_like_6v7hy6jd/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "resize",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "resize_bilinear",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "resize_nearest_neighbor",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "reverse",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "reverse_sequence",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_reverse_sequence_f43ghpth/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "rnn",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_rnn_pv7wqumm/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  },
+  {
+    "op": "round",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "rsqrt",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00104,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "scaled_dot_product_attention",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00027,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_control_quant"
+  },
+  {
+    "op": "scaled_tanh",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00172,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "scatter",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_scatter_cj93y8qc/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "scatter_along_axis",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_scatter_along_axis_qxj51vdl/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "scatter_nd",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_scatter_nd_ojwrwqy9/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_conv_gather"
+  },
+  {
+    "op": "select",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "shape",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_shape_wwhu71cr/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "sigmoid",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00384,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "sigmoid_hard",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00026,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "sign",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "silu",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00997,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "sin",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0005,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "sinh",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_sinh_7jxi2xzs/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_unary_math"
+  },
+  {
+    "op": "slice_by_index",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "slice_by_size",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "slice_update",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_slice_update_eycmmfj8/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "sliding_windows",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_sliding_windows_z17qeusr/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_structural"
+  },
+  {
+    "op": "softplus",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00078,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "softplus_parametric",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "softsign",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00076,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "space_to_batch",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "space_to_depth",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "split",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "sqrt",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00043,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "square",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 8e-05,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_unary_math"
+  },
+  {
+    "op": "squeeze",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "stack",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "sub",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0003,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_binary_logical"
+  },
+  {
+    "op": "tan",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "not-implemented-on-ANE",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_tan_lezz9_9b/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_unary_math"
+  },
+  {
+    "op": "tanh",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.00126,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "threshold",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "thresholded_relu",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_activations"
+  },
+  {
+    "op": "tile",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "topk",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_reductions"
+  },
+  {
+    "op": "transpose",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_structural"
+  },
+  {
+    "op": "upsample_bilinear",
+    "compile": true,
+    "run": true,
+    "correct": "n/a",
+    "relerr": null,
+    "klass": "reachable",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "upsample_nearest_neighbor",
+    "compile": true,
+    "run": true,
+    "correct": true,
+    "relerr": 0.0,
+    "klass": "reachable+correct",
+    "err": "",
+    "family": "_vision"
+  },
+  {
+    "op": "while_loop",
+    "compile": false,
+    "run": false,
+    "correct": null,
+    "relerr": null,
+    "klass": "compile-walled",
+    "err": "RuntimeError: ane_e5rt_program_compile failed (mil=/tmp/claude-0/sweep_while_loop_5u6qvdy4/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+    "family": "_control_quant"
+  }
+]

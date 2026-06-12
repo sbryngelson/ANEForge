@@ -1,0 +1,333 @@
+"""Graph-rewrite infrastructure for the aneforge optimizer.
+
+Tensors are immutable/pure (op + srcs + attrs), so a "rewrite" is not in-place
+mutation — it RE-DERIVES the output DAG, substituting new nodes at match sites
+and rebuilding every node on the path from a match up to `out`. Shared subgraphs
+are cloned once (memoized by node identity) so a diamond stays a diamond, not two
+copies.
+
+The public entry point is `rewrite(out, rule)`: `rule(t) -> Tensor | None` is a
+node-local rewrite (return a replacement Tensor for `t`, or None to leave it). It
+is applied bottom-up: a node's sources are rewritten first, then the node itself is
+rebuilt on the (possibly new) sources, then `rule` is offered the rebuilt node.
+
+On top of that, two concrete rewrites the optimizer uses:
+
+  - `sdpa_to_decomposed` : replace one (or all) native-`sdpa` node(s) with the
+    metamorphic-PROVEN bit-identical decomposed form
+    `((q @ k^T) * scale).softmax(-1) @ v` — built from aneforge ops (bmm/muls/
+    softmax), which fuse into ONE e5rt program (no native-SDPA graph cut). Being
+    bit-identical (see the reverse-engineering corpus + tests/fuzz_metamorphic
+    `mha_vs_sdpa`), it is LOSSLESS: the optimizer picks native-vs-decomposed
+    purely by speed.
+
+  - `set_node_int8` : tag a specific weight-bearing node with an `int8` attr so
+    the compiler streams just that node's weight as int8 (a per-weight, LOSSY
+    rewrite — opt-in, accuracy-gated by the tuner).
+"""
+from __future__ import annotations
+
+from typing import Callable, Optional
+
+from .graph import Tensor
+
+
+def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
+    """Return a NEW output DAG with `rule` applied bottom-up to every node.
+
+    `rule(node) -> Tensor | None`: a replacement for `node` (already built on the
+    rewritten sources), or None to keep the rebuilt node as-is. The clone is memoized
+    by source-node identity, so shared subgraphs are rewritten exactly once and stay
+    shared. Inputs (and any node `rule` leaves unchanged with unchanged sources) are
+    returned unchanged, so a no-op rule yields the SAME object — the optimizer relies
+    on that to keep opt=0 byte-identical.
+    """
+    memo: dict[int, Tensor] = {}
+
+    def visit(t: Tensor) -> Tensor:
+        cached = memo.get(id(t))
+        if cached is not None:
+            return cached
+        # rewrite sources first (bottom-up)
+        new_srcs = [visit(s) for s in t.srcs]
+        if all(ns is os for ns, os in zip(new_srcs, t.srcs)):
+            rebuilt = t                      # sources unchanged -> reuse the node
+        else:
+            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
+        replacement = rule(rebuilt)
+        result = replacement if replacement is not None else rebuilt
+        memo[id(t)] = result
+        return result
+
+    return visit(out)
+
+
+def _decompose_sdpa(node: Tensor) -> Tensor:
+    """Build the decomposed equivalent of an `sdpa` node from aneforge ops.
+
+    Matches the reverse-engineering corpus's `dec` exactly:
+        scores = (q @ k.transpose([0,1,3,2])) * scale
+        a      = scores.softmax(-1)
+        out    = a @ v
+    q/k/v are [1, H, S, D]; the result is [1, H, S, D]. Pure fused MIL — no cut."""
+    q, k, v = node.srcs
+    scale = node.attrs["scale"]
+    scores = (q @ k.transpose([0, 1, 3, 2])) * float(scale)
+    a = scores.softmax(-1)
+    return a @ v
+
+
+def sdpa_to_decomposed(out: Tensor, only_id: Optional[int] = None) -> Tensor:
+    """Rewrite native `sdpa` node(s) to the decomposed (fused-MIL) form.
+
+    `only_id` (an `id()` of a node in the ORIGINAL graph) rewrites just that one
+    sdpa node; None rewrites every sdpa node. Returns a new output DAG (the same
+    object if there was nothing to rewrite)."""
+    def rule(t: Tensor) -> Optional[Tensor]:
+        if t.op != "sdpa":
+            return None
+        if only_id is not None and id(t) != only_id:
+            return None
+        return _decompose_sdpa(t)
+
+    return rewrite(out, rule)
+
+
+def list_sdpa_nodes(out: Tensor) -> list[Tensor]:
+    """The sdpa nodes in topo order (the coordinate-descent route axes)."""
+    from ._compile import _topo
+    return [t for t in _topo(out) if t.op == "sdpa"]
+
+
+def set_node_int8(out: Tensor, node_ids: set[int]) -> Tensor:
+    """Return a new DAG where each weight-bearing node whose `id()` is in
+    `node_ids` carries an `int8=True` attr (per-weight int8 override). The
+    compiler's `weight()` honors `t.attrs['int8']` over the global flag."""
+    def rule(t: Tensor) -> Optional[Tensor]:
+        if id(t) in node_ids and t.op in ("matmul", "conv"):
+            attrs = dict(t.attrs)
+            attrs["int8"] = True
+            return Tensor(t.shape, t.op, t.srcs, attrs)
+        return None
+
+    # node_ids reference original nodes; rewrite() rebuilds bottom-up so a tagged
+    # node's id changes once its sources change. Tag by matching the original ids
+    # against the pre-rewrite identity during the walk.
+    memo: dict[int, Tensor] = {}
+
+    def visit(t: Tensor) -> Tensor:
+        cached = memo.get(id(t))
+        if cached is not None:
+            return cached
+        new_srcs = [visit(s) for s in t.srcs]
+        tag = id(t) in node_ids and t.op in ("matmul", "conv")
+        if not tag and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
+            result = t
+        else:
+            attrs = dict(t.attrs)
+            if tag:
+                attrs["int8"] = True
+            result = Tensor(t.shape, t.op, new_srcs, attrs)
+        memo[id(t)] = result
+        return result
+
+    return visit(out)
+
+
+def list_weight_nodes(out: Tensor) -> list[Tensor]:
+    """Weight-bearing (int8-eligible) nodes in topo order: matmul (streamed `wt`) and
+    conv (baked `weight`). Both honor per-channel int8 (constexpr_affine_dequantize)
+    as a routable weight operand on the ANE."""
+    import numpy as np
+    from ._compile import _topo
+    return [t for t in _topo(out)
+            if (t.op == "matmul" and isinstance(t.attrs.get("wt"), np.ndarray))
+            or (t.op == "conv" and isinstance(t.attrs.get("weight"), np.ndarray))]
+
+
+# --------------------------------------------------------------------------- #
+# NUMERICS-aware rewrites (accuracy-improving, each validated vs fp32)          #
+# --------------------------------------------------------------------------- #
+def _reduce_sum_as_matmul(t: Tensor) -> Tensor:
+    """Rebuild a single `reduce_sum` node as a contraction against a ones-vector,
+    so the sum runs through the WIDE matmul accumulator instead of the NARROW
+    reduce_sum accumulator. Mathematically identical (sum_k x_k == x @ 1), strictly
+    >= accuracy under cancellation (fp16_envelope: comp_mm beats comp_rsum).
+
+    Only the single-axis, last-axis case is rewritten here (the contraction matmul
+    expresses directly): `x[..., K].sum(-1, keepdims) == x @ ones[K,1]`. For a
+    non-last single axis we transpose the axis to the end, contract, and transpose
+    back. Multi-axis sums are left to reduce_sum (the rewrite would need a reshape
+    chain; not worth it, and the optimizer won't offer it)."""
+    import numpy as np
+    src = t.srcs[0]
+    axes = tuple(t.attrs.get("axes", ()))
+    if len(axes) != 1:
+        return t                       # multi-axis: leave as-is (not offered)
+    (ax,) = axes
+    rank = len(src.shape)
+    ax = ax % rank
+    K = int(src.shape[ax])
+    ones = np.ones((K, 1), dtype=np.float16)
+
+    if ax == rank - 1:
+        # x[..., K] @ ones[K, 1] -> [..., 1]   (keepdims, matches reduce_sum keep_dims)
+        return src @ ones
+    # move `ax` to the last position, contract, move the resulting size-1 dim back.
+    perm = [i for i in range(rank) if i != ax] + [ax]
+    inv = [0] * rank
+    for new_pos, old in enumerate(perm):
+        inv[old] = new_pos
+    contracted = src.transpose(perm) @ ones          # [..., 1] with ax-data last
+    return contracted.transpose(inv)                  # restore original axis order
+
+
+def reduce_sum_to_matmul(out: Tensor, only_idx: set[int] | None = None) -> Tensor:
+    """Rewrite single-axis `reduce_sum` node(s) to a `@ ones` matmul contraction
+    (the WIDE-accumulator sum). LOSSLESS-or-better: identical math, >= accuracy under
+    cancellation. `only_idx` selects nodes by topo index in the ORIGINAL graph;
+    None rewrites every eligible reduce_sum. Returns a new output DAG (same object if
+    nothing matched)."""
+    from ._compile import _topo
+    order = _topo(out)
+    if only_idx is None:
+        target_ids = {id(t) for t in order
+                      if t.op == "reduce_sum" and len(t.attrs.get("axes", ())) == 1}
+    else:
+        target_ids = {id(order[i]) for i in only_idx
+                      if i < len(order) and order[i].op == "reduce_sum"
+                      and len(order[i].attrs.get("axes", ())) == 1}
+
+    def rule(t: Tensor) -> Optional[Tensor]:
+        if id(t) in target_ids:
+            return _reduce_sum_as_matmul(t)
+        return None
+
+    # target_ids are pre-rewrite identities; match against the original nodes during
+    # the bottom-up walk (a reduce_sum's id changes once its source is rebuilt).
+    memo: dict[int, Tensor] = {}
+
+    def visit(t: Tensor) -> Tensor:
+        cached = memo.get(id(t))
+        if cached is not None:
+            return cached
+        new_srcs = [visit(s) for s in t.srcs]
+        hit = id(t) in target_ids
+        if not hit and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
+            rebuilt = t
+        else:
+            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
+        result = _reduce_sum_as_matmul(rebuilt) if hit else rebuilt
+        memo[id(t)] = result
+        return result
+
+    return visit(out)
+
+
+# --------------------------------------------------------------------------- #
+# BRIDGE-ELIMINATION rewrites (replace a native netplist cut with a fused        #
+# decomposition built from _EMIT ops). Each is lossless — validated on-device     #
+# to agree with the bridge within fp16 op-noise (tests/test_routes.py), same       #
+# proof class as sdpa<->decomposed. Removing the cut lets the region fuse into     #
+# one e5rt program (estimate() costs it cheaper accordingly).                       #
+# --------------------------------------------------------------------------- #
+def _decompose_minmax_norm(node: Tensor) -> Tensor:
+    """Build the fused equivalent of a `minmax_norm` node from _EMIT ops:
+        y = (x - amin(x, dim)) / (amax(x, dim) - amin(x, dim) + eps)
+    over the reduction axis (Width=-1, Height=-2). reduce_min/reduce_max/sub/
+    real_div are all fused; the `+ eps` is the scalar-add `adds` op. The native
+    layer is bit-faithful to this formula (aneforge/_bridges/minmax_norm_fused.py header), so
+    the rewrite is LOSSLESS: the two agree within fp16 op-noise (test_routes.py), and
+    the degenerate max==min row yields 0/eps==0 on BOTH sides (no NaN divergence)."""
+    (x,) = node.srcs
+    ax = -1 if node.attrs["dimension"] == "Width" else -2
+    eps = float(node.attrs["eps"])
+    mn = x.amin(ax)
+    mx = x.amax(ax)
+    return (x - mn) / (mx - mn).adds(eps)
+
+
+def _flatten_to_reshape(node: Tensor) -> Tensor:
+    """Rebuild a `flatten` node (native Flatten bridge, [C,H,W] -> [prod]) as a plain
+    fused `reshape` to the same 1-D shape. BIT-IDENTICAL (both are a contiguous
+    row-major collapse — test_routes.py measures relerr 0.0), so it is LOSSLESS and
+    removes the netplist cut entirely."""
+    (x,) = node.srcs
+    return x.reshape(node.shape)
+
+
+def _decompose_lrn(node: Tensor) -> Tensor:
+    """Rebuild an `lrn` node (native LocalResponseNormalization bridge, a graph cut)
+    as the fused MIL `local_response_norm` op (one program, no cut). BIT-EQUIVALENT
+    (test_routes.py measures cos 1.000000 / relerr 0.0 across C/alpha/beta/k): the
+    bridge fixes the layer's channel window to N = C and divides the window sum by
+    KernelChannel internally, so the fused op reproduces it with `size=C` and `alpha`
+    pre-scaled by C (the fused op uses `alpha/size`; size=C cancels the C, recovering
+    the bridge's TRUE effective alpha):
+        lrn(alpha, beta, k)  ==  local_response_norm(size=C, alpha=alpha*C, beta, k)
+    where C = x.shape[1]. LOSSLESS, so the optimizer picks native-vs-fused purely by
+    speed — and the fused route removes the cut (~1250x faster on a conv->lrn->relu
+    block). The fused op also drops the C<16 cap the bridge carries."""
+    (x,) = node.srcs
+    C = node.shape[1]
+    a = node.attrs
+    from .graph import local_response_norm
+    return local_response_norm(x, size=C, alpha=a["alpha"] * C, beta=a["beta"], k=a["k"])
+
+
+# rewrite op-name -> (matched bridge op, decomposition builder). The route registry
+# in _capabilities.py is the single source OF truth for *which* bridge ops are route-
+# selectable; this table is just the executable builders, keyed identically.
+# Reconciled by tests/test_routes.py.
+_BRIDGE_DECOMPOSERS = {
+    "sdpa": _decompose_sdpa,
+    "minmax_norm": _decompose_minmax_norm,
+    "flatten": _flatten_to_reshape,
+    "lrn": _decompose_lrn,
+}
+
+
+def decompose_bridge(out: Tensor, decomp_idx: set[int]) -> Tensor:
+    """Rewrite the bridge nodes at the given ORIGINAL-graph topo indices to their fused
+    decomposition (sdpa/minmax_norm/flatten/lrn — see `_BRIDGE_DECOMPOSERS`). Walks the
+    original graph so the indices are stable, rebuilding bottom-up. A node whose op has
+    no registered decomposer is left as-is (single-route). Returns a new output DAG."""
+    from ._compile import _topo
+    order = _topo(out)
+    targets = {id(order[i]): order[i].op for i in decomp_idx
+               if 0 <= i < len(order) and order[i].op in _BRIDGE_DECOMPOSERS}
+    memo: dict[int, Tensor] = {}
+
+    def visit(t: Tensor) -> Tensor:
+        c = memo.get(id(t))
+        if c is not None:
+            return c
+        new_srcs = [visit(s) for s in t.srcs]
+        hit_op = targets.get(id(t))
+        if hit_op is None and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
+            rebuilt = t
+        else:
+            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
+        result = _BRIDGE_DECOMPOSERS[hit_op](rebuilt) if hit_op is not None else rebuilt
+        memo[id(t)] = result
+        return result
+
+    return visit(out)
+
+
+def paired_subtract(a, b):
+    """Carry a single `a - b` through paired-fp16 (compensated TwoSum), returning a
+    plain fp16 Tensor whose value is the best-fp16 result of the compensated subtract.
+
+    This is the CFG-style cancellation fix from fp16_envelope: the compensated
+    subtract captures the subtract's own rounding (and, in regime B, the carried lo of
+    paired inputs). `a` / `b` may each be a plain Tensor or a `Paired` (pass a Paired
+    to exploit regime B, the recovering case). Higher op cost (~6 fp16 ops/elem) -> the
+    optimizer gates this behind the error budget.
+
+    Returns a Tensor (`.to_tensor()` of the Paired difference) so it drops straight
+    into an existing fp16 graph at the hotspot."""
+    from ._paired import Paired, paired as _mk_paired
+    pa = a if isinstance(a, Paired) else _mk_paired(a)
+    pb = b if isinstance(b, Paired) else _mk_paired(b)
+    return (pa - pb).to_tensor()

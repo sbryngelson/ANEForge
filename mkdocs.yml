@@ -1,0 +1,100 @@
+site_name: ANEForge
+site_description: Direct, CoreML-free Apple Neural Engine backend for Python
+site_author: Spencer H. Bryngelson
+repo_url: https://github.com/sbryngelson/ANEForge
+repo_name: sbryngelson/ANEForge
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            heading_level: 2
+            members_order: source
+            filters: ["!^_"]
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: true
+            separate_signature: true
+            show_signature_annotations: true
+            docstring_section_style: table
+
+markdown_extensions:
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Get something running:
+      - Getting started: getting-started.md
+      - API reference: aneforge-api.md
+      - Training on the ANE: training.md
+      - MIL primer: mil-primer.md
+      - FAQ: faq.md
+  - Use the engine well:
+      - Cross-chip deployment: cross-chip.md
+      - Dispatch backends: dispatch.md
+      - e5rt dispatch reference: e5rt-dispatch-reference.md
+  - Know what works:
+      - Capabilities: capabilities.md
+      - Op catalog: op-catalog.md
+  - API reference:
+      - Overview: api/index.md
+      - Graph & operators: api/graph.md
+      - Compile, optimize, estimate: api/compile.md
+      - Training & autograd: api/training.md
+      - Pretrained models: api/models.md
+      - Applied math: api/math.md
+  - Contribute:
+      - Development: development.md
+      - Glossary: glossary.md
+      - Roadmap: roadmap.md
+  - Reproducibility: reproducibility.md
+
+validation:
+  nav:
+    omitted_files: ignore
+  not_found: warn

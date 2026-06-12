@@ -1,0 +1,1838 @@
+{
+  "backends": {
+    "ane": true,
+    "mlx": true,
+    "sudo": true
+  },
+  "window_s": 5.0,
+  "pm_interval_ms": 500,
+  "batches": [
+    1,
+    4,
+    16,
+    64,
+    256
+  ],
+  "idle_mW": {
+    "ane": 0.0,
+    "cpu": 1330.5,
+    "gpu": 43.0
+  },
+  "idle_pkg_mW": 1382.5,
+  "results": {
+    "vision (conv-stack->GAP->FC classifier)": {
+      "points": [
+        {
+          "device": "ANE",
+          "B": 1,
+          "latency_ms": 0.0850410433486104,
+          "throughput_items_s": 11759.027883755854,
+          "relerr": 0.0015567585492832021,
+          "energy": {
+            "iter_ms": 0.19831655183063274,
+            "iters": 27724,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 1095.5,
+            "ane_active_mW": 1095.5,
+            "cpu_loaded_mW": 3497.0,
+            "cpu_active_mW": 2166.5,
+            "gpu_loaded_mW": 54.0,
+            "gpu_active_mW": 11.0,
+            "loaded_pkg_W": 4.666,
+            "active_pkg_W": 3.2835,
+            "active_pkg_mean_W": 3.8817,
+            "active_pkg_min_W": 2.4815,
+            "active_pkg_p90_W": 4.908699999999998,
+            "active_pkg_cv_pct": 33.103569461000156,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 5042.4434610683675,
+            "perf_per_W": 1535.691628161525,
+            "mJ_per_item": 0.6511723979358827
+          },
+          "active_pkg_W": 3.2835,
+          "perf_per_W": 1535.691628161525,
+          "mJ_per_item": 0.6511723979358827,
+          "pkg_cv_pct": 33.103569461000156,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 1,
+          "latency_ms": 0.4838330205529928,
+          "throughput_items_s": 2066.828756038723,
+          "relerr": 0.0004636378133690297,
+          "energy": {
+            "iter_ms": 0.3498765465453061,
+            "iters": 15653,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 5532.0,
+            "cpu_active_mW": 4201.5,
+            "gpu_loaded_mW": 8215.0,
+            "gpu_active_mW": 8172.0,
+            "loaded_pkg_W": 13.7295,
+            "active_pkg_W": 12.347,
+            "active_pkg_mean_W": 12.5923,
+            "active_pkg_min_W": 8.9515,
+            "active_pkg_p90_W": 15.5343,
+            "active_pkg_cv_pct": 18.777528516244523,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2858.1509960414232,
+            "perf_per_W": 231.48546173494964,
+            "mJ_per_item": 4.319925720194894
+          },
+          "active_pkg_W": 12.347,
+          "perf_per_W": 231.48546173494964,
+          "mJ_per_item": 4.319925720194894,
+          "pkg_cv_pct": 18.777528516244523,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 4,
+          "latency_ms": 0.1390419201925397,
+          "throughput_items_s": 28768.302354145857,
+          "relerr": 0.0014858859374842306,
+          "energy": {
+            "iter_ms": 0.1390544466466849,
+            "iters": 39528,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5217.5,
+            "ane_active_mW": 5217.5,
+            "cpu_loaded_mW": 6050.5,
+            "cpu_active_mW": 4720.0,
+            "gpu_loaded_mW": 52.0,
+            "gpu_active_mW": 9.0,
+            "loaded_pkg_W": 11.288,
+            "active_pkg_W": 9.9055,
+            "active_pkg_mean_W": 10.5447,
+            "active_pkg_min_W": 9.4755,
+            "active_pkg_p90_W": 12.230199999999998,
+            "active_pkg_cv_pct": 10.211818831954428,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 28765.710816593735,
+            "perf_per_W": 2904.014014092548,
+            "mJ_per_item": 0.3443509553146843
+          },
+          "active_pkg_W": 9.9055,
+          "perf_per_W": 2904.014014092548,
+          "mJ_per_item": 0.3443509553146843,
+          "pkg_cv_pct": 10.211818831954428,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 4,
+          "latency_ms": 0.4355830606073141,
+          "throughput_items_s": 9183.093562965872,
+          "relerr": 0.0005433814801926016,
+          "energy": {
+            "iter_ms": 0.5057252548217644,
+            "iters": 10827,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 4789.5,
+            "cpu_active_mW": 3459.0,
+            "gpu_loaded_mW": 18112.0,
+            "gpu_active_mW": 18069.0,
+            "loaded_pkg_W": 22.9275,
+            "active_pkg_W": 21.545,
+            "active_pkg_mean_W": 21.9681,
+            "active_pkg_min_W": 20.8985,
+            "active_pkg_p90_W": 23.325899999999997,
+            "active_pkg_cv_pct": 4.819584133544157,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 7909.4329615983725,
+            "perf_per_W": 367.1122284334357,
+            "mJ_per_item": 2.723962653783729
+          },
+          "active_pkg_W": 21.545,
+          "perf_per_W": 367.1122284334357,
+          "mJ_per_item": 2.723962653783729,
+          "pkg_cv_pct": 4.819584133544157,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 16,
+          "latency_ms": 0.31395803671330214,
+          "throughput_items_s": 50962.224657465165,
+          "relerr": 0.0014935684425516308,
+          "energy": {
+            "iter_ms": 0.32587339627708833,
+            "iters": 16862,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 8511.5,
+            "ane_active_mW": 8511.5,
+            "cpu_loaded_mW": 3802.5,
+            "cpu_active_mW": 2472.0,
+            "gpu_loaded_mW": 40.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 12.3325,
+            "active_pkg_W": 10.95,
+            "active_pkg_mean_W": 11.4022,
+            "active_pkg_min_W": 10.4915,
+            "active_pkg_p90_W": 11.739499999999998,
+            "active_pkg_cv_pct": 12.000971293603158,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 49098.82237332222,
+            "perf_per_W": 4483.910719024861,
+            "mJ_per_item": 0.22301960557713232
+          },
+          "active_pkg_W": 10.95,
+          "perf_per_W": 4483.910719024861,
+          "mJ_per_item": 0.22301960557713232,
+          "pkg_cv_pct": 12.000971293603158,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 16,
+          "latency_ms": 1.144208014011383,
+          "throughput_items_s": 13983.471365409285,
+          "relerr": 0.0005464251902954209,
+          "energy": {
+            "iter_ms": 1.1887639880767331,
+            "iters": 4614,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 4137.5,
+            "cpu_active_mW": 2807.0,
+            "gpu_loaded_mW": 26825.5,
+            "gpu_active_mW": 26782.5,
+            "loaded_pkg_W": 30.8695,
+            "active_pkg_W": 29.487,
+            "active_pkg_mean_W": 30.094900000000003,
+            "active_pkg_min_W": 28.6375,
+            "active_pkg_p90_W": 32.388799999999996,
+            "active_pkg_cv_pct": 5.592744748584098,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 13459.357921740158,
+            "perf_per_W": 456.45056878421536,
+            "mJ_per_item": 2.190817732276164
+          },
+          "active_pkg_W": 29.487,
+          "perf_per_W": 456.45056878421536,
+          "mJ_per_item": 2.190817732276164,
+          "pkg_cv_pct": 5.592744748584098,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 64,
+          "latency_ms": 1.0288750054314733,
+          "throughput_items_s": 62203.8631147043,
+          "relerr": 0.0014952043002588332,
+          "energy": {
+            "iter_ms": 1.0449307192092188,
+            "iters": 5260,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 10446.0,
+            "ane_active_mW": 10446.0,
+            "cpu_loaded_mW": 4196.0,
+            "cpu_active_mW": 2865.5,
+            "gpu_loaded_mW": 37.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 14.677,
+            "active_pkg_W": 13.2945,
+            "active_pkg_mean_W": 13.5178,
+            "active_pkg_min_W": 11.9215,
+            "active_pkg_p90_W": 15.6597,
+            "active_pkg_cv_pct": 8.95822641742435,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 61248.07972765298,
+            "perf_per_W": 4607.023936789874,
+            "mJ_per_item": 0.2170598663519837
+          },
+          "active_pkg_W": 13.2945,
+          "perf_per_W": 4607.023936789874,
+          "mJ_per_item": 0.2170598663519837,
+          "pkg_cv_pct": 8.95822641742435,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 64,
+          "latency_ms": 3.9235420990735292,
+          "throughput_items_s": 16311.791331387116,
+          "relerr": 0.0005409059055188531,
+          "energy": {
+            "iter_ms": 3.9716287084427893,
+            "iters": 1382,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 3425.5,
+            "cpu_active_mW": 2095.0,
+            "gpu_loaded_mW": 32473.5,
+            "gpu_active_mW": 32430.5,
+            "loaded_pkg_W": 35.9335,
+            "active_pkg_W": 34.551,
+            "active_pkg_mean_W": 35.2875,
+            "active_pkg_min_W": 33.5275,
+            "active_pkg_p90_W": 37.2373,
+            "active_pkg_cv_pct": 4.928108699710725,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 16114.295846424515,
+            "perf_per_W": 466.3915905885362,
+            "mJ_per_item": 2.1441209922719815
+          },
+          "active_pkg_W": 34.551,
+          "perf_per_W": 466.3915905885362,
+          "mJ_per_item": 2.1441209922719815,
+          "pkg_cv_pct": 4.928108699710725,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 256,
+          "latency_ms": 3.822667058557272,
+          "throughput_items_s": 66968.95023251593,
+          "relerr": 0.0015022884508243705,
+          "energy": {
+            "iter_ms": 3.939132516138368,
+            "iters": 1397,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 11049.0,
+            "ane_active_mW": 11049.0,
+            "cpu_loaded_mW": 3698.5,
+            "cpu_active_mW": 2368.0,
+            "gpu_loaded_mW": 36.5,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 14.81,
+            "active_pkg_W": 13.4275,
+            "active_pkg_mean_W": 13.9339,
+            "active_pkg_min_W": 12.2515,
+            "active_pkg_p90_W": 16.9313,
+            "active_pkg_cv_pct": 10.902076397895115,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 64988.928133589,
+            "perf_per_W": 4839.987200416235,
+            "mJ_per_item": 0.20661211664237475
+          },
+          "active_pkg_W": 13.4275,
+          "perf_per_W": 4839.987200416235,
+          "mJ_per_item": 0.20661211664237475,
+          "pkg_cv_pct": 10.902076397895115,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 256,
+          "latency_ms": 14.765458065085113,
+          "throughput_items_s": 17337.762152150633,
+          "relerr": 0.000546988030678979,
+          "energy": {
+            "iter_ms": 14.90988708378843,
+            "iters": 369,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 2941.5,
+            "cpu_active_mW": 1611.0,
+            "gpu_loaded_mW": 34503.5,
+            "gpu_active_mW": 34460.5,
+            "loaded_pkg_W": 37.5215,
+            "active_pkg_W": 36.139,
+            "active_pkg_mean_W": 36.491099999999996,
+            "active_pkg_min_W": 35.3055,
+            "active_pkg_p90_W": 38.3002,
+            "active_pkg_cv_pct": 2.9424157714388897,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 17169.814805529255,
+            "perf_per_W": 475.1048674708557,
+            "mJ_per_item": 2.104798473910274
+          },
+          "active_pkg_W": 36.139,
+          "perf_per_W": 475.1048674708557,
+          "mJ_per_item": 2.104798473910274,
+          "pkg_cv_pct": 2.9424157714388897,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        }
+      ],
+      "note": "6x 3x3 conv (Cin=16->Cout=64, 32x32) + GAP + FC[100]. items = images. ref = fp32 numpy. seq=N/A."
+    },
+    "encoder (transformer block, S=128)": {
+      "points": [
+        {
+          "device": "ANE",
+          "B": 1,
+          "latency_ms": 0.36279193591326475,
+          "throughput_items_s": 2756.4008485543545,
+          "relerr": 0.0020526640665177766,
+          "energy": {
+            "iter_ms": 0.3740235792993856,
+            "iters": 14711,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 4958.0,
+            "ane_active_mW": 4958.0,
+            "cpu_loaded_mW": 3535.0,
+            "cpu_active_mW": 2204.5,
+            "gpu_loaded_mW": 45.0,
+            "gpu_active_mW": 2.0,
+            "loaded_pkg_W": 8.5255,
+            "active_pkg_W": 7.143,
+            "active_pkg_mean_W": 8.1549,
+            "active_pkg_min_W": 6.9055,
+            "active_pkg_p90_W": 10.6077,
+            "active_pkg_cv_pct": 19.107781894155995,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2673.6282291966254,
+            "perf_per_W": 374.300466078206,
+            "mJ_per_item": 2.6716504269355115
+          },
+          "active_pkg_W": 7.143,
+          "perf_per_W": 374.300466078206,
+          "mJ_per_item": 2.6716504269355115,
+          "pkg_cv_pct": 19.107781894155995,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 1,
+          "latency_ms": 0.7921250071376562,
+          "throughput_items_s": 1262.4270045627018,
+          "relerr": 0.0007632861878492441,
+          "energy": {
+            "iter_ms": 0.9776882147416472,
+            "iters": 5625,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 8221.0,
+            "cpu_active_mW": 6890.5,
+            "gpu_loaded_mW": 7995.5,
+            "gpu_active_mW": 7952.5,
+            "loaded_pkg_W": 16.225,
+            "active_pkg_W": 14.8425,
+            "active_pkg_mean_W": 13.0037,
+            "active_pkg_min_W": 8.3105,
+            "active_pkg_p90_W": 15.031799999999999,
+            "active_pkg_cv_pct": 18.332666217092704,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 1022.8209616541698,
+            "perf_per_W": 68.91163629133703,
+            "mJ_per_item": 14.511337327302899
+          },
+          "active_pkg_W": 14.8425,
+          "perf_per_W": 68.91163629133703,
+          "mJ_per_item": 14.511337327302899,
+          "pkg_cv_pct": 18.332666217092704,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 4,
+          "latency_ms": 1.3403750490397215,
+          "throughput_items_s": 2984.2393760356113,
+          "relerr": 0.0020347474569521315,
+          "energy": {
+            "iter_ms": 1.349942817015734,
+            "iters": 4071,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5520.5,
+            "ane_active_mW": 5520.5,
+            "cpu_loaded_mW": 3406.5,
+            "cpu_active_mW": 2076.0,
+            "gpu_loaded_mW": 39.5,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 8.9635,
+            "active_pkg_W": 7.581,
+            "active_pkg_mean_W": 8.392,
+            "active_pkg_min_W": 6.9895,
+            "active_pkg_p90_W": 11.6647,
+            "active_pkg_cv_pct": 17.84440747031964,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2963.0884727714943,
+            "perf_per_W": 390.8572052198251,
+            "mJ_per_item": 2.55847912394907
+          },
+          "active_pkg_W": 7.581,
+          "perf_per_W": 390.8572052198251,
+          "mJ_per_item": 2.55847912394907,
+          "pkg_cv_pct": 17.84440747031964,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 4,
+          "latency_ms": 1.5713749453425407,
+          "throughput_items_s": 2545.541413814542,
+          "relerr": 0.0007602523406239159,
+          "energy": {
+            "iter_ms": 1.9620783122774352,
+            "iters": 2805,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 8394.5,
+            "cpu_active_mW": 7064.0,
+            "gpu_loaded_mW": 13227.0,
+            "gpu_active_mW": 13184.0,
+            "loaded_pkg_W": 21.2175,
+            "active_pkg_W": 19.835,
+            "active_pkg_mean_W": 17.1803,
+            "active_pkg_min_W": 9.1065,
+            "active_pkg_p90_W": 20.4946,
+            "active_pkg_cv_pct": 23.381722483521646,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2038.654611781064,
+            "perf_per_W": 102.78067112584138,
+            "mJ_per_item": 9.729455831005732
+          },
+          "active_pkg_W": 19.835,
+          "perf_per_W": 102.78067112584138,
+          "mJ_per_item": 9.729455831005732,
+          "pkg_cv_pct": 23.381722483521646,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 16,
+          "latency_ms": 5.74391707777977,
+          "throughput_items_s": 2785.555533504424,
+          "relerr": 0.0020352577818177685,
+          "energy": {
+            "iter_ms": 5.6673849021648,
+            "iters": 972,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5220.0,
+            "ane_active_mW": 5220.0,
+            "cpu_loaded_mW": 3131.0,
+            "cpu_active_mW": 1800.5,
+            "gpu_loaded_mW": 39.5,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 8.398,
+            "active_pkg_W": 7.0155,
+            "active_pkg_mean_W": 8.0875,
+            "active_pkg_min_W": 6.2135,
+            "active_pkg_p90_W": 12.0514,
+            "active_pkg_cv_pct": 22.750399751754475,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2823.1715819916167,
+            "perf_per_W": 402.4191550127028,
+            "mJ_per_item": 2.484971173821072
+          },
+          "active_pkg_W": 7.0155,
+          "perf_per_W": 402.4191550127028,
+          "mJ_per_item": 2.484971173821072,
+          "pkg_cv_pct": 22.750399751754475,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 16,
+          "latency_ms": 6.191416992805898,
+          "throughput_items_s": 2584.2226454123766,
+          "relerr": 0.0007520631236516815,
+          "energy": {
+            "iter_ms": 6.9434134131567244,
+            "iters": 794,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 7077.5,
+            "cpu_active_mW": 5747.0,
+            "gpu_loaded_mW": 11364.5,
+            "gpu_active_mW": 11321.5,
+            "loaded_pkg_W": 19.199,
+            "active_pkg_W": 17.8165,
+            "active_pkg_mean_W": 16.0552,
+            "active_pkg_min_W": 10.2405,
+            "active_pkg_p90_W": 18.6376,
+            "active_pkg_cv_pct": 17.005339484927028,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2304.3421222308907,
+            "perf_per_W": 129.33753106563526,
+            "mJ_per_item": 7.731707817219174
+          },
+          "active_pkg_W": 17.8165,
+          "perf_per_W": 129.33753106563526,
+          "mJ_per_item": 7.731707817219174,
+          "pkg_cv_pct": 17.005339484927028,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 64,
+          "latency_ms": 27.075583930127323,
+          "throughput_items_s": 2363.7532680795275,
+          "relerr": 0.0020492956008314536,
+          "energy": {
+            "iter_ms": 27.31325577697855,
+            "iters": 202,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 4689.5,
+            "ane_active_mW": 4689.5,
+            "cpu_loaded_mW": 2324.5,
+            "cpu_active_mW": 994.0,
+            "gpu_loaded_mW": 40.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 7.037,
+            "active_pkg_W": 5.6545,
+            "active_pkg_mean_W": 6.2608999999999995,
+            "active_pkg_min_W": 5.0585,
+            "active_pkg_p90_W": 7.073099999999998,
+            "active_pkg_cv_pct": 23.164622072258645,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2343.184588559505,
+            "perf_per_W": 414.39288859483685,
+            "mJ_per_item": 2.4131688248582064
+          },
+          "active_pkg_W": 5.6545,
+          "perf_per_W": 414.39288859483685,
+          "mJ_per_item": 2.4131688248582064,
+          "pkg_cv_pct": 23.164622072258645,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 64,
+          "latency_ms": 21.717250114306808,
+          "throughput_items_s": 2946.966105890097,
+          "relerr": 0.0007506494798794146,
+          "energy": {
+            "iter_ms": 22.655123122872357,
+            "iters": 244,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 6938.5,
+            "cpu_active_mW": 5608.0,
+            "gpu_loaded_mW": 13842.5,
+            "gpu_active_mW": 13799.5,
+            "loaded_pkg_W": 20.816,
+            "active_pkg_W": 19.4335,
+            "active_pkg_mean_W": 20.268,
+            "active_pkg_min_W": 18.6955,
+            "active_pkg_p90_W": 23.4731,
+            "active_pkg_cv_pct": 8.170384372989252,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2824.9680945404493,
+            "perf_per_W": 145.36589366508605,
+            "mJ_per_item": 6.879192737630311
+          },
+          "active_pkg_W": 19.4335,
+          "perf_per_W": 145.36589366508605,
+          "mJ_per_item": 6.879192737630311,
+          "pkg_cv_pct": 8.170384372989252,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 256,
+          "latency_ms": 248.41537501197308,
+          "throughput_items_s": 1030.532027205085,
+          "relerr": 0.0020487218206343997,
+          "energy": {
+            "iter_ms": 250.26962139299548,
+            "iters": 23,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 2466.0,
+            "ane_active_mW": 2466.0,
+            "cpu_loaded_mW": 2427.5,
+            "cpu_active_mW": 1097.0,
+            "gpu_loaded_mW": 40.5,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 4.969,
+            "active_pkg_W": 3.5865,
+            "active_pkg_mean_W": 4.0607,
+            "active_pkg_min_W": 2.8725,
+            "active_pkg_p90_W": 5.4237,
+            "active_pkg_cv_pct": 21.509934399249893,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 1022.8968205374242,
+            "perf_per_W": 285.20753395717946,
+            "mJ_per_item": 3.5062187387733528
+          },
+          "active_pkg_W": 3.5865,
+          "perf_per_W": 285.20753395717946,
+          "mJ_per_item": 3.5062187387733528,
+          "pkg_cv_pct": 21.509934399249893,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 256,
+          "latency_ms": 86.83691592887044,
+          "throughput_items_s": 2948.054951763762,
+          "relerr": 0.00075217822340789,
+          "energy": {
+            "iter_ms": 88.82620564526728,
+            "iters": 62,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 6806.5,
+            "cpu_active_mW": 5476.0,
+            "gpu_loaded_mW": 13614.0,
+            "gpu_active_mW": 13571.0,
+            "loaded_pkg_W": 20.541,
+            "active_pkg_W": 19.1585,
+            "active_pkg_mean_W": 19.4145,
+            "active_pkg_min_W": 18.4185,
+            "active_pkg_p90_W": 21.1782,
+            "active_pkg_cv_pct": 4.727888488433505,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 2882.032370293415,
+            "perf_per_W": 150.4310029643978,
+            "mJ_per_item": 6.64756586271427
+          },
+          "active_pkg_W": 19.1585,
+          "perf_per_W": 150.4310029643978,
+          "mJ_per_item": 6.64756586271427,
+          "pkg_cv_pct": 4.727888488433505,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        }
+      ],
+      "note": "pre-LN encoder block S=128, D=768, H=12, Dff=3072; items = sequences. layernorm folds B into rows [B*S,D]. ref = fp64 numpy."
+    },
+    "attention (self-attn block, S=128)": {
+      "points": [
+        {
+          "device": "ANE",
+          "B": 1,
+          "latency_ms": 0.1461670035496354,
+          "throughput_items_s": 6841.489362956119,
+          "relerr": 0.001500895026952376,
+          "energy": {
+            "iter_ms": 0.15497293037923787,
+            "iters": 35578,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 3790.5,
+            "ane_active_mW": 3790.5,
+            "cpu_loaded_mW": 6577.0,
+            "cpu_active_mW": 5246.5,
+            "gpu_loaded_mW": 37.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 10.4065,
+            "active_pkg_W": 9.024,
+            "active_pkg_mean_W": 9.9555,
+            "active_pkg_min_W": 8.6405,
+            "active_pkg_p90_W": 12.611600000000001,
+            "active_pkg_cv_pct": 15.117020588550629,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 6452.739827225805,
+            "perf_per_W": 715.0642539035689,
+            "mJ_per_item": 1.3984757237422425
+          },
+          "active_pkg_W": 9.024,
+          "perf_per_W": 715.0642539035689,
+          "mJ_per_item": 1.3984757237422425,
+          "pkg_cv_pct": 15.117020588550629,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 1,
+          "latency_ms": 0.513250008225441,
+          "throughput_items_s": 1948.3682103727467,
+          "relerr": 0.0011609464798780843,
+          "energy": {
+            "iter_ms": 0.28538086611945274,
+            "iters": 19256,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 5782.5,
+            "cpu_active_mW": 4452.0,
+            "gpu_loaded_mW": 7367.5,
+            "gpu_active_mW": 7324.5,
+            "loaded_pkg_W": 13.1775,
+            "active_pkg_W": 11.795,
+            "active_pkg_mean_W": 11.4547,
+            "active_pkg_min_W": 8.8875,
+            "active_pkg_p90_W": 12.5432,
+            "active_pkg_cv_pct": 9.218137398687889,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 3504.0891619602376,
+            "perf_per_W": 297.08259109455173,
+            "mJ_per_item": 3.366067315878945
+          },
+          "active_pkg_W": 11.795,
+          "perf_per_W": 297.08259109455173,
+          "mJ_per_item": 3.366067315878945,
+          "pkg_cv_pct": 9.218137398687889,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 4,
+          "latency_ms": 0.44583401177078485,
+          "throughput_items_s": 8971.948963948733,
+          "relerr": 0.001481801219860619,
+          "energy": {
+            "iter_ms": 0.4504238826084665,
+            "iters": 12224,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5138.0,
+            "ane_active_mW": 5138.0,
+            "cpu_loaded_mW": 4184.5,
+            "cpu_active_mW": 2854.0,
+            "gpu_loaded_mW": 39.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 9.3525,
+            "active_pkg_W": 7.97,
+            "active_pkg_mean_W": 9.2271,
+            "active_pkg_min_W": 7.3765,
+            "active_pkg_p90_W": 13.6216,
+            "active_pkg_cv_pct": 22.26579313314529,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 8880.523778702522,
+            "perf_per_W": 1114.2438869137418,
+            "mJ_per_item": 0.8974695860973695
+          },
+          "active_pkg_W": 7.97,
+          "perf_per_W": 1114.2438869137418,
+          "mJ_per_item": 0.8974695860973695,
+          "pkg_cv_pct": 22.26579313314529,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 4,
+          "latency_ms": 0.9437500266358256,
+          "throughput_items_s": 4238.410476404172,
+          "relerr": 0.001134998644115921,
+          "energy": {
+            "iter_ms": 0.3776073429307416,
+            "iters": 14548,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 5669.5,
+            "cpu_active_mW": 4339.0,
+            "gpu_loaded_mW": 16606.5,
+            "gpu_active_mW": 16563.5,
+            "loaded_pkg_W": 22.803,
+            "active_pkg_W": 21.4205,
+            "active_pkg_mean_W": 19.3917,
+            "active_pkg_min_W": 13.3695,
+            "active_pkg_p90_W": 22.1706,
+            "active_pkg_cv_pct": 15.642596933403125,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 10593.01434382767,
+            "perf_per_W": 494.52694119314066,
+            "mJ_per_item": 2.0221345223119878
+          },
+          "active_pkg_W": 21.4205,
+          "perf_per_W": 494.52694119314066,
+          "mJ_per_item": 2.0221345223119878,
+          "pkg_cv_pct": 15.642596933403125,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 16,
+          "latency_ms": 1.6363749746233225,
+          "throughput_items_s": 9777.71002864612,
+          "relerr": 0.0014908496042203903,
+          "energy": {
+            "iter_ms": 1.6454518203806183,
+            "iters": 3346,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5655.5,
+            "ane_active_mW": 5655.5,
+            "cpu_loaded_mW": 4334.5,
+            "cpu_active_mW": 3004.0,
+            "gpu_loaded_mW": 39.5,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 10.049,
+            "active_pkg_W": 8.6665,
+            "active_pkg_mean_W": 9.443,
+            "active_pkg_min_W": 7.8625,
+            "active_pkg_p90_W": 11.618199999999998,
+            "active_pkg_cv_pct": 14.205663872822877,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 9723.773009834438,
+            "perf_per_W": 1121.9953856613904,
+            "mJ_per_item": 0.8912692625830392
+          },
+          "active_pkg_W": 8.6665,
+          "perf_per_W": 1121.9953856613904,
+          "mJ_per_item": 0.8912692625830392,
+          "pkg_cv_pct": 14.205663872822877,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 16,
+          "latency_ms": 0.7309999782592058,
+          "throughput_items_s": 21887.82554837033,
+          "relerr": 0.0011420847864907495,
+          "energy": {
+            "iter_ms": 0.7808995596057094,
+            "iters": 7039,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 5756.5,
+            "cpu_active_mW": 4426.0,
+            "gpu_loaded_mW": 30854.0,
+            "gpu_active_mW": 30811.0,
+            "loaded_pkg_W": 36.7135,
+            "active_pkg_W": 35.331,
+            "active_pkg_mean_W": 35.191300000000005,
+            "active_pkg_min_W": 32.8965,
+            "active_pkg_p90_W": 37.3636,
+            "active_pkg_cv_pct": 4.837028936202696,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 20489.1907072898,
+            "perf_per_W": 579.9210525399733,
+            "mJ_per_item": 1.7243726462768327
+          },
+          "active_pkg_W": 35.331,
+          "perf_per_W": 579.9210525399733,
+          "mJ_per_item": 1.7243726462768327,
+          "pkg_cv_pct": 4.837028936202696,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 64,
+          "latency_ms": 8.224582998082042,
+          "throughput_items_s": 7781.54953447788,
+          "relerr": 0.0016193148498423358,
+          "energy": {
+            "iter_ms": 8.335774142186633,
+            "iters": 661,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 4909.0,
+            "ane_active_mW": 4909.0,
+            "cpu_loaded_mW": 3798.5,
+            "cpu_active_mW": 2468.0,
+            "gpu_loaded_mW": 43.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 8.7335,
+            "active_pkg_W": 7.351,
+            "active_pkg_mean_W": 7.9838,
+            "active_pkg_min_W": 6.4085,
+            "active_pkg_p90_W": 10.9461,
+            "active_pkg_cv_pct": 17.256199028320403,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 7677.751209225011,
+            "perf_per_W": 1044.4498992279978,
+            "mJ_per_item": 0.9574418081127178
+          },
+          "active_pkg_W": 7.351,
+          "perf_per_W": 1044.4498992279978,
+          "mJ_per_item": 0.9574418081127178,
+          "pkg_cv_pct": 17.256199028320403,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 64,
+          "latency_ms": 2.5134170427918434,
+          "throughput_items_s": 25463.34289549908,
+          "relerr": 0.0011444609564950578,
+          "energy": {
+            "iter_ms": 2.5890282602515287,
+            "iters": 2129,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 3508.5,
+            "cpu_active_mW": 2178.0,
+            "gpu_loaded_mW": 37031.0,
+            "gpu_active_mW": 36988.0,
+            "loaded_pkg_W": 40.5375,
+            "active_pkg_W": 39.155,
+            "active_pkg_mean_W": 39.465,
+            "active_pkg_min_W": 38.1435,
+            "active_pkg_p90_W": 40.666,
+            "active_pkg_cv_pct": 3.1375465336847617,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 24719.699271950893,
+            "perf_per_W": 631.3293135474624,
+            "mJ_per_item": 1.583959398908572
+          },
+          "active_pkg_W": 39.155,
+          "perf_per_W": 631.3293135474624,
+          "mJ_per_item": 1.583959398908572,
+          "pkg_cv_pct": 3.1375465336847617,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 256,
+          "latency_ms": 31.652707955799997,
+          "throughput_items_s": 8087.7756291019305,
+          "relerr": 0.0016102348143403247,
+          "energy": {
+            "iter_ms": 31.963539740469066,
+            "iters": 173,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5034.5,
+            "ane_active_mW": 5034.5,
+            "cpu_loaded_mW": 4103.5,
+            "cpu_active_mW": 2773.0,
+            "gpu_loaded_mW": 41.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 9.178,
+            "active_pkg_W": 7.7955,
+            "active_pkg_mean_W": 8.3301,
+            "active_pkg_min_W": 6.4765,
+            "active_pkg_p90_W": 10.6783,
+            "active_pkg_cv_pct": 16.167521962676215,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 8009.12546228033,
+            "perf_per_W": 1027.403689600453,
+            "mJ_per_item": 0.9733272423704163
+          },
+          "active_pkg_W": 7.7955,
+          "perf_per_W": 1027.403689600453,
+          "mJ_per_item": 0.9733272423704163,
+          "pkg_cv_pct": 16.167521962676215,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 256,
+          "latency_ms": 10.289500001817942,
+          "throughput_items_s": 24879.731760996172,
+          "relerr": 0.0011398206973886112,
+          "energy": {
+            "iter_ms": 10.457214714505046,
+            "iters": 529,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 3775.0,
+            "cpu_active_mW": 2444.5,
+            "gpu_loaded_mW": 37184.0,
+            "gpu_active_mW": 37141.0,
+            "loaded_pkg_W": 40.9885,
+            "active_pkg_W": 39.606,
+            "active_pkg_mean_W": 39.846,
+            "active_pkg_min_W": 38.3385,
+            "active_pkg_p90_W": 41.4332,
+            "active_pkg_cv_pct": 2.568484457061217,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 24480.706095180987,
+            "perf_per_W": 618.105996444503,
+            "mJ_per_item": 1.6178454921198706
+          },
+          "active_pkg_W": 39.606,
+          "perf_per_W": 618.105996444503,
+          "mJ_per_item": 1.6178454921198706,
+          "pkg_cv_pct": 2.568484457061217,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        }
+      ],
+      "note": "self-attention block S=128, D=768, H=12; items = sequences. decomposed-SDPA, rank-4 true batch. ref = fp64 numpy."
+    },
+    "gemm (batched [B,M,K]@[K,N], M=128,K=1024,N=1024)": {
+      "points": [
+        {
+          "device": "ANE",
+          "B": 1,
+          "latency_ms": 0.12083293404430151,
+          "throughput_items_s": 8275.889416318945,
+          "relerr": 0.005539185713959134,
+          "energy": {
+            "iter_ms": 0.1058767656408002,
+            "iters": 52082,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 2511.5,
+            "ane_active_mW": 2511.5,
+            "cpu_loaded_mW": 10052.5,
+            "cpu_active_mW": 8722.0,
+            "gpu_loaded_mW": 42.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 12.6315,
+            "active_pkg_W": 11.249,
+            "active_pkg_mean_W": 11.327,
+            "active_pkg_min_W": 8.9385,
+            "active_pkg_p90_W": 13.3491,
+            "active_pkg_cv_pct": 15.214630023210377,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 9444.942844142231,
+            "perf_per_W": 839.6251083778319,
+            "mJ_per_item": 1.1910077366933616
+          },
+          "active_pkg_W": 11.249,
+          "perf_per_W": 839.6251083778319,
+          "mJ_per_item": 1.1910077366933616,
+          "pkg_cv_pct": 15.214630023210377,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 1,
+          "latency_ms": 0.2677920274436474,
+          "throughput_items_s": 3734.241118176807,
+          "relerr": 0.00036005888013769424,
+          "energy": {
+            "iter_ms": 0.1889800712337887,
+            "iters": 29227,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 5905.5,
+            "cpu_active_mW": 4575.0,
+            "gpu_loaded_mW": 5359.5,
+            "gpu_active_mW": 5316.5,
+            "loaded_pkg_W": 11.1585,
+            "active_pkg_W": 9.776,
+            "active_pkg_mean_W": 9.5474,
+            "active_pkg_min_W": 7.2335,
+            "active_pkg_p90_W": 10.7403,
+            "active_pkg_cv_pct": 10.453156350360091,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 5291.563250406929,
+            "perf_per_W": 541.2810198861425,
+            "mJ_per_item": 1.8474691763815183
+          },
+          "active_pkg_W": 9.776,
+          "perf_per_W": 541.2810198861425,
+          "mJ_per_item": 1.8474691763815183,
+          "pkg_cv_pct": 10.453156350360091,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 4,
+          "latency_ms": 0.2157499548047781,
+          "throughput_items_s": 18539.98070877656,
+          "relerr": 0.00551049675543526,
+          "energy": {
+            "iter_ms": 0.22582721731324049,
+            "iters": 24444,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 4043.0,
+            "ane_active_mW": 4043.0,
+            "cpu_loaded_mW": 9586.5,
+            "cpu_active_mW": 8256.0,
+            "gpu_loaded_mW": 46.0,
+            "gpu_active_mW": 3.0,
+            "loaded_pkg_W": 13.6745,
+            "active_pkg_W": 12.292,
+            "active_pkg_mean_W": 12.168,
+            "active_pkg_min_W": 10.0195,
+            "active_pkg_p90_W": 14.0864,
+            "active_pkg_cv_pct": 11.540887513811452,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 17712.656816081115,
+            "perf_per_W": 1440.9906293590234,
+            "mJ_per_item": 0.693967038803588
+          },
+          "active_pkg_W": 12.292,
+          "perf_per_W": 1440.9906293590234,
+          "mJ_per_item": 0.693967038803588,
+          "pkg_cv_pct": 11.540887513811452,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 4,
+          "latency_ms": 0.35624997690320015,
+          "throughput_items_s": 11228.070903389491,
+          "relerr": 0.0003592944305247405,
+          "energy": {
+            "iter_ms": 0.22168876401835144,
+            "iters": 24854,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 5949.0,
+            "cpu_active_mW": 4618.5,
+            "gpu_loaded_mW": 11461.0,
+            "gpu_active_mW": 11418.0,
+            "loaded_pkg_W": 17.0645,
+            "active_pkg_W": 15.682,
+            "active_pkg_mean_W": 14.0906,
+            "active_pkg_min_W": 9.4865,
+            "active_pkg_p90_W": 16.053,
+            "active_pkg_cv_pct": 17.51540169565758,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 18043.314092674897,
+            "perf_per_W": 1150.5748050423986,
+            "mJ_per_item": 0.8691307993339469
+          },
+          "active_pkg_W": 15.682,
+          "perf_per_W": 1150.5748050423986,
+          "mJ_per_item": 0.8691307993339469,
+          "pkg_cv_pct": 17.51540169565758,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 16,
+          "latency_ms": 0.6810000631958246,
+          "throughput_items_s": 23494.858318976585,
+          "relerr": 0.005510041960589296,
+          "energy": {
+            "iter_ms": 0.6749907933258379,
+            "iters": 8187,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5218.5,
+            "ane_active_mW": 5218.5,
+            "cpu_loaded_mW": 8482.5,
+            "cpu_active_mW": 7152.0,
+            "gpu_loaded_mW": 44.0,
+            "gpu_active_mW": 1.0,
+            "loaded_pkg_W": 13.7265,
+            "active_pkg_W": 12.344,
+            "active_pkg_mean_W": 12.7885,
+            "active_pkg_min_W": 11.2865,
+            "active_pkg_p90_W": 14.6419,
+            "active_pkg_cv_pct": 9.16873873715321,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 23704.027015189717,
+            "perf_per_W": 1920.2873473096013,
+            "mJ_per_item": 0.5207553970508839
+          },
+          "active_pkg_W": 12.344,
+          "perf_per_W": 1920.2873473096013,
+          "mJ_per_item": 0.5207553970508839,
+          "pkg_cv_pct": 9.16873873715321,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 16,
+          "latency_ms": 0.2922499552369118,
+          "throughput_items_s": 54747.65594755912,
+          "relerr": 0.00035963361250433636,
+          "energy": {
+            "iter_ms": 0.3084809843530057,
+            "iters": 17834,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 5117.5,
+            "cpu_active_mW": 3787.0,
+            "gpu_loaded_mW": 26005.5,
+            "gpu_active_mW": 25962.5,
+            "loaded_pkg_W": 31.127,
+            "active_pkg_W": 29.7445,
+            "active_pkg_mean_W": 30.582099999999997,
+            "active_pkg_min_W": 28.8085,
+            "active_pkg_p90_W": 33.197,
+            "active_pkg_cv_pct": 5.19882730971433,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 51867.05441036402,
+            "perf_per_W": 1743.7527748109405,
+            "mJ_per_item": 0.5734757899429986
+          },
+          "active_pkg_W": 29.7445,
+          "perf_per_W": 1743.7527748109405,
+          "mJ_per_item": 0.5734757899429986,
+          "pkg_cv_pct": 5.19882730971433,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 64,
+          "latency_ms": 2.3531250189989805,
+          "throughput_items_s": 27197.874946408756,
+          "relerr": 0.005510521011153194,
+          "energy": {
+            "iter_ms": 2.42747667706727,
+            "iters": 2276,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5716.0,
+            "ane_active_mW": 5716.0,
+            "cpu_loaded_mW": 8359.5,
+            "cpu_active_mW": 7029.0,
+            "gpu_loaded_mW": 40.0,
+            "gpu_active_mW": 0.0,
+            "loaded_pkg_W": 14.124,
+            "active_pkg_W": 12.7415,
+            "active_pkg_mean_W": 13.289399999999999,
+            "active_pkg_min_W": 11.9785,
+            "active_pkg_p90_W": 15.561099999999998,
+            "active_pkg_cv_pct": 10.44021842844756,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 26364.825913516463,
+            "perf_per_W": 2069.208956050423,
+            "mJ_per_item": 0.48327647001332225
+          },
+          "active_pkg_W": 12.7415,
+          "perf_per_W": 2069.208956050423,
+          "mJ_per_item": 0.48327647001332225,
+          "pkg_cv_pct": 10.44021842844756,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 64,
+          "latency_ms": 0.6779159884899855,
+          "throughput_items_s": 94406.97827846768,
+          "relerr": 0.00035983768515283085,
+          "energy": {
+            "iter_ms": 0.7390434414610125,
+            "iters": 7466,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 4091.5,
+            "cpu_active_mW": 2761.0,
+            "gpu_loaded_mW": 41238.0,
+            "gpu_active_mW": 41195.0,
+            "loaded_pkg_W": 45.332,
+            "active_pkg_W": 43.9495,
+            "active_pkg_mean_W": 45.0954,
+            "active_pkg_min_W": 43.3115,
+            "active_pkg_p90_W": 49.0075,
+            "active_pkg_cv_pct": 4.530311334835876,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 86598.42765599626,
+            "perf_per_W": 1970.4075736014347,
+            "mJ_per_item": 0.5075092145389183
+          },
+          "active_pkg_W": 43.9495,
+          "perf_per_W": 1970.4075736014347,
+          "mJ_per_item": 0.5075092145389183,
+          "pkg_cv_pct": 4.530311334835876,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "ANE",
+          "B": 256,
+          "latency_ms": 9.283166960813105,
+          "throughput_items_s": 27576.795837094065,
+          "relerr": 0.005504351343981753,
+          "energy": {
+            "iter_ms": 9.506271477577458,
+            "iters": 582,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 5576.5,
+            "ane_active_mW": 5576.5,
+            "cpu_loaded_mW": 8310.0,
+            "cpu_active_mW": 6979.5,
+            "gpu_loaded_mW": 50.0,
+            "gpu_active_mW": 7.0,
+            "loaded_pkg_W": 13.788,
+            "active_pkg_W": 12.4055,
+            "active_pkg_mean_W": 12.77,
+            "active_pkg_min_W": 11.7595,
+            "active_pkg_p90_W": 13.436499999999999,
+            "active_pkg_cv_pct": 9.419364497432282,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 26929.590702709243,
+            "perf_per_W": 2170.778340470698,
+            "mJ_per_item": 0.4606642609964342
+          },
+          "active_pkg_W": 12.4055,
+          "perf_per_W": 2170.778340470698,
+          "mJ_per_item": 0.4606642609964342,
+          "pkg_cv_pct": 9.419364497432282,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        },
+        {
+          "device": "GPU",
+          "B": 256,
+          "latency_ms": 2.335999975912273,
+          "throughput_items_s": 109589.04222592078,
+          "relerr": 0.00035966012592706243,
+          "energy": {
+            "iter_ms": 2.3839909489432203,
+            "iters": 2311,
+            "n_pm_samples": 10,
+            "ane_loaded_mW": 0.0,
+            "ane_active_mW": 0.0,
+            "cpu_loaded_mW": 3223.5,
+            "cpu_active_mW": 1893.0,
+            "gpu_loaded_mW": 51340.5,
+            "gpu_active_mW": 51297.5,
+            "loaded_pkg_W": 54.506,
+            "active_pkg_W": 53.1235,
+            "active_pkg_mean_W": 53.807,
+            "active_pkg_min_W": 52.1215,
+            "active_pkg_p90_W": 56.8437,
+            "active_pkg_cv_pct": 3.3442438074097427,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ],
+            "throughput_items_s": 107382.95802401437,
+            "perf_per_W": 2021.3833430405446,
+            "mJ_per_item": 0.49471071553197327
+          },
+          "active_pkg_W": 53.1235,
+          "perf_per_W": 2021.3833430405446,
+          "mJ_per_item": 0.49471071553197327,
+          "pkg_cv_pct": 3.3442438074097427,
+          "flags": [
+            "only 10 pm samples \u2014 short window, treat as indicative"
+          ]
+        }
+      ],
+      "note": "M=128, K=1024, N=1024. items = batch elements (each = M x K @ K x N). ref = fp64 numpy. seq=N/A."
+    },
+    "_summary": {
+      "vision (conv-stack->GAP->FC classifier)": {
+        "throughput_crossover_B": null,
+        "throughput_verdict": "ANE wins at all measured B (never overtaken in range)",
+        "perf_per_W_crossover_B": null,
+        "perf_per_W_verdict": "ANE wins at all measured B (never overtaken in range)",
+        "flagged": [
+          {
+            "device": "ANE",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          }
+        ]
+      },
+      "encoder (transformer block, S=128)": {
+        "throughput_crossover_B": 22.836142198529807,
+        "throughput_verdict": "GPU overtakes ANE between B=16 and B=64 (~B=23)",
+        "perf_per_W_crossover_B": null,
+        "perf_per_W_verdict": "ANE wins at all measured B (never overtaken in range)",
+        "flagged": [
+          {
+            "device": "ANE",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          }
+        ]
+      },
+      "attention (self-attn block, S=128)": {
+        "throughput_crossover_B": 5.905486890439842,
+        "throughput_verdict": "GPU overtakes ANE between B=4 and B=16 (~B=6)",
+        "perf_per_W_crossover_B": null,
+        "perf_per_W_verdict": "ANE wins at all measured B (never overtaken in range)",
+        "flagged": [
+          {
+            "device": "ANE",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          }
+        ]
+      },
+      "gemm (batched [B,M,K]@[K,N], M=128,K=1024,N=1024)": {
+        "throughput_crossover_B": 5.202489472528304,
+        "throughput_verdict": "GPU overtakes ANE between B=4 and B=16 (~B=5)",
+        "perf_per_W_crossover_B": null,
+        "perf_per_W_verdict": "ANE wins at all measured B (never overtaken in range)",
+        "flagged": [
+          {
+            "device": "ANE",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 1,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 4,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 16,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 64,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "ANE",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          },
+          {
+            "device": "GPU",
+            "B": 256,
+            "flags": [
+              "only 10 pm samples \u2014 short window, treat as indicative"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

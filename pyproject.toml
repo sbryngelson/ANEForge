@@ -1,0 +1,108 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aneforge"
+# Single-sourced: the version lives in aneforge/__init__.py (__version__),
+# read by hatchling via [tool.hatch.version] below.
+dynamic = ["version"]
+description = "Direct Apple Neural Engine (ANE) backend. A CoreML-free Python frontend that compiles operator graphs into a single fused e5rt program and dispatches them to the ANE."
+readme = "README.md"
+# The core package (aneforge/*.py, aneforge/_bridges/*.py) imports only numpy as a
+# third-party dependency. Several core modules use PEP 604 unions (``int | None``)
+# in runtime-evaluated function signatures without ``from __future__ import
+# annotations``, which requires Python >= 3.10. Developed/verified on Python 3.14.
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Spencer Bryngelson", email = "shb@gatech.edu" }]
+keywords = ["apple-neural-engine", "ane", "apple-silicon", "machine-learning", "inference", "espresso", "e5rt"]
+
+# Only numpy is imported by the core package. torch / torchvision / transformers
+# are LAZY imports inside aneforge.models (pretrained loaders only) and are NOT
+# required to import or run aneforge itself; install them yourself if you call the
+# pretrained-model loaders. mlx / torch are only used by the GPU-comparison
+# benchmark tools (see the [project.optional-dependencies] `bench` extra).
+dependencies = [
+    "numpy",
+]
+
+# IMPORTANT (platform): aneforge only *runs* on Apple Silicon macOS. It dispatches
+# to the ANE through the built ``libane_e5rt_dispatch.dylib`` (one-time clang++
+# build, see README "Install"). It cannot dispatch on non-Apple hardware; the wheel
+# installs anywhere and imports (the off-device tooling works), but compiling or
+# dispatching to the ANE needs the dylib + Apple Silicon.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: MacOS :: MacOS X",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+# Optional deps for the GPU/CPU cross-comparison benchmark tools, which compare the
+# ANE against the Apple GPU via MLX and use torch for reference numerics. Not needed
+# by the aneforge package itself.
+bench = [
+    "mlx>=0.31",
+    "torch",
+]
+# Pretrained model loaders (aneforge.models.load / load_resnet18) and the
+# diffusion examples. Imported lazily; only install if you use them.
+models = [
+    "torch",
+    "torchvision",
+    "transformers",
+]
+# Linting + test runner (CI and local dev). ruff is the linter; the corpus/pytest
+# suites need real ANE hardware to run.
+dev = [
+    "ruff",
+    "pytest",
+    "pytest-forked",   # per-test process isolation (--forked); see tests/conftest.py
+]
+
+[project.urls]
+Homepage = "https://github.com/sbryngelson/ANEForge"
+Repository = "https://github.com/sbryngelson/ANEForge"
+
+[tool.hatch.version]
+path = "aneforge/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+# Ship the aneforge package and everything tracked under it — including the e5rt
+# dispatch shim SOURCE in aneforge/_lib/ (ane_e5rt_dispatch.mm + e5rt_api.h +
+# build.sh), which loads at runtime via _runtime.py::_find_dylib. The built
+# libane_e5rt_dispatch.dylib is gitignored (compiled per-machine by
+# `sh aneforge/_lib/build.sh`), so hatchling excludes it automatically.
+packages = ["aneforge"]
+
+[tool.pytest.ini_options]
+# Collect only the tracked correctness suites. The RE/paper test tooling (fuzzers,
+# capability census) lives in the gitignored utils/ dir and is intentionally excluded.
+testpaths = ["tests"]
+# Run each test in its own forked subprocess: every compile allocates an ANE program
+# and a single process accumulates them across the suite (the training/streaming tests
+# build hundreds), approaching the per-PID program limit and causing sporadic
+# late-suite failures. A fresh process per test resets that; fork overhead is negligible
+# beside the ANE compile time. Requires pytest-forked (in the `dev` extra); the env it
+# needs is set in tests/conftest.py.
+addopts = "--forked"
+
+[tool.ruff]
+line-length = 120
+# Lint the shippable code only; utils/ is gitignored local tooling.
+extend-exclude = ["utils"]
+
+[tool.ruff.lint]
+# Default rule set (E4/E7/E9 + F) minus the dense-style idioms this codebase uses
+# deliberately: multi-import lines, module imports after a sys.path shim, semicolon /
+# colon multi-statements, assigned lambdas, and short math names (l, I, af, ...).
+ignore = ["E401", "E402", "E701", "E702", "E703", "E731", "E741"]

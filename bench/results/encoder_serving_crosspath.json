@@ -1,0 +1,245 @@
+{
+  "meta": {
+    "D": 768,
+    "H": 12,
+    "Dff": 3072,
+    "S": 128,
+    "batches": [
+      1,
+      8,
+      16,
+      32,
+      64
+    ],
+    "group_size": 64,
+    "warmup": 10,
+    "reps": 30,
+    "seed": 0,
+    "attention": "bmm+softmax (no ag.sdpa cut)",
+    "weights": "deterministic random; latency faithful, int4 default-gate pessimistic on gaussian weights",
+    "host_python": "3.14.5",
+    "mlx": "0.31.2"
+  },
+  "rows": [
+    {
+      "B": 1,
+      "ane_fp16_ms": 0.6536665605381131,
+      "ane_int4_default_ms": 0.6368749309331179,
+      "ane_int4_loose_ms": 0.6332499906420708,
+      "ane_auto_ms": 0.6416665855795145,
+      "gpu_fp16_ms": 0.5285204388201237,
+      "gpu_int4_ms": 0.6364166038110852,
+      "throughput_blocks_per_s": {
+        "ane_fp16": 1529.8319668926881,
+        "ane_int4_loose": 1579.155175329842,
+        "gpu_fp16": 1892.0744148181172,
+        "gpu_int4": 1571.2977851483606
+      },
+      "ratio_aneI4loose_over_gpuI4": 1.0050005735741168,
+      "ratio_aneI4loose_over_aneFp16": 1.0322409320138188,
+      "lut_nodes": {
+        "int4_default": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        },
+        "int4_loose": {
+          "int4_lut": 6,
+          "sparse": 0,
+          "int8": 0,
+          "fp16": 22
+        },
+        "auto": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        }
+      },
+      "cosine": {
+        "ane_int4_default_vs_ane_fp16": 0.9999479728812786,
+        "ane_int4_loose_vs_ane_fp16": 0.9914818496718988,
+        "ane_auto_vs_ane_fp16": 0.9999479728812786,
+        "gpu_int4_vs_gpu_fp16": 0.9933849756404741,
+        "ane_fp16_vs_gpu_fp16": 0.9999975876114257
+      }
+    },
+    {
+      "B": 8,
+      "ane_fp16_ms": 6.684354390017688,
+      "ane_int4_default_ms": 6.513458443805575,
+      "ane_int4_loose_ms": 6.522250012494624,
+      "ane_auto_ms": 6.563624949194491,
+      "gpu_fp16_ms": 1.2436044635251164,
+      "gpu_int4_ms": 2.6426250115036964,
+      "throughput_blocks_per_s": {
+        "ane_fp16": 1196.824634544673,
+        "ane_int4_loose": 1226.5705829544195,
+        "gpu_fp16": 6432.913546581548,
+        "gpu_int4": 3027.2929247149864
+      },
+      "ratio_aneI4loose_over_gpuI4": 0.4051707626112523,
+      "ratio_aneI4loose_over_aneFp16": 1.0248540576047411,
+      "lut_nodes": {
+        "int4_default": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        },
+        "int4_loose": {
+          "int4_lut": 6,
+          "sparse": 0,
+          "int8": 0,
+          "fp16": 22
+        },
+        "auto": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        }
+      },
+      "cosine": {
+        "ane_int4_default_vs_ane_fp16": 0.9999480071683414,
+        "ane_int4_loose_vs_ane_fp16": 0.9915459526656425,
+        "ane_auto_vs_ane_fp16": 0.9999480071683414,
+        "gpu_int4_vs_gpu_fp16": 0.9933413208487983,
+        "ane_fp16_vs_gpu_fp16": 0.9999975882169203
+      }
+    },
+    {
+      "B": 16,
+      "ane_fp16_ms": 29.32487498037517,
+      "ane_int4_default_ms": 28.95579149480909,
+      "ane_int4_loose_ms": 28.949937433935702,
+      "ane_auto_ms": 29.0245630312711,
+      "gpu_fp16_ms": 2.214854001067579,
+      "gpu_int4_ms": 5.35754207521677,
+      "throughput_blocks_per_s": {
+        "ane_fp16": 545.6118742435403,
+        "ane_int4_loose": 552.6782237962448,
+        "gpu_fp16": 7223.952455686858,
+        "gpu_int4": 2986.444114739431
+      },
+      "ratio_aneI4loose_over_gpuI4": 0.18506230237777824,
+      "ratio_aneI4loose_over_aneFp16": 1.012951238575043,
+      "lut_nodes": {
+        "int4_default": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        },
+        "int4_loose": {
+          "int4_lut": 6,
+          "sparse": 0,
+          "int8": 0,
+          "fp16": 22
+        },
+        "auto": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        }
+      },
+      "cosine": {
+        "ane_int4_default_vs_ane_fp16": 0.9999480950791378,
+        "ane_int4_loose_vs_ane_fp16": 0.9915447875725827,
+        "ane_auto_vs_ane_fp16": 0.9999480950791378,
+        "gpu_int4_vs_gpu_fp16": 0.9933661652013828,
+        "ane_fp16_vs_gpu_fp16": 0.9999975835089939
+      }
+    },
+    {
+      "B": 32,
+      "ane_fp16_ms": 58.80947958212346,
+      "ane_int4_default_ms": 58.36112494580448,
+      "ane_int4_loose_ms": 58.01422882359475,
+      "ane_auto_ms": 58.22135403286666,
+      "gpu_fp16_ms": 4.877083585597575,
+      "gpu_int4_ms": 10.220624972134829,
+      "throughput_blocks_per_s": {
+        "ane_fp16": 544.1299638660153,
+        "ane_int4_loose": 551.5888196549706,
+        "gpu_fp16": 6561.298250966747,
+        "gpu_int4": 3130.923998018099
+      },
+      "ratio_aneI4loose_over_gpuI4": 0.17617445201612394,
+      "ratio_aneI4loose_over_aneFp16": 1.0137078571008304,
+      "lut_nodes": {
+        "int4_default": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        },
+        "int4_loose": {
+          "int4_lut": 6,
+          "sparse": 0,
+          "int8": 0,
+          "fp16": 22
+        },
+        "auto": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        }
+      },
+      "cosine": {
+        "ane_int4_default_vs_ane_fp16": 0.99994824139565,
+        "ane_int4_loose_vs_ane_fp16": 0.9915583342704172,
+        "ane_auto_vs_ane_fp16": 0.99994824139565,
+        "gpu_int4_vs_gpu_fp16": 0.9933815047398331,
+        "ane_fp16_vs_gpu_fp16": 0.9999975925976557
+      }
+    },
+    {
+      "B": 64,
+      "ane_fp16_ms": 122.32516636140645,
+      "ane_int4_default_ms": 121.14145839586854,
+      "ane_int4_loose_ms": 121.09168746974319,
+      "ane_auto_ms": 121.22422887478024,
+      "gpu_fp16_ms": 8.799396338872612,
+      "gpu_int4_ms": 20.318249939009547,
+      "throughput_blocks_per_s": {
+        "ane_fp16": 523.1956914811275,
+        "ane_int4_loose": 528.525131140744,
+        "gpu_fp16": 7273.226200446354,
+        "gpu_int4": 3149.8775825729313
+      },
+      "ratio_aneI4loose_over_gpuI4": 0.1677922767744599,
+      "ratio_aneI4loose_over_aneFp16": 1.0101863217652447,
+      "lut_nodes": {
+        "int4_default": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        },
+        "int4_loose": {
+          "int4_lut": 6,
+          "sparse": 0,
+          "int8": 0,
+          "fp16": 22
+        },
+        "auto": {
+          "int4_lut": 0,
+          "sparse": 0,
+          "int8": 6,
+          "fp16": 10
+        }
+      },
+      "cosine": {
+        "ane_int4_default_vs_ane_fp16": 0.9999482470271401,
+        "ane_int4_loose_vs_ane_fp16": 0.9915730626674107,
+        "ane_auto_vs_ane_fp16": 0.9999482470271401,
+        "gpu_int4_vs_gpu_fp16": 0.9933850221232216,
+        "ane_fp16_vs_gpu_fp16": 0.9999975982946033
+      }
+    }
+  ]
+}

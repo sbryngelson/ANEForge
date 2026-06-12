@@ -1,0 +1,2174 @@
+{
+  "schema": "aneforge-capability-census/1",
+  "statuses": [
+    "fused",
+    "bridge",
+    "cracked",
+    "reachable",
+    "arch-gated-negative",
+    "not-authorable",
+    "predicted"
+  ],
+  "summary": {
+    "fused": 81,
+    "bridge": 19,
+    "cracked": 8,
+    "reachable": 39,
+    "arch-gated-negative": 64,
+    "not-authorable": 13,
+    "predicted": 1,
+    "total": 225,
+    "cracked_count": 26
+  },
+  "entries": [
+    {
+      "name": "abs",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.abs()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "add",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "a + b",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "adds",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "affine",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "atan",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "avg_pool",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.avg_pool(k)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "batch_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.batch_norm(...)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "bmm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "a @ b (Tensor@Tensor)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "clamped_relu",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "clip",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.clip(lo,hi)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "concat",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.concat([...])",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "conv",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.conv(...)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "conv_transpose",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.conv_transpose(...)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "cos",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.cos()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "crop",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "depth_to_space",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "einsum",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "elu",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.elu(alpha)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "erf",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.erf()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "exp",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.exp()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "exp2",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "expand_dims",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "flatten2d",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "gelu",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.gelu()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "greater",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "group_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.group_norm(g,b,groups,eps)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "instance_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "inverse",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "l2_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.l2_norm(axis,eps)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "layer_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.layer_norm(g,b,eps)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "leaky_relu",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.leaky_relu(alpha)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "linear_activation",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "local_response_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "log",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.log(eps)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "matmul",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x @ W / x.linear(W,b)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "max_pool",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.max_pool(k)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "maximum",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.maximum(a,b)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "minimum",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.minimum(a,b)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "mul",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "a * b",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "muls",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "a * scalar",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "pixel_shuffle",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.pixel_shuffle(x,r)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "pixel_unshuffle",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "ag.pixel_unshuffle(x,r)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "pow",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "a ** b (pow)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "real_div",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "a / b",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reduce_l1_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reduce_log_sum",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reduce_max",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.amax(axes)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reduce_mean",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.mean(axes)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reduce_min",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.amin(axes)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reduce_sum",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.sum(axes)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reduce_sum_square",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "relu",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.relu()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "relu6",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.relu6()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "reshape",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.reshape(...)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "resize_bilinear",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "resize_nearest_neighbor",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "rms_norm",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.rms_norm(g,eps)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "rsqrt",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.rsqrt(eps)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "scaled_tanh",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "select",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "sigmoid",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.sigmoid()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "sigmoid_hard",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "silu",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.silu()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "sin",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.sin()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "slice_by_size",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "softmax",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.softmax(axis)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "softplus",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.softplus()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "softsign",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "space_to_depth",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "split",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "sqrt",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.sqrt()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "square",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.square()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "squeeze",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "stack",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "sub",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "a - b",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "tanh",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.tanh()",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "threshold",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "thresholded_relu",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "transpose",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.transpose(perm)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "upsample",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": "x.upsample(s)",
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "upsample_bilinear",
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; (37/42 verified correct on e5rt)",
+      "route_class": "single",
+      "route_reason": "fused _EMIT op \u2014 one lowering by construction (no graph cut to remove; no alternative route)."
+    },
+    {
+      "name": "argmax",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "x.argmax(axis)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_rank_fused.py",
+      "route_class": "single",
+      "route_reason": "index-of-max has no fused reduction lowering (gather/argmax are arch-gated); the native GlobalArgMinMax bridge is the only route."
+    },
+    {
+      "name": "batch_to_space",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.batch_to_space(x,bh,bw)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_rearrange_fused.py",
+      "route_class": "single",
+      "route_reason": "inverse of space_to_batch; same rank-5+ reshape/transpose wall."
+    },
+    {
+      "name": "channel_to_space",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.channel_to_space(x,r)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_rearrange_fused.py",
+      "route_class": "single",
+      "route_reason": "inverse of space_to_channel; the same rank-6 reshape+transpose decomposition hits the rank-5 ANECCompile wall."
+    },
+    {
+      "name": "cost_volume",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.cost_volume(a,r,R)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_cost_volume_fused.py",
+      "route_class": "single",
+      "route_reason": "stereo cost-volume is a fixed native layer; no fused equivalent surfaced."
+    },
+    {
+      "name": "cross_correlation",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.cross_correlation(x,t)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_cross_correlation_fused.py",
+      "route_class": "single",
+      "route_reason": "lowers to conv (kernel<=15 arch cap); the native CrossCorrelation bridge is the surfaced route."
+    },
+    {
+      "name": "cross_product",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.cross_product(a,b)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_cross_product_fused.py",
+      "route_class": "single",
+      "route_reason": "3-vector cross product is a fixed native layer; the fused permute+mul+sub form is a niche micro-op not worth a cut-free route."
+    },
+    {
+      "name": "dynamic_slice",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.dynamic_slice(x,start,size)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_dynamic_slice_fused.py",
+      "route_class": "single",
+      "route_reason": "data-positioned slice; no fused dynamic-slice op. Native bridge only."
+    },
+    {
+      "name": "flatten",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.flatten(x)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_structural_fused.py",
+      "route_class": "selectable",
+      "alt_route": "reshape to the same 1-D shape \u2014 fused, bit-identical, no cut",
+      "alt_loss": "lossless",
+      "route_evidence": "tests/test_routes.py (relerr 0.0); _rewrite._flatten_to_reshape"
+    },
+    {
+      "name": "fps",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.fps(points,k)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_fps_fused.py",
+      "route_class": "single",
+      "route_reason": "farthest-point sampling is iterative/data-dependent (greedy argmax loop) \u2014 inexpressible as a fused feed-forward graph; native bridge only."
+    },
+    {
+      "name": "input_view",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.input_view(x,off,size)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_input_view_fused.py",
+      "route_class": "single",
+      "route_reason": "contiguous slice along Width; no fused slice op surfaced (slice_by_index is predicted-not-built). Native bridge only."
+    },
+    {
+      "name": "lrn",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.lrn(x,...)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/lrn_fused.py",
+      "route_class": "selectable",
+      "alt_route": "fused local_response_norm(size=C, alpha=alpha*C, beta, k) \u2014 one program, no cut",
+      "alt_loss": "lossless",
+      "route_evidence": "tests/test_routes.py (cos 1.000000 / relerr 0.0 across C/alpha/beta/k); _rewrite._decompose_lrn (bit-equivalent: bridge window N=C + internal /KernelChannel == fused size=C with alpha pre-scaled by C; ~1250x cut removal on conv->lrn->relu; fused has no C<16 cap)"
+    },
+    {
+      "name": "minmax_norm",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.minmax_norm(x,dim,eps)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/minmax_norm_fused.py",
+      "route_class": "selectable",
+      "alt_route": "fused (x-amin)/(amax-amin+eps) \u2014 reduce_min/max + sub + adds + real_div, no cut",
+      "alt_loss": "lossless",
+      "route_evidence": "tests/test_routes.py (Width/Height + degenerate row, relerr<=1.5e-3 == fp16 op-noise); _rewrite._decompose_minmax_norm"
+    },
+    {
+      "name": "radius_search",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.radius_search(p,c,r)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_radius_search_fused.py",
+      "route_class": "single",
+      "route_reason": "neighbor membership is data-dependent gather; native bridge only."
+    },
+    {
+      "name": "scaled_elementwise",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.scaled_elementwise(x,z,...)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/scaled_elementwise_fused.py",
+      "route_class": "single",
+      "route_reason": "fused-scale elementwise op; the equivalent muls+binary form is itself fused but the native layer is the surfaced single route (op='Sub' arch-gated \u2014 see scaled_elementwise_sub negative)."
+    },
+    {
+      "name": "sdpa",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.sdpa(q,k,v)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_sdpa_fused.py",
+      "route_class": "selectable",
+      "alt_route": "decomposed ((q@k^T)*scale).softmax(-1)@v \u2014 fused MIL, no cut",
+      "alt_loss": "lossless",
+      "route_evidence": "tests/fuzz_metamorphic.py mha_vs_sdpa (bit-identical); _rewrite._decompose_sdpa"
+    },
+    {
+      "name": "sort",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.sort(x)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_rank_fused.py",
+      "route_class": "single",
+      "route_reason": "no fused sort primitive on the feed-forward engine; native bridge only."
+    },
+    {
+      "name": "space_to_batch",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.space_to_batch(x,bh,bw)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_rearrange_fused.py",
+      "route_class": "single",
+      "route_reason": "block-to-batch rearrange decomposes only through a rank-5+ reshape/transpose chain (rank-5 wall); no fused equivalent compiles."
+    },
+    {
+      "name": "space_to_channel",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.space_to_channel(x,r)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_rearrange_fused.py",
+      "route_class": "single",
+      "route_reason": "the reshape+transpose decomposition needs a rank-6 intermediate ([N,C,H/r,r,W/r,r]); ANECCompile rejects reshape rank>5 ('Rank of the shape parameter must be between 0 and 5'). Confirmed on-device \u2014 the rank-5 wall (see arch-gated rank5_transpose_matmul)."
+    },
+    {
+      "name": "topk",
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": "ag.topk(x,k)",
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_rank_fused.py",
+      "route_class": "single",
+      "route_reason": "selection/ranking has no fused lowering (no in-graph sort); the native sort/topk bridge is the only route."
+    },
+    {
+      "name": "Broadcast",
+      "status": "cracked",
+      "route": "native netplist (Type=Broadcast; BroadcastInfo replicates a length-1 axis)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_structural_fused.py (bit-exact vs numpy)",
+      "note": "MIL add/sub/mul already broadcast in the fused path; standalone layer unneeded so far."
+    },
+    {
+      "name": "Dropout",
+      "status": "cracked",
+      "route": "native netplist (Type=Dropout); identity at rate 0 (inference-only)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "aneforge/_bridges/ane_structural_fused.py (bit-exact vs numpy)",
+      "note": "Inference identity; not promoted (no training-time use on the inference engine)."
+    },
+    {
+      "name": "DynamicGOC",
+      "status": "cracked",
+      "route": "native netplist (Type=DynamicGOC; gain-offset-clamp out=idx*(data+upd))",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/capabilities.md",
+      "note": "GOC compiles+loads; it is NOT a scatter (Mode/Axis are inert). Niche; not promoted."
+    },
+    {
+      "name": "RandomGenerator",
+      "status": "cracked",
+      "route": "native netplist (Type=RandomGenerator; Normal/Bernoulli/Categorical/Gaussian)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/capabilities.md (4 distributions compile via _ANEInMemoryModel)",
+      "note": "On-device RNG compiles, but seeding/streaming semantics unsettled; host RNG used today."
+    },
+    {
+      "name": "Resample",
+      "status": "cracked",
+      "route": "native netplist (Type=Resample, NearestNeighbor mode); the BILINEAR mode is now promoted to fused (resize_bilinear/upsample_bilinear in _EMIT)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "resample_dynamicgoc_numerics.py; full_mil_vocabulary_sweep.json (resize_bilinear reachable+correct, relerr 2e-4)",
+      "note": "RECONCILED 2026-06-02: the old 'Resample Bilinear is arch-gated' negative was an over-cautious wall \u2014 the direct-netplist Bilinear probe failed HWX codegen, but the MIL resize_bilinear/upsample_bilinear ops compile + run exact (relerr 2e-4) on the e5rt path and now SHIP as fused (ag.resize_bilinear / ag.upsample_bilinear). NearestNeighbor remains cracked-but-unpromoted (fused resize_nearest_neighbor covers it)."
+    },
+    {
+      "name": "Shape",
+      "status": "cracked",
+      "route": "native netplist (Type=Shape; emits shape as a 1-D output vector)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/capabilities.md (3 variants compile via the netplist path)",
+      "note": "Static shapes are known at compile time in aneforge, so no frontend need yet."
+    },
+    {
+      "name": "Tile",
+      "status": "cracked",
+      "route": "native netplist (Type=Tile; Params is a dimension-NAME-keyed factor dict {'Width':fx,'Height':fy,'Channel':fc} \u2014 NOT FactorX/Y/Z)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "(4/4 self-test PASS; bit-exact vs np.tile on M5 across Width/Height/Channel/combined)",
+      "note": "Cracked 2026-05-30 (was `predicted`): the dimension-keyed Params spelling was the missing piece. Clean NETPLIST_OPS-bridge promotion candidate (B=1 static)."
+    },
+    {
+      "name": "slice_by_index",
+      "status": "cracked",
+      "route": "native netplist (Type=InputView; Dimension/Offset/Size) \u2014 bit-exact contiguous slice",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "(runs bit-exact via InputView on M5)",
+      "note": "Cracked 2026-05-30 (was `predicted`): SAME capability as the `input_view` bridge op \u2014 promotable as a frontend `slice`, not a new layer. Not double-counted as bridge."
+    },
+    {
+      "name": "ceil",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)"
+    },
+    {
+      "name": "constexpr_affine_dequantize",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0005)"
+    },
+    {
+      "name": "constexpr_blockwise_shift_scale",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00038)",
+      "note": "FLIPPED 2026-06-02 (was the 'last quant wall'): the old empty-paren spelling segfaulted (malformed probe); the named-arg form compiles + runs correct (relerr ~3e-4) across multi-block + int4 configs. Shipped via ag.compile(compress='blockwise'). CAVEAT: the output is NOT matmul-routable \u2014 it dequantizes IN-PROGRAM to a dense fp16 weight, so there is NO weight-streaming bandwidth win (unlike int8/int4-LUT/sparse); exposed for the smaller-on-disk artifact + finer-grained scales, not throughput."
+    },
+    {
+      "name": "constexpr_cast",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)"
+    },
+    {
+      "name": "constexpr_lut_to_dense",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)",
+      "alias_of": "shipped via ag.compile(compress='int4') \u2014 int4-LUT weight streaming"
+    },
+    {
+      "name": "constexpr_lut_to_sparse",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "constexpr_sparse_blockwise_shift_scale",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "constexpr_sparse_to_dense",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)",
+      "alias_of": "shipped via ag.compile(compress='sparse') \u2014 sparse weight streaming"
+    },
+    {
+      "name": "dequantize",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00027)"
+    },
+    {
+      "name": "equal",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "fill",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00034)"
+    },
+    {
+      "name": "fill_like",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00029)"
+    },
+    {
+      "name": "floor",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)"
+    },
+    {
+      "name": "floor_div",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)"
+    },
+    {
+      "name": "gelu_exact",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00239)"
+    },
+    {
+      "name": "gelu_sigmoid_approx",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "gelu_tanh_approx",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "greater_equal",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "l2_pool",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00041)"
+    },
+    {
+      "name": "less",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "less_equal",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "linear",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0003)",
+      "alias_of": "matmul / linear_activation (fused) \u2014 same affine-projection capability"
+    },
+    {
+      "name": "logical_not",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "non_maximum_suppression",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "FLIPPED 2026-06-02 (was the 'NMS' arch-gated negative, a direct-netplist probe that failed): the MIL non_maximum_suppression op compiles + runs on the e5rt path. Presence-only \u2014 NOT numerically validated against a reference (selection-ordering output); not promoted to a frontend primitive. Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "not_equal",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "pad",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00021)",
+      "alias_of": "Pad (netplist layer is predicted; the MIL pad OP is the reachable route)"
+    },
+    {
+      "name": "prelu",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "quantize",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00027)"
+    },
+    {
+      "name": "range_1d",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00025)"
+    },
+    {
+      "name": "reduce_l2_norm",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00051)",
+      "alias_of": "l2_norm / reduce_l2_norm (fused) \u2014 same L2 capability"
+    },
+    {
+      "name": "reduce_log_sum_exp",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00077)"
+    },
+    {
+      "name": "resize",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "alias_of": "resize_bilinear / resize_nearest_neighbor (fused) \u2014 generic resize entry",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "reverse",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)",
+      "alias_of": "Reverse (netplist layer is walled; the MIL reverse OP is the reachable route)"
+    },
+    {
+      "name": "round",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)"
+    },
+    {
+      "name": "scaled_dot_product_attention",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.00027)",
+      "alias_of": "sdpa (bridge) \u2014 same fused-attention capability"
+    },
+    {
+      "name": "sign",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)"
+    },
+    {
+      "name": "softplus_parametric",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable)",
+      "note": "Sweep klass 'reachable' = compiles + runs (presence), correctness not numerically pinned against a reference."
+    },
+    {
+      "name": "tile",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)",
+      "alias_of": "Tile (cracked native layer) \u2014 same broadcast-replicate capability"
+    },
+    {
+      "name": "upsample_nearest_neighbor",
+      "status": "reachable",
+      "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; not promoted to a frontend _EMIT emitter / ag. method)",
+      "frontend": null,
+      "verified": "silicon",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=reachable+correct, relerr=0.0)",
+      "alias_of": "upsample / resize_nearest_neighbor (fused) \u2014 same NN upsample"
+    },
+    {
+      "name": "CropResize",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "texture-family codegen gate: direct-netplist CropResize fails ANECCompile on M5 (plane-equation coefficient constraint).",
+      "evidence": "tests/run_corpus.py (on-device conformance corpus)",
+      "probe": null
+    },
+    {
+      "name": "KernelRasterizer",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "KernelRasterizer (im2col unfold) only compiles in the degenerate identity config (OutputChannels=1, output dims = input dims); real im2col (OutputChannels=K*K*C) always fails ANECCompile.",
+      "evidence": "docs/capabilities.md",
+      "probe": null
+    },
+    {
+      "name": "MATDECOMP_MATMULT_0x19",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "internal-optimizer-gated (NOT schema-gated): the fused matrix-decomp-matmul composite (opcode 0x19) is emitted ONLY by ZinIrOpt::BatchMatDecompMatMul on a batched topology the netplist cannot express; 7 variants all lower to 0x60.",
+      "evidence": "tests/run_corpus.py (on-device conformance corpus)",
+      "probe": null
+    },
+    {
+      "name": "MatrixDecomposition_factorization",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MatrixDecomposition (NonQRGivens) factorization is not_currently_callable (carriers compile, the factorization doesn't) \u2014 the LAPACK wall is architectural, not numerical.",
+      "evidence": "tests/run_corpus.py (on-device conformance corpus)",
+      "probe": null
+    },
+    {
+      "name": "PEFUSED_GOC_0x5C",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "internal-optimizer-gated: nested-container grammar recovered (<parent>.dynamic_goc subunit) but no single-0x5C HWX emerged.",
+      "evidence": "tests/run_corpus.py (on-device conformance corpus)",
+      "probe": null
+    },
+    {
+      "name": "RCAS",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "internal-optimizer-gated (NOT schema-gated): opcodes 0x44 (RCAS) / 0x65 (NEFUSED_RCAS) have a ZinRCASLayer + internal ValidateSemantics_Impl but NO exported `_ANECValidateRCASLayer` and no .tbd entry (all RCAS validate symbols are local `t`, not `T`) \u2014 not netplist-reachable. Same class as MATDECOMP_MATMULT_0x19.",
+      "evidence": "(the one genuine opcode-surface gap; found 2026-05-30 by the exhaustive validator/opcode census)",
+      "probe": null
+    },
+    {
+      "name": "Reverse",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native netplist Reverse LAYER is schema-UNREACHABLE: no exported `_ANECValidateReverseLayer` and no opcode in the atlas \u2014 only an internal mlir::mps::ReverseOp (MIL-frontend, lowers away). By the callable-validator heuristic it is not netplist-crackable; the `predicted` classification was over-optimistic. NOTE (2026-06-02): this is the netplist-DOOR fact ONLY \u2014 the MIL `reverse` OP is reachable+correct on the e5rt path (registered `reachable` via the sweep), so the reversal CAPABILITY is available even though the native layer door is not.",
+      "evidence": "ane_census_completeness.py (was `predicted`); full_mil_vocabulary_sweep.json (MIL reverse reachable+correct)",
+      "probe": null
+    },
+    {
+      "name": "RingBufferWriter",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "RingBufferWriter is a multi-procedure streaming-state primitive; fails from any single-procedure netplist regardless of Params.",
+      "evidence": "docs/capabilities.md",
+      "probe": null
+    },
+    {
+      "name": "Unflatten",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "Unflatten fails HWX codegen for all variants (composite lowering specific); bare Reshape/Transpose compile fine.",
+      "evidence": "docs/capabilities.md",
+      "probe": null
+    },
+    {
+      "name": "acos",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "argsort",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "compiles-walled: the authored minimal MIL program fails ANECCompile (ane_e5rt_program_compile, mask=0x4) on M5 \u2014 a codegen/backend wall.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled)"
+    },
+    {
+      "name": "asin",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "atanh",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "band_part",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "batch_to_space_indivisible",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "BatchToSpace with input batch N % (FactorX*FactorY) != 0 fails HWX codegen ('Input batch n is not divisible by factor x * factor y'). (ag.batch_to_space guards this at construction.)",
+      "evidence": "aneforge/graph.batch_to_space",
+      "probe": "batch_to_space_indivisible"
+    },
+    {
+      "name": "bf16_compute",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "bf16 has no path on the backend (cleanly rejected).",
+      "evidence": "docs/capabilities.md (Datatypes)",
+      "probe": null
+    },
+    {
+      "name": "bitwise_logical",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "bitwise/logical ops (and/or/xor/not) rejected \u2014 not in the fp16 surface; trig/hyperbolic inverses (acos/asin/sinh) are netplist dead-ends too.",
+      "evidence": "docs/capabilities.md (no hardware backing)",
+      "probe": null
+    },
+    {
+      "name": "cast",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "conv_kernel_ge16",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "conv (and the CrossCorrelation bridge that lowers to conv) is capped at kernel K<=15 on this M5: a 1xK kernel with K>=16 fails ANECCompile 'Not implemented'. (aneforge/dsp.py routes wider kernels to FFT.)",
+      "evidence": "tests/run_corpus.py (on-device conformance corpus)",
+      "probe": null
+    },
+    {
+      "name": "conv_quantized",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "compiles-walled: the authored minimal MIL program fails ANECCompile (ane_e5rt_program_compile, mask=0x4) on M5 \u2014 a codegen/backend wall.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled)"
+    },
+    {
+      "name": "cosh",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "crop_resize",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "cumsum",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL cumsum op is unimplemented on the ANE backend \u2014 a native-op gap, NOT a 'no parallel-prefix silicon' hardware wall. The prefix-sum capability is reachable on the same e5rt path via an upper-triangular ones matmul (x @ U; relerr ~3e-4; O(N^2) in the matmul).",
+      "evidence": "2026-05-31 (triangular matmul runs on ANE)",
+      "probe": null
+    },
+    {
+      "name": "custom_hwx_load",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "custom HWX loading hits the kernel-signature wall (unentitled).",
+      "evidence": "tests/run_corpus.py (on-device conformance corpus)",
+      "probe": null
+    },
+    {
+      "name": "fp32_compute",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "fp32 compute rejected: 'not implemented on any backend'. The ANE computes in fp16 only \u2014 aneforge ACCEPTS fp32/fp64 float weights but silently casts them to fp16 (so there is no frontend raise to probe; the wall is a compute-precision fact).",
+      "evidence": "aneforge/graph.py _check_dtype",
+      "probe": null
+    },
+    {
+      "name": "gather",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL gather op is unimplemented on the ANE backend \u2014 a native-op gap. The gather capability is reachable for trace-time-constant (STATIC) indices via a one-hot @ matmul (bit-exact). Only DYNAMIC large-vocab embedding lookup stays host-side (one-hot is O(vocab) and needs runtime-tensor indices); the earlier blanket 'embedding stays host-side' holds only for that dynamic case.",
+      "evidence": "(host gather, dynamic case); 2026-05-31 (one-hot matmul, static)",
+      "probe": null
+    },
+    {
+      "name": "gather_along_axis",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "gather_nd",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "group_norm_large_featuremap",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "group_norm fails ANECCompile 'Not implemented' at large reduction feature maps (640ch@64x64, 512ch@128x128, >=256x256); the limit is the reduction size, not raw resolution (plain conv at 512x512 compiles).",
+      "evidence": "(capability boundary #2)",
+      "probe": null
+    },
+    {
+      "name": "identity",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "compiles-walled: the authored minimal MIL program fails ANECCompile (ane_e5rt_program_compile, mask=0x4) on M5 \u2014 a codegen/backend wall.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled)"
+    },
+    {
+      "name": "iir_recurrence",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "sequential IIR recurrence (each output depends on the previous) = the scan wall; only static FIR-unroll fits.",
+      "evidence": "(aneforge/dsp.py routes IIR-class work to FIR unroll)",
+      "probe": null
+    },
+    {
+      "name": "int32_compute",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "int32 compute rejected at MIL parse ('not implemented').",
+      "evidence": "docs/capabilities.md (Datatypes)",
+      "probe": "int32_weight"
+    },
+    {
+      "name": "logical_and",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "logical_or",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "logical_xor",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "lrn_channels_ge16",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "LocalResponseNormalization with KernelChannel=C fails ANECCompile for C>=16 on this ANE; C<=15 works. (ag.lrn guards this.)",
+      "evidence": "(bug 3); aneforge/graph.lrn",
+      "probe": "lrn_c16"
+    },
+    {
+      "name": "minmax_norm_channel_axis",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "MinMaxNormalization over the Channel axis is arch-gated (HWX codegen fails); Width/Height work. (ag.minmax_norm rejects Channel.)",
+      "evidence": "aneforge/graph.minmax_norm",
+      "probe": "minmax_norm_channel"
+    },
+    {
+      "name": "mod",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "nan_to_num",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the ANE does not propagate NaN, so NaN-handling ops are broken (no fix).",
+      "evidence": "docs/capabilities.md (Operators with no hardware backing)",
+      "probe": null
+    },
+    {
+      "name": "non_zero",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "on_device_rng_seeded",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "no settled on-device RNG: RandomGenerator compiles but seeding/streaming semantics are unsettled, so RNG is kept host-side.",
+      "evidence": "(host-side RNG)",
+      "probe": null
+    },
+    {
+      "name": "one_hot",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "random_bernoulli",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "random_categorical",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "random_normal",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "random_uniform",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "rank5_transpose_matmul",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "transpose+matmul fails ANECCompile at rank>=5 (the rank-4 cap): a fully-split tensor carries at most 3 factor groups (forces matmul-FFT to 3-stage, not full log-depth radix-2).",
+      "evidence": "(matmul-FFT walls); aneforge/fft.py",
+      "probe": null
+    },
+    {
+      "name": "reduce_argmax",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "reduce_argmin",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "reduce_prod",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL reduce_prod op is unimplemented on the ANE backend ('Not implemented \u2026 not supported on any backend') \u2014 a NATIVE-OP gap, NOT a hardware-capability wall. The product-reduction capability is reachable on the same e5rt path via exp(reduce_sum(log(x))) (relerr ~1e-3; positive inputs, sign/zero need extra ops).",
+      "evidence": "2026-05-31 (exp-sum-log decomposition runs on ANE)",
+      "probe": null
+    },
+    {
+      "name": "reshape_like",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "compiles-walled: the authored minimal MIL program fails ANECCompile (ane_e5rt_program_compile, mask=0x4) on M5 \u2014 a codegen/backend wall.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled)"
+    },
+    {
+      "name": "reverse_sequence",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "scaled_elementwise_sub",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "ScaledElementWise op='Sub' is rejected by ANECCompile; op='Mult' silently ignores `scale`. (ag.scaled_elementwise guards both.)",
+      "evidence": "(bug 1/2); aneforge/graph.scaled_elementwise",
+      "probe": "scaled_elementwise_sub"
+    },
+    {
+      "name": "scan",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "no data-dependent in-graph loop: sequential recurrence / scan is inexpressible on the feed-forward engine.",
+      "evidence": "(LAPACK wall is ARCHITECTURAL); (IIR)",
+      "probe": null
+    },
+    {
+      "name": "scatter",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "no scatter-write path: DynamicGOC is gain-offset-clamp only; scatter/scatter_along_axis cannot be lowered.",
+      "evidence": "docs/capabilities.md (DynamicGOC correction)",
+      "probe": null
+    },
+    {
+      "name": "scatter_along_axis",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "scatter_nd",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "shape",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "sinh",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "slice_update",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "sliding_windows",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "square_opcode_tiling",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native `square` opcode fused with a following nonlinearity fails ANECCompile when (Width % 128) > 64. (aneforge emits mul(x,x) instead \u2014 the negative is the opcode, which is why aneforge never surfaces it.)",
+      "evidence": "_compile._e_square",
+      "probe": null
+    },
+    {
+      "name": "tan",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "the native MIL op is unimplemented on the ANE backend (ane_e5rt_program_compile fails, mask=0x4) \u2014 a native-op gap. Some of these capabilities are reachable via a decomposition on the same e5rt path (see the curated reduce_prod/gather/cumsum entries); this synthesized entry records only that the NATIVE op does not lower.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE)"
+    },
+    {
+      "name": "topk_k3_k4",
+      "status": "arch-gated-negative",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "TopK with K in {3,4} is a fixed forbidden band on this ANE (ANECCompile fails); K=1,2 and K>=5 work. (ag.topk guards this at construction.)",
+      "evidence": "aneforge/graph.topk",
+      "probe": "topk_k3"
+    },
+    {
+      "name": "classify",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "cond",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "gru",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE); (scan wall)"
+    },
+    {
+      "name": "list_gather",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "list_length",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "list_read",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "list_scatter",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "list_write",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "lstm",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE); (scan wall)"
+    },
+    {
+      "name": "make_list",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "read_state",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "rnn",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=not-implemented-on-ANE); (scan wall)"
+    },
+    {
+      "name": "while_loop",
+      "status": "not-authorable",
+      "route": null,
+      "frontend": null,
+      "verified": "negative-confirmed",
+      "wall": "control-flow / list / state op with no single-op form on the single-procedure feed-forward MIL surface aneforge targets (the recurrence/scan wall); recorded, not defeated.",
+      "evidence": "docs/full_mil_vocabulary_sweep.json (klass=compile-walled); (scan wall)"
+    },
+    {
+      "name": "Pad",
+      "status": "predicted",
+      "route": "predicted netplist (ZinPadLayer + ZinPadValidator; netplist kANECNetUnitPaddingInfo dict schema unrecovered)",
+      "frontend": null,
+      "verified": "no",
+      "evidence": "\u2014 the validator ACCEPTS the schema (status=1) but ~13 binary-derived PaddingInfo spellings all fail ANECCompile; spatial-only (batch/depth/channel padding documented unsupported), amount_before/after must be constant. Next step: recover the exact dict from a CoreML-emitted Pad bundle. NOTE (2026-06-02): this is the netplist-DOOR Pad LAYER only \u2014 the MIL `pad` OP is reachable+correct on the e5rt path (registered `reachable` via the sweep), so the padding CAPABILITY is available through the MIL door."
+    }
+  ]
+}

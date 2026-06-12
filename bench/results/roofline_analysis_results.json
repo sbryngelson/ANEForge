@@ -1,0 +1,615 @@
+{
+  "ceilings": {
+    "compute": {
+      "CPU": {
+        "gemm_peak_gflops": 1898.4940071188134,
+        "gemm_peak_at_N": 2048,
+        "conv_peak_gflops": 11.018560885531103,
+        "conv_peak_at_C": 256
+      },
+      "GPU": {
+        "gemm_peak_gflops": 30862.297164820775,
+        "gemm_peak_at_N": 6144,
+        "conv_peak_gflops": 31790.043491569955,
+        "conv_peak_at_C": 512
+      },
+      "ANE": {
+        "gemm_peak_gflops": 10190.730294680543,
+        "gemm_peak_at_N": 2048,
+        "conv_peak_gflops": 18771.440988492333,
+        "conv_peak_at_C": 512
+      }
+    },
+    "bandwidth_gbps": {
+      "CPU": 130.43509056034193,
+      "GPU": 229.6691611817247,
+      "ANE": 24.05542146813675
+    },
+    "ridge_flop_per_byte": {
+      "CPU": 14.555086357229394,
+      "GPU": 134.37719285438206,
+      "ANE": 423.63549140799495
+    },
+    "archetype_achieved_gbps": {
+      "streaming (relu / x*2)": {
+        "CPU": 130.43509056034193,
+        "GPU": 229.6691611817247,
+        "ANE": 24.05542146813675
+      },
+      "gelu (light compute)": {
+        "CPU": 175.83214140716268,
+        "GPU": 48.608697569519684,
+        "ANE": 23.21068569127974
+      },
+      "reduction (sum)": {
+        "CPU": 41.66099963600504,
+        "GPU": 193.04959160564684,
+        "ANE": 22.37894577054737
+      },
+      "softmax": {
+        "CPU": 6.135198546875592,
+        "GPU": 238.35315998252378,
+        "ANE": 15.146875471388727
+      },
+      "layer_norm": {
+        "CPU": 10.85319472599783,
+        "GPU": 41.890680357029076,
+        "ANE": 4.3823633346128394
+      }
+    }
+  },
+  "archetype_ai": [
+    {
+      "archetype": "matmul square N=512",
+      "class": "compute",
+      "formula": "2N^3 / (3N^2)*2B = N/3 FLOP/elem-pair -> AI=N/3 (fp16: /2B cancels in ratio... see note)",
+      "flops": 268435456.0,
+      "bytes_fp16": 1572864,
+      "ai_fp16": 170.66666666666666,
+      "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
+      "represents": [
+        "matmul(large)",
+        "bmm",
+        "linear"
+      ]
+    },
+    {
+      "archetype": "matmul square N=2048",
+      "class": "compute",
+      "formula": "2N^3 / (3N^2)*2B = N/3 FLOP/elem-pair -> AI=N/3 (fp16: /2B cancels in ratio... see note)",
+      "flops": 17179869184.0,
+      "bytes_fp16": 25165824,
+      "ai_fp16": 682.6666666666666,
+      "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
+      "represents": [
+        "matmul(large)",
+        "bmm",
+        "linear"
+      ]
+    },
+    {
+      "archetype": "matmul square N=8192",
+      "class": "compute",
+      "formula": "2N^3 / (3N^2)*2B = N/3 FLOP/elem-pair -> AI=N/3 (fp16: /2B cancels in ratio... see note)",
+      "flops": 1099511627776.0,
+      "bytes_fp16": 402653184,
+      "ai_fp16": 2730.6666666666665,
+      "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
+      "represents": [
+        "matmul(large)",
+        "bmm",
+        "linear"
+      ]
+    },
+    {
+      "archetype": "matmul GEMV M=1 (decode), K=N=4096",
+      "class": "memory",
+      "formula": "2*1*K*N / (1*K + K*N + 1*N)*2B  ~ 2KN/(KN*2B) = 1/bpe = 1.0 FLOP/byte (fp16)",
+      "flops": 33554432.0,
+      "bytes_fp16": 33570816,
+      "ai_fp16": 0.9995119570522206,
+      "note": "weight matrix (KxN) read once, used once -> the AI floor. With the standard 2-flop/MAC count it is 1.0 FLOP/byte fp16 (the often-quoted '~0.5' uses a 1-flop/MAC convention; same physics, factor-2 bookkeeping). Memory-bound on EVERY device: well below the lowest ridge (CPU ~15).",
+      "represents": [
+        "GEMV",
+        "LLM decode matmul",
+        "M=1 projection"
+      ]
+    },
+    {
+      "archetype": "conv 3x3 (C=512,B=4,64x64)",
+      "class": "compute",
+      "formula": "2*B*Cout*Cin*9*H*W / (in+wt+out)*2B",
+      "flops": 77309411328.0,
+      "bytes_fp16": 38273024,
+      "ai_fp16": 2019.945205479452,
+      "note": "reuse: each input elem in ~9*Cout MACs -> high AI, clears every ridge.",
+      "represents": [
+        "conv",
+        "conv_transpose"
+      ]
+    },
+    {
+      "archetype": "conv 3x3 (C=64,B=16,64x64)",
+      "class": "compute",
+      "formula": "2*B*Cout*Cin*9*H*W / (in+wt+out)*2B",
+      "flops": 4831838208.0,
+      "bytes_fp16": 16850944,
+      "ai_fp16": 286.7399124939232,
+      "note": "fewer channels -> lower reuse -> lower AI than the C=512 config, still >> ridge.",
+      "represents": [
+        "conv (small-channel)"
+      ]
+    },
+    {
+      "archetype": "relu / copy (1R+1W, ~1 flop)",
+      "class": "memory",
+      "formula": "1 flop / (2 elem * 2B) = 0.25; counting copy as ~0 flop -> ~0.2",
+      "flops": 16777216,
+      "bytes_fp16": 67108864,
+      "ai_fp16": 0.25,
+      "bw_archetype": "streaming (relu / x*2)",
+      "represents": [
+        "relu",
+        "abs",
+        "copy",
+        "reshape",
+        "transpose",
+        "add",
+        "sub",
+        "mul"
+      ]
+    },
+    {
+      "archetype": "gelu / silu (~10 flop, 1R+1W)",
+      "class": "memory",
+      "formula": "~10 flop / (2 elem * 2B) = 2.5 FLOP/byte",
+      "flops": 167772160,
+      "bytes_fp16": 67108864,
+      "ai_fp16": 2.5,
+      "bw_archetype": "gelu (light compute)",
+      "represents": [
+        "gelu",
+        "silu",
+        "erf",
+        "tanh",
+        "sigmoid",
+        "exp"
+      ]
+    },
+    {
+      "archetype": "softmax (~5 flop, 1R+1W)",
+      "class": "memory",
+      "formula": "~5 flop / (2 elem * 2B) = 1.25 FLOP/byte",
+      "flops": 83886080,
+      "bytes_fp16": 67108864,
+      "ai_fp16": 1.25,
+      "bw_archetype": "softmax",
+      "represents": [
+        "softmax"
+      ]
+    },
+    {
+      "archetype": "layer_norm (~10 flop, 1R+1W)",
+      "class": "memory",
+      "formula": "~10 flop / (2 elem * 2B) = 2.5 FLOP/byte",
+      "flops": 167772160,
+      "bytes_fp16": 67108864,
+      "ai_fp16": 2.5,
+      "bw_archetype": "layer_norm",
+      "represents": [
+        "layer_norm",
+        "rms_norm",
+        "group_norm",
+        "batch_norm",
+        "l2_norm"
+      ]
+    }
+  ],
+  "gap_measurements": {
+    "attention": {
+      "config": {
+        "S": 512,
+        "D": 64,
+        "H": 12,
+        "flops": 821035008.0
+      },
+      "ANE": {
+        "dtype": "fp16",
+        "lat_ms": 1.3738329289481044,
+        "gflops": 597.6236198011629
+      },
+      "GPU": {
+        "dtype": "fp16",
+        "lat_ms": 0.1752499956637621,
+        "gflops": 4684.93596756061
+      },
+      "CPU": {
+        "dtype": "fp32",
+        "lat_ms": 38.3468751097098,
+        "gflops": 21.410740918289477
+      }
+    },
+    "fused_block": {
+      "ANE": {
+        "config": {
+          "B": 4,
+          "C": 256,
+          "HxW": "64x64",
+          "n_conv": 3
+        },
+        "dtype": "fp16",
+        "lat_ms": 2.7995409909635782,
+        "gflops": 20711.27327056678,
+        "fused_flops": 57982058496.0,
+        "ai_one_conv_standalone": 1076.3211678832117,
+        "ai_fused_est": 2853.9870967741936,
+        "ai_3conv_standalone_est": 1076.3211678832117,
+        "note": "fused AI is an ESTIMATE: intermediates stay on-chip so not counted in fused_bytes; standalone-3x would spill each intermediate."
+      }
+    },
+    "gemv": {
+      "ANE": {
+        "dtype": "fp16",
+        "lat_ms": 0.2994160167872906,
+        "gflops": 112.06625604079674
+      },
+      "GPU": {
+        "dtype": "fp16",
+        "lat_ms": 0.4446659004315734,
+        "gflops": 75.45987215892545
+      },
+      "CPU": {
+        "dtype": "fp32",
+        "lat_ms": 0.4154170164838433,
+        "gflops": 80.77288764916307
+      }
+    },
+    "available": {
+      "ane": true,
+      "mlx": true
+    }
+  },
+  "placement": {
+    "CPU": [
+      {
+        "archetype": "matmul square N=512",
+        "class": "compute",
+        "ai": 85.33333333333333,
+        "applicable_roof_gflops": 1898.4940071188134,
+        "achieved_gflops": 1403.8925719003241,
+        "pct_roof": 73.94769573336158,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul square N=2048",
+        "class": "compute",
+        "ai": 341.3333333333333,
+        "applicable_roof_gflops": 1898.4940071188134,
+        "achieved_gflops": 1898.4940071188134,
+        "pct_roof": 100.0,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul square N=8192",
+        "class": "compute",
+        "ai": 1365.3333333333333,
+        "applicable_roof_gflops": 1898.4940071188134,
+        "achieved_gflops": 1701.9458577539463,
+        "pct_roof": 89.64715460634231,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul GEMV M=1 (decode), K=N=4096",
+        "class": "memory",
+        "ai": 0.4997559785261103,
+        "applicable_roof_gflops": 65.1857163171255,
+        "achieved_gflops": null,
+        "pct_roof": null,
+        "source": null
+      },
+      {
+        "archetype": "conv 3x3 (C=512,B=4,64x64)",
+        "class": "compute",
+        "ai": 1009.972602739726,
+        "applicable_roof_gflops": 11.018560885531103,
+        "achieved_gflops": 10.99819016142574,
+        "pct_roof": 99.81512355091567,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "conv 3x3 (C=64,B=16,64x64)",
+        "class": "compute",
+        "ai": 143.3699562469616,
+        "applicable_roof_gflops": 11.018560885531103,
+        "achieved_gflops": 10.810593976389113,
+        "pct_roof": 98.11257648523701,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "relu / copy (1R+1W, ~1 flop)",
+        "class": "memory",
+        "ai": 0.125,
+        "applicable_roof_gflops": 16.30438632004274,
+        "achieved_gflops": 16.30438632004274,
+        "pct_roof": 100.0,
+        "source": "DERIVED: AI x achieved 130.4 GB/s (streaming (relu / x*2))"
+      },
+      {
+        "archetype": "gelu / silu (~10 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 1.25,
+        "applicable_roof_gflops": 163.0438632004274,
+        "achieved_gflops": 219.79017675895335,
+        "pct_roof": 134.80432347752244,
+        "source": "DERIVED: AI x achieved 175.8 GB/s (gelu (light compute))"
+      },
+      {
+        "archetype": "softmax (~5 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 0.625,
+        "applicable_roof_gflops": 81.5219316002137,
+        "achieved_gflops": 3.834499091797245,
+        "pct_roof": 4.703641114150432,
+        "source": "DERIVED: AI x achieved 6.1 GB/s (softmax)"
+      },
+      {
+        "archetype": "layer_norm (~10 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 1.25,
+        "applicable_roof_gflops": 163.0438632004274,
+        "achieved_gflops": 13.566493407497287,
+        "pct_roof": 8.32076297825463,
+        "source": "DERIVED: AI x achieved 10.9 GB/s (layer_norm)"
+      },
+      {
+        "archetype": "attention block [1,12,512,64]",
+        "class": "composite (matmul-dom)",
+        "ai": 26.1,
+        "applicable_roof_gflops": 1898.4940071188134,
+        "achieved_gflops": 21.410740918289477,
+        "pct_roof": 1.1277750068214742,
+        "source": "MEASURED attention"
+      },
+      {
+        "archetype": "GEMV M=1 K=N=4096 (decode)",
+        "class": "memory",
+        "ai": 0.4997559785261103,
+        "applicable_roof_gflops": 65.1857163171255,
+        "achieved_gflops": 80.77288764916307,
+        "pct_roof": 123.91194300329033,
+        "source": "MEASURED GEMV"
+      }
+    ],
+    "GPU": [
+      {
+        "archetype": "matmul square N=512",
+        "class": "compute",
+        "ai": 170.66666666666666,
+        "applicable_roof_gflops": 30862.297164820775,
+        "achieved_gflops": 1235.367458020199,
+        "pct_roof": 4.002837026105645,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul square N=2048",
+        "class": "compute",
+        "ai": 682.6666666666666,
+        "applicable_roof_gflops": 30862.297164820775,
+        "achieved_gflops": 22345.385354023587,
+        "pct_roof": 72.4035065655922,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul square N=8192",
+        "class": "compute",
+        "ai": 2730.6666666666665,
+        "applicable_roof_gflops": 30862.297164820775,
+        "achieved_gflops": 30526.726310581864,
+        "pct_roof": 98.91268348416585,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul GEMV M=1 (decode), K=N=4096",
+        "class": "memory",
+        "ai": 0.9995119570522206,
+        "applicable_roof_gflops": 229.55707276728754,
+        "achieved_gflops": null,
+        "pct_roof": null,
+        "source": null
+      },
+      {
+        "archetype": "conv 3x3 (C=512,B=4,64x64)",
+        "class": "compute",
+        "ai": 2019.945205479452,
+        "applicable_roof_gflops": 31790.043491569955,
+        "achieved_gflops": 31790.043491569955,
+        "pct_roof": 100.0,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "conv 3x3 (C=64,B=16,64x64)",
+        "class": "compute",
+        "ai": 286.7399124939232,
+        "applicable_roof_gflops": 31790.043491569955,
+        "achieved_gflops": 5343.476282795391,
+        "pct_roof": 16.808647286727897,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "relu / copy (1R+1W, ~1 flop)",
+        "class": "memory",
+        "ai": 0.25,
+        "applicable_roof_gflops": 57.41729029543117,
+        "achieved_gflops": 57.41729029543117,
+        "pct_roof": 100.0,
+        "source": "DERIVED: AI x achieved 229.7 GB/s (streaming (relu / x*2))"
+      },
+      {
+        "archetype": "gelu / silu (~10 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 2.5,
+        "applicable_roof_gflops": 574.1729029543117,
+        "achieved_gflops": 121.5217439237992,
+        "pct_roof": 21.164660209238225,
+        "source": "DERIVED: AI x achieved 48.6 GB/s (gelu (light compute))"
+      },
+      {
+        "archetype": "softmax (~5 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 1.25,
+        "applicable_roof_gflops": 287.08645147715583,
+        "achieved_gflops": 297.9414499781547,
+        "pct_roof": 103.78109048516441,
+        "source": "DERIVED: AI x achieved 238.4 GB/s (softmax)"
+      },
+      {
+        "archetype": "layer_norm (~10 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 2.5,
+        "applicable_roof_gflops": 574.1729029543117,
+        "achieved_gflops": 104.7267008925727,
+        "pct_roof": 18.239575631960125,
+        "source": "DERIVED: AI x achieved 41.9 GB/s (layer_norm)"
+      },
+      {
+        "archetype": "attention block [1,12,512,64]",
+        "class": "composite (matmul-dom)",
+        "ai": 52.2,
+        "applicable_roof_gflops": 11988.730213686029,
+        "achieved_gflops": 4684.93596756061,
+        "pct_roof": 39.077832965266055,
+        "source": "MEASURED attention"
+      },
+      {
+        "archetype": "GEMV M=1 K=N=4096 (decode)",
+        "class": "memory",
+        "ai": 0.9995119570522206,
+        "applicable_roof_gflops": 229.55707276728754,
+        "achieved_gflops": 75.45987215892545,
+        "pct_roof": 32.871943891453334,
+        "source": "MEASURED GEMV"
+      }
+    ],
+    "ANE": [
+      {
+        "archetype": "matmul square N=512",
+        "class": "compute",
+        "ai": 170.66666666666666,
+        "applicable_roof_gflops": 4105.458597228671,
+        "achieved_gflops": 1818.865434402951,
+        "pct_roof": 44.30358731740101,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul square N=2048",
+        "class": "compute",
+        "ai": 682.6666666666666,
+        "applicable_roof_gflops": 10190.730294680543,
+        "achieved_gflops": 10190.730294680543,
+        "pct_roof": 100.0,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul square N=8192",
+        "class": "compute",
+        "ai": 2730.6666666666665,
+        "applicable_roof_gflops": 10190.730294680543,
+        "achieved_gflops": 4881.866311277611,
+        "pct_roof": 47.9049702044013,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "matmul GEMV M=1 (decode), K=N=4096",
+        "class": "memory",
+        "ai": 0.9995119570522206,
+        "applicable_roof_gflops": 24.043681389333365,
+        "achieved_gflops": null,
+        "pct_roof": null,
+        "source": null
+      },
+      {
+        "archetype": "conv 3x3 (C=512,B=4,64x64)",
+        "class": "compute",
+        "ai": 2019.945205479452,
+        "applicable_roof_gflops": 18771.440988492333,
+        "achieved_gflops": 18771.440988492333,
+        "pct_roof": 100.0,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "conv 3x3 (C=64,B=16,64x64)",
+        "class": "compute",
+        "ai": 286.7399124939232,
+        "applicable_roof_gflops": 6897.649446777974,
+        "achieved_gflops": 5884.713712586782,
+        "pct_roof": 85.31476929920882,
+        "source": "saturation sweep (size-specific)"
+      },
+      {
+        "archetype": "relu / copy (1R+1W, ~1 flop)",
+        "class": "memory",
+        "ai": 0.25,
+        "applicable_roof_gflops": 6.013855367034187,
+        "achieved_gflops": 6.013855367034187,
+        "pct_roof": 100.0,
+        "source": "DERIVED: AI x achieved 24.1 GB/s (streaming (relu / x*2))"
+      },
+      {
+        "archetype": "gelu / silu (~10 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 2.5,
+        "applicable_roof_gflops": 60.13855367034188,
+        "achieved_gflops": 58.026714228199346,
+        "pct_roof": 96.48837673463369,
+        "source": "DERIVED: AI x achieved 23.2 GB/s (gelu (light compute))"
+      },
+      {
+        "archetype": "softmax (~5 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 1.25,
+        "applicable_roof_gflops": 30.06927683517094,
+        "achieved_gflops": 18.93359433923591,
+        "pct_roof": 62.96657695834564,
+        "source": "DERIVED: AI x achieved 15.1 GB/s (softmax)"
+      },
+      {
+        "archetype": "layer_norm (~10 flop, 1R+1W)",
+        "class": "memory",
+        "ai": 2.5,
+        "applicable_roof_gflops": 60.13855367034188,
+        "achieved_gflops": 10.955908336532099,
+        "pct_roof": 18.217778226906628,
+        "source": "DERIVED: AI x achieved 4.4 GB/s (layer_norm)"
+      },
+      {
+        "archetype": "attention block [1,12,512,64]",
+        "class": "composite (matmul-dom)",
+        "ai": 52.2,
+        "applicable_roof_gflops": 1255.6930006367384,
+        "achieved_gflops": 597.6236198011629,
+        "pct_roof": 47.593131402191396,
+        "source": "MEASURED attention"
+      },
+      {
+        "archetype": "GEMV M=1 K=N=4096 (decode)",
+        "class": "memory",
+        "ai": 0.9995119570522206,
+        "applicable_roof_gflops": 24.043681389333365,
+        "achieved_gflops": 112.06625604079674,
+        "pct_roof": 466.0944146869012,
+        "source": "MEASURED GEMV"
+      }
+    ]
+  },
+  "ascii_rooflines": {
+    "CPU": " CPU roofline  (compute roof gemm=1.9 TF/s conv=11 GF/s, bw=130 GB/s, ridge R=15 FLOP/byte)\n y=GFLOP/s [1..2848]  x=AI [0.1..2731]  (log-log)\n |                              R___________________1_____________\n |                            ///          0                2     \n |                         ///                                    \n |                      ///                                       \n |                    //                                          \n |               7 ///                                            \n |              ///                                               \n |         b ///                                                  \n |        ///                                                     \n |     ///                                                        \n |   //                             a                             \n |/6/            9                                                \n |                                            5           4       \n |                                                                \n |           8                                                    \n |                                                                \n |                                                                \n |                                                                \n +----------------------------------------------------------------  AI->\n   [0] matmul square N=512                AI=  85.333    1403.9 GFLOP/s  73.9%roof\n   [1] matmul square N=2048               AI= 341.333    1898.5 GFLOP/s  100.0%roof\n   [2] matmul square N=8192               AI=1365.333    1701.9 GFLOP/s  89.6%roof\n   [4] conv 3x3 (C=512,B=4,64x64)         AI=1009.973      11.0 GFLOP/s  99.8%roof\n   [5] conv 3x3 (C=64,B=16,64x64)         AI= 143.370      10.8 GFLOP/s  98.1%roof\n   [6] relu / copy (1R+1W, ~1 flop)       AI=   0.125      16.3 GFLOP/s  100.0%roof\n   [7] gelu / silu (~10 flop, 1R+1W)      AI=   1.250     219.8 GFLOP/s  134.8%roof\n   [8] softmax (~5 flop, 1R+1W)           AI=   0.625       3.8 GFLOP/s  4.7%roof\n   [9] layer_norm (~10 flop, 1R+1W)       AI=   1.250      13.6 GFLOP/s  8.3%roof\n   [a] attention block [1,12,512,64]      AI=  26.100      21.4 GFLOP/s  1.1%roof\n   [b] GEMV M=1 K=N=4096 (decode)         AI=   0.500      80.8 GFLOP/s  123.9%roof",
+    "GPU": " GPU roofline  (compute roof gemm=30.9 TF/s conv=31.8 TF/s, bw=230 GB/s, ridge R=134 FLOP/byte)\n y=GFLOP/s [17..47685]  x=AI [0.1..5461]  (log-log)\n |                                         R_______________42_____\n |                                       ///        1             \n |                                     //                         \n |                                  ///                           \n |                               ///  a        5                  \n |                            ///                                 \n |                          //                                    \n |                       ///                0                     \n |                    ///                                         \n |                  //                                            \n |              8///                                              \n |            ///                                                 \n |          //      7                                             \n |       ///   b    9                                             \n |    /6/                                                         \n |  //                                                            \n |//                                                              \n |                                                                \n +----------------------------------------------------------------  AI->\n   [0] matmul square N=512                AI= 170.667    1235.4 GFLOP/s  4.0%roof\n   [1] matmul square N=2048               AI= 682.667   22345.4 GFLOP/s  72.4%roof\n   [2] matmul square N=8192               AI=2730.667   30526.7 GFLOP/s  98.9%roof\n   [4] conv 3x3 (C=512,B=4,64x64)         AI=2019.945   31790.0 GFLOP/s  100.0%roof\n   [5] conv 3x3 (C=64,B=16,64x64)         AI= 286.740    5343.5 GFLOP/s  16.8%roof\n   [6] relu / copy (1R+1W, ~1 flop)       AI=   0.250      57.4 GFLOP/s  100.0%roof\n   [7] gelu / silu (~10 flop, 1R+1W)      AI=   2.500     121.5 GFLOP/s  21.2%roof\n   [8] softmax (~5 flop, 1R+1W)           AI=   1.250     297.9 GFLOP/s  103.8%roof\n   [9] layer_norm (~10 flop, 1R+1W)       AI=   2.500     104.7 GFLOP/s  18.2%roof\n   [a] attention block [1,12,512,64]      AI=  52.200    4684.9 GFLOP/s  39.1%roof\n   [b] GEMV M=1 K=N=4096 (decode)         AI=   1.000      75.5 GFLOP/s  32.9%roof",
+    "ANE": " ANE roofline  (compute roof gemm=10.2 TF/s conv=18.8 TF/s, bw=24 GB/s, ridge R=424 FLOP/byte)\n y=GFLOP/s [2..28157]  x=AI [0.1..5461]  (log-log)\n |                                                         4      \n |                                                R_1_____________\n |                                             5//                \n |                                         ////             2     \n |                                      /// 0                     \n |                                   ///                          \n |                                /// a                           \n |                            ////                                \n |                         ///                                    \n |             b        ///                                       \n |                  7///                                          \n |               ////                                             \n |            //8                                                 \n |         ///      9                                             \n |     6///                                                       \n |  ///                                                           \n |//                                                              \n |                                                                \n +----------------------------------------------------------------  AI->\n   [0] matmul square N=512                AI= 170.667    1818.9 GFLOP/s  44.3%roof\n   [1] matmul square N=2048               AI= 682.667   10190.7 GFLOP/s  100.0%roof\n   [2] matmul square N=8192               AI=2730.667    4881.9 GFLOP/s  47.9%roof\n   [4] conv 3x3 (C=512,B=4,64x64)         AI=2019.945   18771.4 GFLOP/s  100.0%roof\n   [5] conv 3x3 (C=64,B=16,64x64)         AI= 286.740    5884.7 GFLOP/s  85.3%roof\n   [6] relu / copy (1R+1W, ~1 flop)       AI=   0.250       6.0 GFLOP/s  100.0%roof\n   [7] gelu / silu (~10 flop, 1R+1W)      AI=   2.500      58.0 GFLOP/s  96.5%roof\n   [8] softmax (~5 flop, 1R+1W)           AI=   1.250      18.9 GFLOP/s  63.0%roof\n   [9] layer_norm (~10 flop, 1R+1W)       AI=   2.500      11.0 GFLOP/s  18.2%roof\n   [a] attention block [1,12,512,64]      AI=  52.200     597.6 GFLOP/s  47.6%roof\n   [b] GEMV M=1 K=N=4096 (decode)         AI=   1.000     112.1 GFLOP/s  466.1%roof"
+  },
+  "meta": {
+    "source_compute_json": "bench/results",
+    "source_bandwidth_json": "bench/results",
+    "fp16_bytes": 2,
+    "cpu_fp32_bytes": 4
+  }
+}

@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""End-to-end int4 / auto weight-compression benchmark for real-model graphs.
+
+QUESTION
+--------
+The per-matmul finding was that 4-bit LUT weight streaming gives a 1.3-1.8x
+latency win over fp16 on weight-bandwidth-bound matmuls at batch 1. This script
+asks whether that win CARRIES to whole models, where norms, attention, residuals
+and the fixed per-program dispatch floor dilute the weight-bandwidth fraction
+(exactly as int8's per-GEMV win did NOT carry to end-to-end LLM decode).
+
+WHAT IT MEASURES
+----------------
+For each model we build the full forward graph (correct ImageNet / ViT-B/16 /
+MiniLM-L6 architecture and shapes) and compile it THREE ways through the public
+``af.compile`` knob:
+
+    compress=None     fp16 baseline (byte-identical to the historical path)
+    compress="int4"   per-tensor 4-bit LUT, accuracy-gated (falls back int8/fp16)
+    compress="auto"   per-weight: sparse -> int4 -> int8 -> fp16 (most-aggressive
+                      encoding that stays within the accuracy budget)
+
+and reports, end-to-end (the WHOLE program, not a single matmul):
+
+  * latency  : median of `REPS` timed evals after `WARMUP` (ms) + the speedup
+               vs the fp16 baseline,
+  * cosine   : cosine similarity of the compressed output vs the fp16 baseline
+               output (accuracy retention of the end-to-end forward),
+  * size     : on-disk `weights.bin` bytes + fraction of the fp16 baseline.
+
+HONESTY / WEIGHT SOURCE
+-----------------------
+This host has numpy + aneforge + the ANE dylib but NOT torch / torchvision /
+transformers, so the pretrained loaders (af.load_resnet18 / af.load / the ViT
+demo) cannot fetch real trained weights here. We therefore build each model's
+EXACT architecture and tensor shapes with deterministic random weights
+(seeded, He/Xavier-scaled). This is a faithful test of the latency + footprint
+question (those depend on op mix + shapes, not weight values) and of cosine
+RETENTION (compressed-vs-fp16 of the same graph). The one caveat is the int4
+ACCURACY GATE: random near-Gaussian weights are close to worst-case for 4-bit
+LUT palettization (no low-rank / clustered structure for the 16-entry codebook
+to exploit), so the int4 fallback-to-fp16 rate measured here is PESSIMISTIC
+relative to real trained weights. We report the realized cosine and footprint
+so the gate behaviour is visible either way. compress_atol is left at the
+library default (0.05 relative-L2 per tensor).
+
+Run:
+    PYTHONPATH=<repo> \
+      python3 bench/model_int4_bench.py
+"""
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
+
+import numpy as np
+
+import aneforge as af
+
+SEED = 0
+WARMUP = 8
+REPS = 30
+HERE = Path(__file__).resolve().parent
+OUT_JSON = HERE / "results" / "model_int4_bench.json"
+
+
+def _rng():
+    return np.random.default_rng(SEED)
+
+
+def W(rng, *shape, fan_in=None):
+    """Xavier-ish weight: scale by 1/sqrt(fan_in) so activations stay O(1) and the
+    fp16 baseline forward does not overflow (matters for the cosine reference)."""
+    fan = fan_in if fan_in is not None else shape[-1]
+    return (rng.standard_normal(shape) / np.sqrt(fan)).astype(np.float32)
+
+
+def B(rng, n):
+    return (rng.standard_normal(n) * 0.01).astype(np.float32)
+
+
+# model graph builders (full architecture, deterministic random weights)
+def build_resnet18(rng):
+    """torchvision ResNet-18 forward (ImageNet): conv-dominated. BatchNorm is folded
+    into the preceding conv (as the real loader does), so the graph is pure
+    conv/relu/pool/add/fc. Input [1,3,224,224] -> logits [1,1000]."""
+    def conv_w(cout, cin, k):
+        return W(rng, cout, cin, k, k, fan_in=cin * k * k)
+
+    def block(x, cin, cout, stride, downsample):
+        out = af.conv(x, conv_w(cout, cin, 3), stride=stride, pad=1, bias=B(rng, cout)).relu()
+        out = af.conv(out, conv_w(cout, cout, 3), stride=1, pad=1, bias=B(rng, cout))
+        idn = x
+        if downsample:
+            idn = af.conv(x, conv_w(cout, cin, 1), stride=stride, pad=0, bias=B(rng, cout))
+        return (out + idn).relu()
+
+    x = af.input((1, 3, 224, 224))
+    h = af.conv(x, conv_w(64, 3, 7), stride=2, pad=3, bias=B(rng, 64)).relu().max_pool(3, stride=2, pad=1)
+    chans = [(64, 64, 1), (64, 128, 2), (128, 256, 2), (256, 512, 2)]
+    for li, (cin, cout, stride) in enumerate(chans):
+        for i in range(2):
+            s = stride if i == 0 else 1
+            ci = cin if i == 0 else cout
+            h = block(h, ci, cout, s, downsample=(i == 0 and li != 0))
+    h = h.mean((2, 3)).reshape(1, 512)
+    return h.linear(W(rng, 1000, 512), B(rng, 1000)), [(1, 3, 224, 224)]
+
+
+def build_vit_b16(rng, n_layers=12):
+    """ViT-B/16 encoder forward (12 layers x 768 dim x 12 heads, 197 tokens):
+    patch-embed conv + attention + MLP matmuls -> logits [1,1000]. Mixed conv +
+    matmul, matmul-dominated by parameter count (the MLP 768<->3072 projections)."""
+    DIM, HEADS, PATCH, IMG = 768, 12, 16, 224
+    NP = (IMG // PATCH) ** 2          # 196
+    SEQ = NP + 1                       # 197
+
+    x = af.input((1, 3, IMG, IMG))
+    cls = af.input((1, DIM))
+    pos = af.input((SEQ, DIM))
+
+    h = af.conv(x, W(rng, DIM, 3, PATCH, PATCH, fan_in=3 * PATCH * PATCH), stride=PATCH, bias=B(rng, DIM))
+    patches = h.reshape(1, DIM, NP).transpose([0, 2, 1]).reshape(NP, DIM)
+    seq = af.concat([cls, patches], axis=0) + pos
+
+    for _ in range(n_layers):
+        x_ln = seq.layer_norm(W(rng, DIM), B(rng, DIM), eps=1e-6)
+        attn = af.mha(x_ln, W(rng, DIM, DIM), B(rng, DIM), W(rng, DIM, DIM), B(rng, DIM),
+                      W(rng, DIM, DIM), B(rng, DIM), W(rng, DIM, DIM), B(rng, DIM), HEADS)
+        seq = seq + attn
+        y_ln = seq.layer_norm(W(rng, DIM), B(rng, DIM), eps=1e-6)
+        y = y_ln.linear(W(rng, DIM * 4, DIM), B(rng, DIM * 4)).gelu().linear(W(rng, DIM, DIM * 4), B(rng, DIM))
+        seq = seq + y
+
+    seq = seq.layer_norm(W(rng, DIM), B(rng, DIM), eps=1e-6)
+    # classifier on row 0 (CLS) via a one-hot picker matmul (same trick as vit_demo)
+    sel = np.eye(1, SEQ, dtype=np.float32)
+    cls_row = seq.transpose([1, 0]).linear(sel).transpose([1, 0])    # [1,768]
+    out = cls_row.linear(W(rng, 1000, DIM), B(rng, 1000))
+    cls_const = (rng.standard_normal((1, DIM)) * 0.02).astype(np.float32)
+    pos_const = (rng.standard_normal((SEQ, DIM)) * 0.02).astype(np.float32)
+    return out, [(1, 3, IMG, IMG), (1, DIM), (SEQ, DIM)], (cls_const, pos_const)
+
+
+def build_minilm(rng, S=64, L=6, DIM=384, HEADS=12, ff=1536):
+    """all-MiniLM-L6-v2 encoder (BERT-family) transformer stack: 6 post-norm layers
+    of MHA + LayerNorm + (Linear-GELU-Linear) MLP. Pure matmul + layer_norm (the
+    embedding lookup is host-side in the real loader; we feed the post-embed [S,DIM]
+    activation as the input, which is what runs on the ANE). Matmul-DOMINATED."""
+    eps = 1e-12
+    h = af.input((S, DIM))
+    for _ in range(L):
+        attn = af.mha(h, W(rng, DIM, DIM), B(rng, DIM), W(rng, DIM, DIM), B(rng, DIM),
+                      W(rng, DIM, DIM), B(rng, DIM), W(rng, DIM, DIM), B(rng, DIM), HEADS)
+        h = (h + attn).layer_norm(W(rng, DIM), B(rng, DIM), eps)
+        f = h.linear(W(rng, ff, DIM), B(rng, ff)).gelu().linear(W(rng, DIM, ff), B(rng, DIM))
+        h = (h + f).layer_norm(W(rng, DIM), B(rng, DIM), eps)
+    return h, [(S, DIM)]
+
+
+MODELS = {
+    "resnet18": ("conv", build_resnet18),
+    "vit_b16": ("matmul+conv", build_vit_b16),
+    "minilm_l6": ("matmul", build_minilm),
+}
+
+
+# bench harness
+def _encoding_tally(build_dir):
+    """Count which weight encodings the emitter actually chose, by scanning the
+    generated MIL. This makes the int4 accuracy-gate fallback VISIBLE: a request for
+    compress='int4' that finds a weight too lossy for the 16-entry LUT falls back to
+    int8 (constexpr_affine_dequantize) or fp16 (const). SegmentedModels write several
+    model.mil files (one per region); we sum across all of them under build_dir."""
+    counts = {"int4_lut": 0, "sparse": 0, "int8": 0, "fp16": 0}
+    for mil in Path(build_dir).rglob("model.mil"):
+        txt = mil.read_text()
+        counts["int4_lut"] += txt.count("constexpr_lut_to_dense")
+        counts["sparse"] += txt.count("constexpr_sparse_to_dense")
+        counts["int8"] += txt.count("constexpr_affine_dequantize")
+        # fp16 weight constants are BLOBFILE-backed const() ops (exclude the many
+        # tiny inline const() scalars, which have no BLOBFILE).
+        counts["fp16"] += sum(1 for ln in txt.splitlines()
+                              if "= const()" in ln and "BLOBFILE" in ln)
+    return counts
+
+
+def cosine(a, b):
+    a, b = np.asarray(a, np.float64).ravel(), np.asarray(b, np.float64).ravel()
+    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-30))
+
+
+def median_ms(net, inputs):
+    for _ in range(WARMUP):
+        net(*inputs)
+    ts = []
+    for _ in range(REPS):
+        t0 = time.perf_counter()
+        net(*inputs)
+        ts.append((time.perf_counter() - t0) * 1e3)
+    return float(np.median(ts))
+
+
+def run_model(name, kind, builder):
+    print(f"\n=== {name} ({kind}) ===")
+    # build inputs once (deterministic) so all three variants see identical feeds
+    rng = _rng()
+    built = builder(rng)
+    in_shapes = built[1]
+    extra_consts = built[2] if len(built) > 2 else ()
+    in_rng = np.random.default_rng(SEED + 1)
+    arrays = [(in_rng.standard_normal(s) * 0.5).astype(np.float32) for s in in_shapes[:len(in_shapes) - len(extra_consts)]]
+    arrays += list(extra_consts)
+
+    res = {"kind": kind, "n_ops": None, "fp16_ms": None, "variants": {}}
+    fp16_out = None
+    # (label, compress, compress_atol). "int4_forced" loosens the accuracy gate to
+    # 0.30 so the 4-bit LUT actually FIRES on these random weights (the default 0.05
+    # gate rejects near-Gaussian weights -> falls back to int8/fp16, so plain "int4"
+    # here measures the FALLBACK, not the LUT). The forced row is the genuine
+    # int4-encoding end-to-end latency/footprint datapoint; its cosine shows the
+    # accuracy cost of accepting the lossy LUT.
+    plan = [("fp16", None, 0.05), ("int4", "int4", 0.05),
+            ("int4_forced", "int4", 0.30), ("auto", "auto", 0.05)]
+    for label, variant, atol in plan:
+        # rebuild the graph fresh per variant from the SAME seed: weight values are
+        # identical across variants, only the encoding differs.
+        rng_v = _rng()
+        b = builder(rng_v)
+        out_v = b[0]
+        d = tempfile.mkdtemp(prefix=f"int4bench_{name}_")
+        t0 = time.perf_counter()
+        try:
+            net = af.compile(out_v, compress=variant, compress_atol=atol, build_dir=d)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {label:12} COMPILE FAILED: {type(e).__name__}: {str(e)[:80]}")
+            res["variants"][label] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+            continue
+        compile_s = time.perf_counter() - t0
+        y = net(*arrays)
+        ms = median_ms(net, arrays)
+        wb = os.path.getsize(os.path.join(d, "weights.bin"))
+        n_ops = getattr(net, "n_ops", None)
+        enc = _encoding_tally(d)        # which weight encodings the emitter actually chose
+        net.release()
+
+        if variant is None:
+            fp16_out = y
+            res["fp16_ms"] = ms
+            res["fp16_weights_bytes"] = wb
+            res["n_ops"] = n_ops
+            print(f"  {label:12} {ms:8.3f} ms   weights.bin {wb/1e6:7.2f} MB   "
+                  f"(compile {compile_s:.1f}s, {res['n_ops']} ops)")
+        else:
+            cos = cosine(y, fp16_out)
+            spd = res["fp16_ms"] / ms if ms else float("nan")
+            frac = wb / res["fp16_weights_bytes"]
+            res["variants"][label] = {
+                "compress": variant, "compress_atol": atol,
+                "ms": ms, "speedup": spd, "cosine": cos,
+                "weights_bytes": wb, "size_frac": frac, "encoding": enc,
+            }
+            print(f"  {label:12} {ms:8.3f} ms   {spd:4.2f}x   cos {cos:.4f}   "
+                  f"weights.bin {wb/1e6:7.2f} MB ({frac:.2f}x)   enc {enc}")
+    return res
+
+
+def main():
+    print("END-TO-END int4 / auto weight-compression benchmark (ANE, aneforge)")
+    print("=" * 72)
+    print(f"warmup={WARMUP} reps={REPS} (median) seed={SEED} compress_atol=lib-default(0.05)")
+    results = {"meta": {"warmup": WARMUP, "reps": REPS, "seed": SEED,
+                        "weights": "deterministic random (no torch on host); "
+                                   "latency+footprint faithful, int4 accuracy-gate pessimistic",
+                        "host_python": os.sys.version.split()[0]},
+               "models": {}}
+    for name, (kind, builder) in MODELS.items():
+        try:
+            results["models"][name] = run_model(name, kind, builder)
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            results["models"][name] = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+    OUT_JSON.write_text(json.dumps(results, indent=2))
+    print(f"\nwrote {OUT_JSON}")
+
+    # compact verdict table
+    print("\n" + "=" * 72)
+    hdr = f"{'ms':>8} {'spd':>5} {'cos':>6} {'sz':>5}"
+    print(f"{'model':11}{'kind':13}{'fp16ms':>8} | int4(gate) {hdr} | int4_forced {hdr} | auto {hdr}")
+
+    def fmt(v):
+        if not v or "error" in v:
+            return f"{'--':>8} {'--':>5} {'--':>6} {'--':>5}"
+        return f"{v['ms']:8.3f} {v['speedup']:4.2f}x {v['cosine']:6.3f} {v['size_frac']:4.2f}x"
+
+    for name, r in results["models"].items():
+        if "error" in r:
+            print(f"{name:11} ERROR: {r['error']}")
+            continue
+        i4 = r["variants"].get("int4", {})
+        i4f = r["variants"].get("int4_forced", {})
+        au = r["variants"].get("auto", {})
+        print(f"{name:11}{r['kind']:13}{r['fp16_ms']:8.3f} |            {fmt(i4)} |             {fmt(i4f)} |      {fmt(au)}")
+
+
+if __name__ == "__main__":
+    main()
