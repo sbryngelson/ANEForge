@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Real autoregressive LLM-DECODE measurement — ANE (aneforge) vs GPU (MLX) vs CPU.
+"""Real autoregressive LLM-DECODE measurement - ANE (aneforge) vs GPU (MLX) vs CPU.
 
-WHY THIS EXISTS. The paper reasons extensively about LLM *decode* — "GEMV AI ~ 1,
+WHY THIS EXISTS. The paper reasons extensively about LLM *decode* - "GEMV AI ~ 1,
 decode is bandwidth/GPU territory", the device ordering inferred from a single
 synthetic GEMV roofline point (ANE 112 / GPU 75 / CPU 81 GFLOP/s; ANE winning at
 B=1 up to K~4096; batched shifting toward the GPU). But the paper never MEASURES
@@ -19,8 +19,8 @@ plus the vocab projection. We run:
 for each device {ANE (aneforge fp16), GPU (MLX fp16), CPU (numpy/Accelerate fp32)}.
 
 Per device per batch we report: tokens/s, latency/token (ms), tokens/s/W and
-energy/token (mJ/token) — using the idle-subtracted total-package ACTIVE power
-from the device_compare_wattcomplete harness (imported, not reimplemented) — and
+energy/token (mJ/token) - using the idle-subtracted total-package ACTIVE power
+from the device_compare_wattcomplete harness (imported, not reimplemented) - and
 relerr of one token's logits vs an fp32 numpy reference (sanity).
 
 THE PER-TOKEN LAYER. A decoder block in the decode regime:
@@ -33,7 +33,7 @@ then after L blocks: logits = rmsnorm(h) @ Wvocab  (the big vocab GEMV).
 
 The attention here uses a FIXED, PRE-FILLED KV cache of length S_KV: the query is
 the single new token (seq=1), scores are q @ Kcache^T  -> softmax -> @ Vcache. This
-is the faithful per-token decode shape — the projections are genuine M=1 GEMVs and
+is the faithful per-token decode shape - the projections are genuine M=1 GEMVs and
 dominate the FLOPs, which is exactly why decode is memory-bound. The KV cache is a
 constant baked into the graph (we measure steady-state per-token compute, not the
 cache-append bookkeeping, which is a memcopy on every backend and not the compute
@@ -43,7 +43,7 @@ ANE NOTE / PROXY LABELLING. aneforge fuses the whole block into e5rt program(s).
 af.sdpa requires equal-shape q,k,v so it can't express seq=1-query-vs-S_KV-cache;
 we therefore build attention from primitives (bmm scores + softmax + bmm context),
 which is the decomposed-SDPA route the ANE fuses natively anyway. This is a
-FULL-STACK decode forward (not a primitives-only proxy) — every per-token op of the
+FULL-STACK decode forward (not a primitives-only proxy) - every per-token op of the
 block + vocab head is present and measured end-to-end as one compiled program per
 batch size. The only decode-loop element not measured is the KV-cache *append*
 (a memcopy, identical cost on every backend).
@@ -77,7 +77,7 @@ if str(REPO) not in sys.path:
 
 import numpy as np
 
-# Reuse the rigorous power harness (idle-subtracted total-package active W) — import,
+# Reuse the rigorous power harness (idle-subtracted total-package active W) - import,
 # do NOT reimplement. measure_energy/sample_idle live in device_compare_wattcomplete.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare_wattcomplete as wc  # noqa: E402
@@ -189,18 +189,18 @@ def ref_decode(cfg: Cfg, W, x, dt=np.float64):
     return h @ W["Wvocab"].astype(dt).T
 
 
-# ANE graph (aneforge) — full per-token stack, batch B
+# ANE graph (aneforge) - full per-token stack, batch B
 def build_ane(cfg: Cfg, W, B, int8=False):
     """Build the B-stream per-token decoder forward as one aneforge graph.
 
     ``int8=True`` compiles the linear weights as per-output-channel symmetric int8
-    streamed at half the bytes (dequantised during the tile DMA) — the verified
+    streamed at half the bytes (dequantised during the tile DMA) - the verified
     int8 weight-streaming path. Decode is the AI~1 memory-bound regime, so halving
     the weight bytes is the one lever that can move decode THROUGHPUT, not just
     energy; this row tests whether it does, or whether decode stays dispatch-bound.
 
     aneforge has no constant-tensor leaf node, and a bmm (activation@activation) needs
-    Tensor operands — so the per-layer KV cache is supplied as GRAPH INPUTS (fed each
+    Tensor operands - so the per-layer KV cache is supplied as GRAPH INPUTS (fed each
     call). That's the only honest way to express a cache here; the cache bytes are
     constant data the caller passes in, exactly like a real decode loop reads its cache
     from memory. Returns (Model, list-of-cache-arrays) so the runner feeds x + caches.
@@ -489,7 +489,7 @@ def _print_row(r):
 
 def _verdict(results, cfg, batch):
     print("\n" + "=" * 70)
-    print("VERDICT — measured decode vs the GEMV-inferred claims")
+    print("VERDICT - measured decode vs the GEMV-inferred claims")
     print("=" * 70)
     def find(dev, B):
         for r in results["rows"]:

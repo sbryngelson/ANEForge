@@ -13,7 +13,7 @@ pipe.  Steady-state per call is just host<->IOSurface memcpy + evaluateWithQoS.
 This module is import-lazy: `aneforge` stays standalone-importable; the worker
 is built/spawned only the first time a netplist-bridge op runs.  It authors the
 netplist with the SAME in-package bridge generators A1 uses
-(`ane_rank_fused._build_plist` / `ane_sdpa_fused._write_netplist`) — we never
+(`ane_rank_fused._build_plist` / `ane_sdpa_fused._write_netplist`) - we never
 duplicate the netplist layout, only swap the *dispatch* (load-once-eval-many vs
 one-shot).
 

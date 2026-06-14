@@ -1,5 +1,5 @@
 """NN-block cases for the aneforge corpus: realistic network fragments an
-optimizer must not break — conv stacks, a transformer encoder block, a small
+optimizer must not break - conv stacks, a transformer encoder block, a small
 CNN->GAP->fc classifier, group/batch norm, upsample+conv (SR-style), and
 conv_transpose.
 
@@ -366,7 +366,7 @@ def _space_depth_roundtrip():
 
     def build(xt):
         h = af.space_to_depth(xt, 2)      # (1, 16, 4, 4)
-        return af.depth_to_space(h, 2)    # (1, 4, 8, 8) — identity
+        return af.depth_to_space(h, 2)    # (1, 4, 8, 8) - identity
 
     def ref(xa):
         return xa.astype(np.float32)

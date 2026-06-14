@@ -49,7 +49,6 @@ def main():
     print(f"MNIST MLP, {K} steps unrolled into ONE ANE program "
           f"({len(tr._net.input_tensors)} inputs, {len(tr._net.output_tensors)} outputs)")
     print(f"\n{'epoch':>6} | {'steps':>6} | {'test acc':>9}")
-    print("-" * 28)
     print(f"{0:>6} | {0:>6} | {acc():>9.4f}  (init)")
     t0 = time.perf_counter()
     for e in range(1, EPOCHS + 1):

@@ -1,6 +1,6 @@
-"""2-D FFT on the ANE — aneforge.fft.fft2/ifft2 as ONE fused program per transform.
+"""2-D FFT on the ANE - aneforge.fft.fft2/ifft2 as ONE fused program per transform.
 
-The 2-D DFT of an [M,N] complex field is F_M @ X @ F_N^T — a handful of real GEMMs,
+The 2-D DFT of an [M,N] complex field is F_M @ X @ F_N^T - a handful of real GEMMs,
 so it fuses into a single e5rt program instead of host-looping the 1-D plan over
 M rows + N columns (M+N dispatches).
 
@@ -31,7 +31,7 @@ def test_fft2_matches_numpy(shape):
 
 
 def test_fft2_real_field():
-    # real input (imag fed as zeros) — the PDE/Poisson use case
+    # real input (imag fed as zeros) - the PDE/Poisson use case
     rng = np.random.default_rng(3)
     f = rng.standard_normal((32, 32)).astype(np.float32)
     Xr, Xi = agfft.fft2(f, np.zeros_like(f))
@@ -66,7 +66,7 @@ def test_ifft2_large_magnitude_spectrum():
     x = np.linspace(0.0, 2 * np.pi, N, endpoint=False)
     X, Y = np.meshgrid(x, x, indexing="ij")
     u = np.sin(X) * np.cos(2 * Y) + 0.3 * np.cos(2 * X) * np.cos(2 * Y)
-    spec = np.fft.fft2(u) * 8.0          # |values| up to ~1.6e4 — inside fp16 range
+    spec = np.fft.fft2(u) * 8.0          # |values| up to ~1.6e4 - inside fp16 range
     br, bi = agfft.ifft2(spec.real.astype(np.float32), spec.imag.astype(np.float32))
     ref = np.fft.ifft2(spec)
     assert np.all(np.isfinite(br)) and np.all(np.isfinite(bi))

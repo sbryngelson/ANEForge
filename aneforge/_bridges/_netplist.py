@@ -2470,17 +2470,17 @@ def build_sdpa(
     `ANECTensorDesc.byte[0x39] bit 0` to be set on the Scale tensor (the
     "Scale is expected to be constant" gate found by Agent #41).
 
-    The netplist spelling of that bit is undocumented; Apple's MIL→ANECIR
+    The netplist spelling of that bit is undocumented; Apple's MIL->ANECIR
     translator sets it implicitly via the `Constants` array.  This builder
     supports several candidate spellings selected by `constant_flag_spelling`:
 
       - "Constants_array"    : list Scale in the network's `Constants` array
-                               (the conventional Apple route — backed by
+                               (the conventional Apple route - backed by
                                weights.0).
       - "IsConstant_unit"    : add `IsConstant: True` on the unit's input slot.
       - "is_constant_unit"   : ditto, snake-case.
       - "ConstantTensor_unit": `ConstantTensor: True` on the unit.
-      - "ScaleMutable_false" : analogue to other `*Mutable` Apple keys —
+      - "ScaleMutable_false" : analogue to other `*Mutable` Apple keys -
                                `ScaleMutable: False` on the unit.
       - "all"                : every variant simultaneously (probe mode).
 
@@ -2492,7 +2492,7 @@ def build_sdpa(
     first field (`desc[0x00]`) is a CFBoolean the netplist parser sets from
     `Params.SubtractMax`.  `ANECSDPALayerDescInitialize` defaults to `kCFBooleanFalse`
     (no max-stabilization); numerically correct softmax requires `True`.  Apple's
-    MIL→ANECIR translator emits `SubtractMax=True` for
+    MIL->ANECIR translator emits `SubtractMax=True` for
     `scaled_dot_product_attention`.
     """
     if scale is None:
@@ -2512,7 +2512,7 @@ def build_sdpa(
         # `SubtractMax` is the only `Params` key the SDPA netplist parser
         # (ZinParseSDPAUnit at 0x222ff4b1c) recognizes; it controls whether
         # softmax subtracts the max before exp.  _ANECSDPALayerDescInitialize
-        # defaults desc[0x00]=kCFBooleanFalse (no stabilization) — the source of
+        # defaults desc[0x00]=kCFBooleanFalse (no stabilization) - the source of
         # the original "Y depends on Q,K,V,scale but doesn't equal
         # softmax(Q@K^T*s)@V" numerics gap.
         "Params": {"SubtractMax": bool(subtract_max)},
@@ -3178,7 +3178,7 @@ def main() -> int:
         "--no-sdpa-subtract-max",
         dest="sdpa_subtract_max",
         action="store_false",
-        help="Disable Params.SubtractMax (i.e. omit max-stabilization — the "
+        help="Disable Params.SubtractMax (i.e. omit max-stabilization - the "
              "previous default before the netplist parser was reverse-engineered)",
     )
     args = parser.parse_args()

@@ -1,11 +1,11 @@
-"""Op-agnostic structural cost model for aneforge graphs — the optimizer's PRUNER.
+"""Op-agnostic structural cost model for aneforge graphs - the optimizer's PRUNER.
 
 `estimate(out) -> microseconds` gives a fast, structural roofline estimate of a
 compiled program's latency WITHOUT touching the device. It is deliberately simple
 and op-agnostic: every node's cost is a roofline of `max(floor, bytes/BW,
 flops/COMPUTE)`, where
 
-  - `bytes` is derived GENERICALLY from shapes — (sum of input elems + output
+  - `bytes` is derived GENERICALLY from shapes - (sum of input elems + output
     elems + weight elems) * 2 (fp16). No per-op byte table; this works for ANY op.
   - `flops` is only known for the few ops with a closed-form (matmul/linear/bmm/
     conv/conv_transpose); every other op contributes 0 flops (it is then bytes- or
@@ -111,7 +111,7 @@ def _cost_model_path():
 #       peak 3.25 TFLOP/s, BW 9.0 GB/s, dispatch overhead 0.22 ms.
 #   * headline fp16 PEAK (measured): 1.8 TFLOP/s -> project_peak().
 # The M5 anchor is the 2026-06-05 loop-closure re-fit (BW 57 GB/s, floor 110 us,
-# peak 8.9 TFLOP/s) — see _ANCHORS below for why BW is core-scaled, not clock-scaled.
+# peak 8.9 TFLOP/s) - see _ANCHORS below for why BW is core-scaled, not clock-scaled.
 # Cross-chip throughput scales by cores*eff_freq(0.8*fmax) relative to M1 (the
 # eff_freq is the second column of eff_map_0x7a8: the engine's effective frequency,
 # already derated for the high-clock MAC-rate falloff on A14+).
@@ -147,7 +147,7 @@ def _curves() -> dict:
         raise RuntimeError(
             f"cannot load the bundled per-chip cost curves at {p}: {e}. "
             "costmodel_curves.json ships inside the aneforge package, so a missing or "
-            "unparseable copy means this installation is broken — reinstall aneforge.") from e
+            "unparseable copy means this installation is broken - reinstall aneforge.") from e
 
 
 def _curve_for_arch(arch: str) -> dict:
@@ -186,7 +186,7 @@ def _interp(x: float, xs, ys) -> float:
 
 def _eff_freq_at_op(curve: dict) -> tuple[float, float]:
     """(operating_freq, effective_freq) at the operating clock f = 0.8*fmax for a chip.
-    effective_freq is eff_map_0x7a8's second column interpolated at f — the engine's
+    effective_freq is eff_map_0x7a8's second column interpolated at f - the engine's
     derated throughput frequency (M1=1.0*f; A14+ derates ~0.84)."""
     freqs = curve["freq_0x760"]
     f = _CLOCK_FRACTION * max(freqs)
@@ -208,7 +208,7 @@ def _compute_scale(arch: str) -> float:
 
 def project_peak(arch: str) -> dict:
     """Measurement-free fp16 peak-throughput projection for any ANE target, anchored to
-    the measured M1 point (1.8 TFLOP/s). Returns {tflops, rel_m1, cores, ghz} — the
+    the measured M1 point (1.8 TFLOP/s). Returns {tflops, rel_m1, cores, ghz} - the
     generational-scaling table (M5 ~5.5x, H17d ~22x, M11 ~0.1x) needs no silicon beyond M1."""
     scale = _compute_scale(arch)
     c = _curve_for_arch(arch)
@@ -225,7 +225,7 @@ def project_peak(arch: str) -> dict:
 # m5_weight_stream.py): BW 57 GB/s measured, dispatch floor ~110 us, peak 8.9 TFLOP/s
 # (= project_peak('h17s'), validated by the re-fit landing the quoted convs within ~13%).
 # The earlier single-anchor model scaled M1's BW by CLOCK and over-predicted M5 ~2x
-# (mean |err| 99%): effective BW tracks CORE COUNT (16/4 -> 5.5x), not clock (x1.66) —
+# (mean |err| 99%): effective BW tracks CORE COUNT (16/4 -> 5.5x), not clock (x1.66) -
 # a faster clock does not widen the DMA path, more cores do.
 _ANCHORS = {
     "h13": {"bw": _M1_FIT_BW_BYTES, "floor_us": _M1_FIT_OVERHEAD_US, "peak": _M1_FIT_PEAK_FLOPS},
@@ -233,7 +233,7 @@ _ANCHORS = {
     # h14 grid (papers H14_CALIBRATION_GRID.md): effective compute throughput is far below peak for
     # mid-size ops (a 768^3 GEMM sustains ~1.5 of the 7.24 TFLOP/s), ramping with per-op FLOPs.
     # eff_peak = peak * min(1, (flops/F)^q): a CAPPED power law that returns to full peak for large
-    # ops (the cap matters — a 2048^3 GEMM already hits peak and must not be slowed). Fit (F=1.8e10
+    # ops (the cap matters - a 2048^3 GEMM already hits peak and must not be slowed). Fit (F=1.8e10
     # FLOP, q=0.38) cuts the grid's mean error 1.61x -> 1.16x with the peak points recovered.
     "h14": {"bw": 48.0e9, "floor_us": 100.0, "peak": 7.3e12, "util": (1.80e10, 0.38)},
     "h17s": {"bw": 57.0e9, "floor_us": 110.0, "peak": 8.9e12},
@@ -370,12 +370,12 @@ _OP_TO_FAMILY = {
 #   argmax/topk/sort ~ elements scanned = C * W  (a full pass over the row-major map)
 #
 # The 15 native-bridge ops below run via the A1 subprocess-per-call path (no A2
-# persistent worker exists for them — see _netplist_worker._WORKER_BUILDERS), so
+# persistent worker exists for them - see _netplist_worker._WORKER_BUILDERS), so
 # their measured per-call cost is DISPATCH-FLOOR DOMINATED (~30-60ms subprocess
 # spawn + ANECCompile load), nearly flat in size. The work scalar is still the
 # right element/MAC proxy so the nearest-neighbour anchor + ordering is sensible;
 # the proportional scaling barely moves since the measured points are ~flat.
-# fps is the exception — it scales ~N*k (seconds/call).
+# fps is the exception - it scales ~N*k (seconds/call).
 _BRIDGE_WORK = {
     "bridge_sdpa":   lambda p: float(p[0]) * float(p[1]) ** 2 * float(p[2]),  # H*S^2*D
     "bridge_argmax": lambda p: float(p[0]) * float(p[1]),                     # C*W
@@ -563,7 +563,7 @@ def bridge_cost(t):
         # No measured points for this family in the shipped cost model (e.g. sdpa is not in the
         # bridge sweep, so af.estimate used to return None for attention). Fall back to an
         # analytic roofline on the family's work scalar (~2 flops per MAC), clamped at the
-        # dispatch floor — an order-of-magnitude estimate beats none.
+        # dispatch floor - an order-of-magnitude estimate beats none.
         return max(floor, 2.0 * q / _constants()["flops_per_us"])
     # nearest measured point by work scalar (in log space so ratios are symmetric)
     def _key(pt):
@@ -636,7 +636,7 @@ def node_cost(t, c: dict | None = None) -> float:
 
 
 def _node_roofline_us(t, c: dict, int8: bool) -> float:
-    """max(compute, memory) microseconds for one node (NO floor) — the analytic model's
+    """max(compute, memory) microseconds for one node (NO floor) - the analytic model's
     additive form charges the dispatch overhead once per program, not per node."""
     in_elems = sum(_elems(s.shape) for s in t.srcs)
     if int8 and t.op == "matmul":
@@ -680,7 +680,7 @@ def estimate(out, int8: bool = False, target: str | None = None) -> float:
     rank int8 vs fp16; everything else is structural.
 
     `target` (an ANE arch string, e.g. 'h13'/'h17s') switches to the measurement-free
-    ANALYTIC per-chip model (Direction A) — a roofline taken from the nearest
+    ANALYTIC per-chip model (Direction A) - a roofline taken from the nearest
     silicon-measured anchor (M1/h13 or M5/h17s) and scaled to that chip's {cores, clock,
     efficiency} curve, valid for all 28 chips with no on-device measurement (+/-17% on
     the measured M1 convs; the M5 anchor lands the loop-closure convs within ~15% on the
@@ -726,7 +726,7 @@ def estimate(out, int8: bool = False, target: str | None = None) -> float:
     # segmented: fused regions (each pays one floor) interleaved with cuts.
     # Mirror _compile_segmented: a region is built per cut-source and for the final
     # output. Approximate region count as the number of distinct fused-program segments
-    # — at most (n_cuts + 1) — and charge each a floor; the cheap nodes spread across
+    # - at most (n_cuts + 1) - and charge each a floor; the cheap nodes spread across
     # them, so keep the global above-floor sum and add (n_regions) floors plus the cuts.
     n_cuts = len(cut_nodes)
     n_regions = (n_cuts + 1) if region_nodes else 0
@@ -797,7 +797,7 @@ def precision_risk(out, verbose: bool = False) -> dict:
 
     `kind` in {narrow_sum, cancel_sub, groupnorm_cliff}. `fixable` names the
     numerics-aware rewrite that addresses it ("reduce_sum->matmul", "paired-fp16",
-    or "" for an avoid/flag-only cliff). This is a HEURISTIC, not a bound — see the
+    or "" for an avoid/flag-only cliff). This is a HEURISTIC, not a bound - see the
     module note above for what it catches and (importantly) misses.
     """
     order = _topo(out)
@@ -815,7 +815,7 @@ def precision_risk(out, verbose: bool = False) -> dict:
                               "est_error": est, "fixable": "reduce_sum->matmul",
                               "reason": f"signed reduce_sum over K={K} (narrow fp16 accumulator)"})
             continue
-        # (b) CFG-style subtract — candidate cancellation (data-dependent, can't
+        # (b) CFG-style subtract - candidate cancellation (data-dependent, can't
         #     confirm structurally). Flag sub of two non-trivial activations.
         if t.op == "sub" and len(t.srcs) == 2 and all(s.op != "input" or True for s in t.srcs):
             big = _elems(t.shape) >= 64    # a vector/tensor sub (not a scalar bias)
@@ -825,11 +825,11 @@ def precision_risk(out, verbose: bool = False) -> dict:
                               "est_error": _FP16_CLEAN,  # only RISKS blowing up; unknown w/o data
                               "fixable": "paired-fp16",
                               "reason": "subtract of two live tensors (CANDIDATE catastrophic "
-                                        "cancellation — confirm with data; fix is upstream paired-fp16)"})
+                                        "cancellation - confirm with data; fix is upstream paired-fp16)"})
             continue
         # (c) group_norm at the per-axis wall. The rank-4 tiled lowering reduces over
         #     [1,G,C/groups,H*W], so the cliff is max(C/groups, H*W) > 65536 (aligned to
-        #     af.group_norm's construction guard) — NOT the flattened (C/groups)*H*W,
+        #     af.group_norm's construction guard) - NOT the flattened (C/groups)*H*W,
         #     which the tiling now keeps under the cap (640@64, 512@128 run fine in fp16).
         if t.op == "group_norm" and len(t.shape) == 4:
             _, C, H, W = t.shape
@@ -838,12 +838,12 @@ def precision_risk(out, verbose: bool = False) -> dict:
                 nodes.append({"idx": i, "op": t.op, "kind": "groupnorm_cliff",
                               "est_error": 0.0, "fixable": "",
                               "reason": f"group_norm tiled axis max(C/groups,H*W)>65536 at {H}x{W}: "
-                                        "AVOID — exceeds the ANE per-axis bound"})
+                                        "AVOID - exceeds the ANE per-axis bound"})
             continue
 
     # Default hotspots = only the RELIABLE, structurally-determinable signals: a narrow
     # reduce_sum whose estimated error exceeds the fp16-clean floor, and the group_norm
-    # per-axis wall. cancel_sub is SPECULATIVE — a subtract of two live tensors is a
+    # per-axis wall. cancel_sub is SPECULATIVE - a subtract of two live tensors is a
     # *candidate* for cancellation, but most (residuals, losses, differences) are benign
     # and unconfirmable without data. Flagging every such subtract trained users to ignore
     # the warning, so cancel_sub is now informational-only: it stays in `nodes` (surfaced

@@ -22,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-from _common import relerr   # sets env + repo-root path; import before aneforge
+from _common import head, aside, relerr   # sets env + repo-root path; import before aneforge
 
 import numpy as np
 
@@ -31,9 +31,7 @@ import aneforge as af
 f16 = np.float16
 
 
-# --------------------------------------------------------------------------- #
 # data generators (fp32/fp64 ONLY for reference + reporting)
-# --------------------------------------------------------------------------- #
 
 def make_cfg_pair(D, ratio, seed):
     """Two vectors whose TRUE difference is `ratio` * magnitude, returned as
@@ -66,9 +64,7 @@ def make_downproj(K, cancel, seed):
     return x16, w16, truth
 
 
-# --------------------------------------------------------------------------- #
 # fp16-only guard: the compiled MIL must declare/emit no fp32 type
-# --------------------------------------------------------------------------- #
 
 def assert_fp16_only(build_dir):
     mil = (Path(build_dir) / "model.mil").read_text()
@@ -81,15 +77,11 @@ def assert_fp16_only(build_dir):
     return n_fp16
 
 
-# --------------------------------------------------------------------------- #
 # (1) compensated SUBTRACT - on device
-# --------------------------------------------------------------------------- #
 
 def demo_subtract():
-    print("=" * 88)
-    print("(1) CFG-style compensated SUBTRACT - paired-fp16 (hi,lo) inputs, on the ANE")
+    head("(1) CFG-style compensated SUBTRACT - paired-fp16 (hi,lo) inputs, on the ANE")
     print("    true diff = ratio * magnitude;  plain fp16 vs af.paired compensated subtract")
-    print("=" * 88)
     print(f"{'ratio':>8} | {'plain fp16 (ANE)':>17} | {'paired-fp16 (ANE)':>18} | {'vs numpy-fp16':>14} | note")
     D = 4096
     ok = []
@@ -126,7 +118,7 @@ def demo_subtract():
         ok.append(e_vs_np < 1e-2)
         if ratio <= 1e-4:        # the headline claim: <5% relerr at ratio 1e-4 where plain is broken
             ok.append(ec < 0.05 and ep > 0.5)
-    print(f"    [fp16-only MIL verified; {n_fp16} fp16-typed lines in the compensated program]")
+    aside(f"    [fp16-only MIL verified; {n_fp16} fp16-typed lines in the compensated program]")
     return ok
 
 
@@ -142,19 +134,15 @@ def _np_comp_sub(chi, clo, uhi, ulo):
     return fs(hi + lo).astype(np.float64)
 
 
-# --------------------------------------------------------------------------- #
 # (2) compensated DOT - on device
-# --------------------------------------------------------------------------- #
 
 def demo_dot():
     print()
-    print("=" * 88)
     print("(2) Cancellation-heavy compensated DOT - TwoProduct + matmul-accum, on the ANE")
     print("    cancel = true_dot / product-magnitude.  Three on-device dots:")
     print("      plain mm   = x @ w                 (matmul accum - WIDE on this ANE)")
     print("      plain rsum = sum(x*w)              (reduce_sum accum - NARROW fp16)")
     print("      paired dot = TwoProduct + matmul-accum (the af.paired path)")
-    print("=" * 88)
     print(f"{'cancel':>8} | {'plain mm (wide)':>16} | {'plain rsum (narrow)':>19} | "
           f"{'paired dot':>12} | {'paired vs rsum':>14}")
     K = 4096
@@ -190,22 +178,18 @@ def demo_dot():
         ok.append(ec <= emm * 2 + 1e-6)
         # ... and must beat the NARROW reduce_sum, which is where compensation pays off
         ok.append(ec <= ers + 1e-6)
-    print(f"    [fp16-only MIL verified; {n_fp16} fp16-typed lines in the compensated dot]")
-    print("    NOTE: this ANE's matmul accumulator is already WIDE, so plain `@` is clean and")
-    print("    paired-dot adds no accuracy there. The win shows vs reduce_sum (narrow): the")
-    print("    paired dot routes its accumulate through matmul, recovering what rsum loses.")
+    aside(f"    [fp16-only MIL verified; {n_fp16} fp16-typed lines in the compensated dot]")
+    aside("    NOTE: this ANE's matmul accumulator is already WIDE, so plain `@` is clean and\n"
+          "    paired-dot adds no accuracy there. The win shows vs reduce_sum (narrow): the\n"
+          "    paired dot routes its accumulate through matmul, recovering what rsum loses.")
     return ok
 
 
-# --------------------------------------------------------------------------- #
 # op-cost report
-# --------------------------------------------------------------------------- #
 
 def op_cost():
     print()
-    print("=" * 88)
-    print("OP COST (fp16 ops/element - counted from the compiled graph)")
-    print("=" * 88)
+    head("OP COST (fp16 ops/element - counted from the compiled graph)")
     D = 16
     for label, build in (
         ("paired add",      lambda: (af.paired(af.input((1, D)), af.input((1, D)))
@@ -232,11 +216,9 @@ def main():
     ok += demo_dot()
     op_cost()
     print()
-    print("=" * 88)
     passed = sum(bool(x) for x in ok)
     print(f"{passed}/{len(ok)} checks passed - paired-fp16 runs fp16-only on the ANE and "
           f"recovers accuracy past the cancellation wall")
-    print("=" * 88)
     return 0 if all(ok) else 1
 
 

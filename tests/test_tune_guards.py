@@ -1,16 +1,16 @@
 """Unit tests for the autotuner's accuracy-reference guards and the cost-curve
-load error — all WITHOUT touching the ANE (the measurement seams `measure` /
+load error - all WITHOUT touching the ANE (the measurement seams `measure` /
 `_measure_with_ref` / `build_variant` are monkeypatched, the same fake-dependency
 style as test_compile_breaker.py):
 
   1. tune(): if NO lossless variant compiles there is no fp16 baseline, so a lossy
-     variant must never become its own accuracy reference — lossy variants are
+     variant must never become its own accuracy reference - lossy variants are
      skipped and a warning is emitted. With a lossless baseline, behavior is
      unchanged.
   2. tune_precision(): a graph `_fp32_reference` cannot emulate falls back to the
      fp16 baseline's own measured output as the reference (baseline relerr 0.0 by
      definition; target_error enforced as divergence from the baseline; ref_kind
-     reported). If the baseline ALSO fails, no reference of any kind exists —
+     reported). If the baseline ALSO fails, no reference of any kind exists -
      warn and prefer the cheapest lossless variant, never silently select.
   3. _cost._curves(): a missing/unparseable bundled costmodel_curves.json raises a
      RuntimeError naming the file (a broken installation), not a KeyError blaming

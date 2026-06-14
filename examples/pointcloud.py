@@ -38,13 +38,13 @@ def main():
     # so the ANE's L2 greedy selection matches the numpy reference exactly).
     pts = rng.integers(0, 12, size=(N, 3)).astype(np.float16)
 
-    # --- Stage 1: FurthestPointSampling on the ANE (sample K centroids) ---------
+    # Stage 1: FurthestPointSampling on the ANE (sample K centroids)
     cent_ane = fps_fused(pts, K, metric="L2")
     cent_ref = fps_ref(pts, K, "L2")               # L2 reference == hardware (L2-only arch)
     fps_ok = np.array_equal(cent_ane, cent_ref)
     print(f"[1] FPS  (ANE)         N={N} -> K={K} centroids   exact_match={fps_ok}")
 
-    # --- Stage 2: RadiusSearch on the ANE (neighborhood membership) -------------
+    # Stage 2: RadiusSearch on the ANE (neighborhood membership)
     memb_ane = radius_search_fused(pts, cent_ane, radius)   # [points x centroids] uint8
     memb_ref = rs_ref(pts, cent_ane, radius)
     rs_ok = np.array_equal(memb_ane, memb_ref)
@@ -53,7 +53,7 @@ def main():
     print(f"[2] RadiusSearch (ANE) r={radius}  membership exact_match={rs_ok}  "
           f"neighbors/centroid={nbrs.tolist()}")
 
-    # --- Stage 3: CrossProduct on the ANE (surface normal per centroid) ---------
+    # Stage 3: CrossProduct on the ANE (surface normal per centroid)
     # For each centroid, take two neighbor edge vectors and compute their cross
     # product on the ANE -> an (unnormalised) surface normal.
     max_err, n_normals = 0.0, 0

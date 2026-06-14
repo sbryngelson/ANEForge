@@ -2,7 +2,7 @@
 ``cross_compile_check`` (preflight) and the A13/M1 conv-training loss_scale guard in
 ``Trainer``. The predictor itself is unit-tested in test_targets.py; here we check it is
 correctly wired into the compile/train paths and never REJECTS or mutates (warn-only:
-the auto-cap was dropped after the M1 end-to-end run refuted it — a real CNN trains
+the auto-cap was dropped after the M1 end-to-end run refuted it - a real CNN trains
 identically at loss_scale 128/1024/65536).
 
 cross_compile_check compiles on this M5 host for another family's TargetArchitecture, so
@@ -35,7 +35,7 @@ def test_cross_compile_check_warns_reduction_route(monkeypatch):
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         ok = cross_compile_check(g, "h13")
-    assert ok is True                       # still compiles — warn-only
+    assert ok is True                       # still compiles - warn-only
     msgs = _crosschip_warnings(rec)
     assert len(msgs) == 1
     assert "ULP" in msgs[0]

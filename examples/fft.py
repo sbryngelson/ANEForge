@@ -16,11 +16,8 @@ from aneforge.fft import fft as ane_fft, ifft as ane_ifft, _factor, _leaf_cost
 
 
 def main():
-    print("=" * 78)
-    print("FFT - staged Cooley-Tukey as dense-DFT matmuls on the ANE (sub-quadratic MACs)")
-    print("=" * 78)
+    _common.head("FFT - staged Cooley-Tukey as dense-DFT matmuls on the ANE (sub-quadratic MACs)")
     print(f"\n{'N':>6} | {'factors':>12} | {'roundtrip err':>14} | {'spectrum err':>14} | {'MAC saving':>10}")
-    print("-" * 66)
     rng = np.random.default_rng(3)
     for N in (256, 1024, 2048):
         x_re = rng.standard_normal(N).astype(np.float32); x_im = np.zeros(N, np.float32)

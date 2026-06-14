@@ -13,17 +13,14 @@ fp16 iterates stall.
 """
 import sys
 
-from _common import f16, relerr, spd   # sets env + repo-root path; import before aneforge
+from _common import head, f16, relerr, spd   # sets env + repo-root path; import before aneforge
 import numpy as np
 from aneforge.linalg import conjugate_gradient
 
 
 def main():
-    print("=" * 78)
-    print("SOLVE - SPD system by conjugate gradient, K iters UNROLLED into ONE ANE program")
-    print("=" * 78)
+    head("SOLVE - SPD system by conjugate gradient, K iters UNROLLED into ONE ANE program")
     print(f"\n{'cond(A)':>8} | {'CG relerr (ANE)':>16} | {'np.linalg.solve':>16}")
-    print("-" * 46)
     for cond in (1e1, 1e2, 1e3):
         A = spd(48, cond, int(cond) + 11); x = np.random.default_rng(0).standard_normal(48)
         b = A @ x

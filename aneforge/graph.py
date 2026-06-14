@@ -1,7 +1,7 @@
 """The aneforge compute graph: a lazy `Tensor` whose methods/operators record
 structure (op + sources + attrs), plus the op constructors and the higher-level
 neural-net helpers (conv, multi-head / cross attention, GEGLU). Nothing here
-touches the device — `compile` (_compile.py) lowers the graph to one program.
+touches the device - `compile` (_compile.py) lowers the graph to one program.
 """
 from __future__ import annotations
 
@@ -175,7 +175,7 @@ class Tensor:
     # -- linear algebra ---------------------------------------------------- #
     def __matmul__(self, W) -> "Tensor":
         """`x @ W`. `W` is a weight array (streamed), or another Tensor for an
-        activation×activation product (e.g. attention scores)."""
+        activationxactivation product (e.g. attention scores)."""
         if isinstance(W, Tensor):
             if self.shape[-1] != W.shape[-2]:
                 raise ValueError(f"matmul: {self.shape} @ {W.shape} shape mismatch")
@@ -292,14 +292,14 @@ class Tensor:
         """L2-normalize over `axis`: `x / sqrt(sum(x**2, axis) + eps)`.
 
         Runs as fused e5rt MIL (`reduce_l2_norm` over the axis, then `real_div`)
-        — no graph cut. The MIL `l2_norm` op normalises over all non-batch dims,
+        - no graph cut. The MIL `l2_norm` op normalises over all non-batch dims,
         so we build the per-axis form explicitly."""
         ax = axis % len(self.shape)
         return Tensor(self.shape, "l2_norm", [self], {"axis": ax, "eps": float(eps)})
 
     def argmax(self, axis: int = -1) -> "Tensor":
         """Index of the maximum along `axis` (keepdims). Runs as a native-ANE
-        GlobalArgMinMax sub-program (netplist bridge, like af.sdpa) — a graph cut.
+        GlobalArgMinMax sub-program (netplist bridge, like af.sdpa) - a graph cut.
 
         2D inputs [C, W] only, over the last axis (axis=-1/1, Width) or axis 0
         (Channel); indices are returned fp16-encoded (exact for index<2048)."""
@@ -357,7 +357,7 @@ class Tensor:
             raise ValueError(f"group_norm expects [1,C,H,W] with C%groups==0; got {self.shape}, G={num_groups}")
         # The rank-4 tiled lowering reshapes to [1,G,C/groups,H*W] and reduces the
         # trailing two axes, so the bound is the largest single axis, max(C/groups, H*W),
-        # against the ANE's hard per-axis cap of 65536 — not the flattened (C/groups)*H*W
+        # against the ANE's hard per-axis cap of 65536 - not the flattened (C/groups)*H*W
         # product (which overflowed for SD-UNet's 512ch@128 and 640ch@64; finding_sd15).
         _, C, H, W = self.shape
         axis = max(C // num_groups, H * W)
@@ -403,7 +403,7 @@ def input(shape: Sequence[int], dtype: str = "fp16") -> Tensor:
     order they were created.
 
     `dtype` is the wire dtype of the input port: "fp16" (default, the ANE compute
-    type) or "uint8" (raw camera/decoded-video bytes, dequantised in-graph — see
+    type) or "uint8" (raw camera/decoded-video bytes, dequantised in-graph - see
     `af.image_input`). A uint8 input only feeds an in-graph `cast`; not a compute
     tensor on its own."""
     if dtype not in ("fp16", "uint8"):
@@ -420,7 +420,7 @@ def image_input(shape: Sequence[int], scale: float = 1.0 / 255.0, bias=0.0) -> T
     """A uint8 image input that is dequantised to fp16 ON the engine.
 
     Feed raw 8-bit pixels (camera / decoded-video bytes) straight to the compiled
-    model — the uint8->fp16 conversion and the `scale*x + bias` normalisation run
+    model - the uint8->fp16 conversion and the `scale*x + bias` normalisation run
     as in-graph ANE ops, so the host skips the float-convert + repack. Returns a
     normal fp16 Tensor for the rest of the graph.
 
@@ -486,10 +486,10 @@ def conv(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
 
 def dynamic_conv(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0,
                  dilation: int = 1, groups: int = 1) -> Tensor:
-    """2D conv with a DYNAMIC (runtime-tensor) weight — the kernel is a graph value, not a
+    """2D conv with a DYNAMIC (runtime-tensor) weight - the kernel is a graph value, not a
     baked constant. Lowers to the ANE's native dynamic-kernel path (`CreateDynamicKernel` /
     DynamicGOC), so the weight can be produced at runtime by an earlier op or fed as an input.
-    Enables hypernetworks / per-sample (per-image) kernels — a capability no other ANE frontend
+    Enables hypernetworks / per-sample (per-image) kernels - a capability no other ANE frontend
     exposes, since Apple's MIL/CoreML conv bakes the weight.
 
     `x`: [1, Cin, H, W]; `weight`: a Tensor [Cout, Cin/groups, kH, kW]. Returns
@@ -523,7 +523,7 @@ def dynamic_conv(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0,
 
 def conv_transpose(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
                    groups: int = 1, bias=None) -> Tensor:
-    """2D transposed conv (deconv) — upsampling conv for VAE/segmentation decoders.
+    """2D transposed conv (deconv) - upsampling conv for VAE/segmentation decoders.
     `x`: [N,Cin,H,W]; `weight`: [Cin, Cout, kH, kW] (PyTorch ConvTranspose2d layout);
     `bias`: [Cout]."""
     weight = np.asarray(weight); _check_dtype(weight, "conv_transpose weight")
@@ -657,7 +657,7 @@ def instance_norm(x: Tensor, gamma, beta, eps: float = 1e-5) -> Tensor:
 def local_response_norm(x: Tensor, size: int = 5, alpha: float = 1e-4,
                         beta: float = 0.75, k: float = 1.0) -> Tensor:
     """Cross-channel LRN over [N,C,H,W] via the native MIL `local_response_norm` op
-    (fused, no graph cut — distinct from the netplist `af.lrn` bridge): each output
+    (fused, no graph cut - distinct from the netplist `af.lrn` bridge): each output
     is `x / (k + alpha/size * sum_{window} x**2) ** beta` over a window of `size`
     neighbouring channels. `gamma`-free; `alpha`/`beta`/`k` in natural units."""
     if len(x.shape) != 4:
@@ -903,7 +903,7 @@ def scaled_elementwise(x: Tensor, z: Tensor, op: str = "Add", scale: float = 1.0
     to equal-length 1-D Width vectors. Graph cut.
 
     Two arch quirks of the native layer are guarded here (found by tests/gen_random):
-    `Sub` is rejected by ANECCompile, and `Mult` ignores `scale` on-silicon — reject
+    `Sub` is rejected by ANECCompile, and `Mult` ignores `scale` on-silicon - reject
     those configs rather than emit a wrong/uncompilable program."""
     ops = ("Add", "Mult", "Min", "Max")
     if op not in ops:
@@ -920,7 +920,7 @@ def scaled_elementwise(x: Tensor, z: Tensor, op: str = "Add", scale: float = 1.0
 
 def topk(x: Tensor, k: int, largest: bool = True) -> Tensor:
     """Top-`k` values along the last axis of a 2D input [C, W], keyed per row.
-    Runs as a native-ANE TopK sub-program (netplist bridge, like af.sdpa) — a cut.
+    Runs as a native-ANE TopK sub-program (netplist bridge, like af.sdpa) - a cut.
 
     `k` in {3, 4} is ARCH-GATED on this hardware (ANECCompile fails) and rejected
     here; the rest of `k` in [1, W] is supported."""
@@ -936,7 +936,7 @@ def topk(x: Tensor, k: int, largest: bool = True) -> Tensor:
 
 def sort(x: Tensor, descending: bool = False, return_indices: bool = False) -> Tensor:
     """Sort each row of a 2D input [C, W] along the last axis (Width).
-    Runs as a native-ANE Sort sub-program (netplist bridge, like af.sdpa) — a cut.
+    Runs as a native-ANE Sort sub-program (netplist bridge, like af.sdpa) - a cut.
 
     With `return_indices=True` the argsort indices are returned instead of the
     sorted values (fp16-encoded, exact for index < 2048). Output shape is [C, W].
@@ -952,7 +952,7 @@ def sort(x: Tensor, descending: bool = False, return_indices: bool = False) -> T
 
 def cross_product(a: Tensor, b: Tensor) -> Tensor:
     """3-vector cross product `cross(a, b)` on the ANE's native CrossProduct
-    layer — a path Apple's MIL frontend rejects. Both inputs are length-3
+    layer - a path Apple's MIL frontend rejects. Both inputs are length-3
     (shape (3,) or any shape with 3 elements); returns shape (3,). Graph cut."""
     if int(np.prod(a.shape)) != 3 or int(np.prod(b.shape)) != 3:
         raise ValueError(f"cross_product: both inputs must have 3 elements; got {a.shape}, {b.shape}")
@@ -963,7 +963,7 @@ def cross_correlation(x: Tensor, template: Tensor) -> Tensor:
     """Valid (no-flip) cross-correlation of a single-channel map `x` [H, W] with
     a `template` [Th, Tw] on the ANE's native CrossCorrelation layer:
     `y[i,j] = sum_{u,v} x[i+u, j+v] * template[u,v]` over [(H-Th+1), (W-Tw+1)].
-    Graph cut. (True correlation — the template is not flipped.)"""
+    Graph cut. (True correlation - the template is not flipped.)"""
     if len(x.shape) != 2 or len(template.shape) != 2:
         raise ValueError(f"cross_correlation: x and template must be 2D; got {x.shape}, {template.shape}")
     H, W = x.shape
@@ -1042,7 +1042,7 @@ def lrn(x: Tensor, alpha: float = 1.0, beta: float = 0.75, k: float = 1.0) -> Te
         `window(c) = [max(0, c-(N-1)//2) : min(C, c + N//2 + 1)]`.
     So only the center channel sees all C channels; edge channels see a partial sum.
     This is NOT a full-channel sum (the old docstring's `sum_j x[j]^2` over all j
-    was wrong — see the corrected reference in tests/test_numerical.py and the RE in
+    was wrong - see the corrected reference in tests/test_numerical.py and the RE in
     the reverse-engineering corpus).
 
     `alpha`/`beta`/`k` are the standard LRN coefficients in their natural units;
@@ -1101,17 +1101,17 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
 SDPA_NATIVE_MAX_SEQ = 2048
 # The native fused-attention layer returns garbage once BOTH the query and key sequence axes
 # are large: reliable only while min(q_seq, k_seq) < this bound (measured 2026-06-09: a hard
-# 512x512 score-tile cliff — cos collapses to ~0.67 at 512x512, while the KV-cache decode
+# 512x512 score-tile cliff - cos collapses to ~0.67 at 512x512, while the KV-cache decode
 # shape min=1 stays correct to large k_seq). Outside it we decompose (non-causal) or refuse
-# (causal — the decomposition can't build the additive mask here).
+# (causal - the decomposition can't build the additive mask here).
 SDPA_NATIVE_MIN_BOTH = 512
 
 
 def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
          is_causal: bool = False, attn_mask: "Tensor | None" = None) -> Tensor:
     """Scaled-dot-product attention. Uses the ANE's *native* fused-attention hardware
-    layer (ANECSDPALayerDesc) — a path Apple's user-space MIL compiler never emits
-    (it always decomposes SDPA) — for sequence lengths where it is numerically
+    layer (ANECSDPALayerDesc) - a path Apple's user-space MIL compiler never emits
+    (it always decomposes SDPA) - for sequence lengths where it is numerically
     reliable (S <= SDPA_NATIVE_MAX_SEQ); above that it emits the accurate fused
     decomposition instead (the native layer returns garbage at large S). q/k/v:
     [1, heads, seq, d_head], fp16. Returns the same shape. `scale` defaults to
@@ -1120,11 +1120,11 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
     Where the native layer is used this is a graph-cut boundary: the surrounding graph
     runs as e5rt program(s) and this node runs as a separate native-SDPA ANE
     sub-program (see _compile.compile). `is_causal=True` is NATIVE: the causal additive
-    mask rides the SDPA layer's optional 5th bottom (kept on the native bridge route —
+    mask rides the SDPA layer's optional 5th bottom (kept on the native bridge route -
     the route optimizer does not decompose it, since the decomposition is unmasked).
-    Validated on M1: cos 1.0 vs softmax(QKᵀ·scale + causal)·V, single + multi-head.
+    Validated on M1: cos 1.0 vs softmax(QK^T*scale + causal)*V, single + multi-head.
     Requires S <= SDPA_NATIVE_MAX_SEQ (above that the op decomposes, which has no mask)."""
-    # K and V share shape (the cached sequence); Q's SEQUENCE may differ from K/V's — the
+    # K and V share shape (the cached sequence); Q's SEQUENCE may differ from K/V's - the
     # KV-cache DECODE shape (q seq_q attends to cached k/v of length seq_kv). Q,K share H+D.
     if not (len(q.shape) == 4 == len(k.shape) == len(v.shape)):
         raise ValueError(f"af.sdpa expects 4D q,k,v of [1,H,S,D]; got {q.shape}, {k.shape}, {v.shape}")
@@ -1136,7 +1136,7 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
         raise ValueError(f"af.sdpa: batch must be 1 (native layer); got {q.shape[0]}/{k.shape[0]}")
     if is_causal and q.shape[2] != k.shape[2]:
         raise ValueError("af.sdpa: is_causal requires equal q/k seq (prefill); for KV-cache "
-                         "decode (seq_q < seq_kv) the new tokens attend to all cached k/v — "
+                         "decode (seq_q < seq_kv) the new tokens attend to all cached k/v - "
                          "pass is_causal=False (or a runtime attn_mask).")
     if attn_mask is not None:
         if is_causal:
@@ -1173,7 +1173,7 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
                 f"and the causal decomposition is not wired; chunk the query so each tile's "
                 f"min(seq) < {SDPA_NATIVE_MIN_BOTH}.")
         # non-causal (optionally with a runtime Tensor mask): the accurate fused decomposition
-        # (handles the decode shape too — Q[.,.,Sq,.] @ Kᵀ -> [.,.,Sq,Skv].softmax @ V).
+        # (handles the decode shape too - Q[.,.,Sq,.] @ K^T -> [.,.,Sq,Skv].softmax @ V).
         scores = q @ k.transpose([0, 1, 3, 2]) * float(scale)
         if attn_mask is not None:
             scores = scores + attn_mask

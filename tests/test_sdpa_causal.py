@@ -1,5 +1,5 @@
 """Native ANE causal SDPA: the fused-attention layer's optional additive-mask (5th) bottom.
-Validated against softmax(QKᵀ·scale + mask)·V at the bridge entry. The high-level af.sdpa
+Validated against softmax(QK^T*scale + mask)*V at the bridge entry. The high-level af.sdpa
 is_causal path is not wired yet (it raises), so it is asserted to fail loudly, not silently."""
 from __future__ import annotations
 import math
@@ -68,7 +68,7 @@ def test_native_sdpa_additive_mask_bridge():
 @pytest.mark.parametrize("H,Sq,Skv,D", [(1, 1, 4, 8), (2, 1, 8, 16), (2, 3, 8, 16)])
 def test_sdpa_kv_cache_decode_shape(H, Sq, Skv, D):
     # KV-cache DECODE shape: Sq query tokens attend to Skv cached K/V (seq_q != seq_kv).
-    # The native SDPA validator allows it ("K,V same seq" + "Q,K same embed" — no Q-seq constraint).
+    # The native SDPA validator allows it ("K,V same seq" + "Q,K same embed" - no Q-seq constraint).
     scale = 1.0 / math.sqrt(D)
     Q = rng.standard_normal((1, H, Sq, D)).astype(np.float16)
     K = rng.standard_normal((1, H, Skv, D)).astype(np.float16)

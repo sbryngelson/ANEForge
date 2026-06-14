@@ -51,7 +51,6 @@ def main():
     print(f"MNIST CNN (conv->relu->avg_pool->fc), {K} steps unrolled into ONE ANE program "
           f"({len(tr._net.input_tensors)} inputs, {len(tr._net.output_tensors)} outputs)")
     print(f"\n{'dispatch':>9} | {'steps':>6} | {'test acc':>9}")
-    print("-" * 31)
     print(f"{0:>9} | {0:>6} | {acc():>9.4f}  (init)")
     t0 = time.perf_counter()
     for it in range(1, DISPATCHES + 1):

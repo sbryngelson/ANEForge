@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared device-comparison harness — ANE (aneforge fp16) vs GPU (MLX) vs CPU (numpy).
+"""Shared device-comparison harness - ANE (aneforge fp16) vs GPU (MLX) vs CPU (numpy).
 
 This module holds the timing, precision, energy, and device-runner helpers plus the
 workload builders that the other ``bench/`` scripts import; it is not run on its own.
@@ -27,7 +27,7 @@ Devices
     CPU  = numpy on Accelerate BLAS, fp32 (the precision reference) + fp16 where
            it is a sensible comparison.
 
-Timing: warmup, then MIN over reps (the clean signal — min rejects scheduler
+Timing: warmup, then MIN over reps (the clean signal - min rejects scheduler
 noise). Each device's number includes its own host/dispatch overhead, which is
 called out honestly: the ANE/MLX numbers are end-to-end Python-call latency
 (compile-once, run-many), NOT pure silicon time. At small shapes that overhead
@@ -35,7 +35,7 @@ dominates and the comparison is a dispatch-cost comparison, not a FLOP one.
 
 Energy: powermetrics is sampled ONLY around the sustained compute-bound loops
 (the GEMM-K4096 and conv-stack workloads), where a multi-second loop gives a
-trustworthy rail average. Short per-call workloads do NOT get an energy number —
+trustworthy rail average. Short per-call workloads do NOT get an energy number -
 a sub-millisecond op sampled at 100 Hz is an artifact, and we don't report it.
 Energy needs passwordless sudo; without it, latency/precision still run.
 
@@ -227,11 +227,11 @@ def w_gemm(M, K, N, tag):
         lat, out = mlx_run(lambda: xg16 @ Wg16)
         add_row(wl, "GPU", "fp16", lat, gflops(flops, lat), relerr(out, ref))
 
-    # CPU fp32 (Accelerate BLAS — the reference-speed device).
+    # CPU fp32 (Accelerate BLAS - the reference-speed device).
     lat, out = cpu_run(lambda: x32 @ W32.T)
     add_row(wl, "CPU", "fp32", lat, gflops(flops, lat), relerr(out, ref))
     # CPU fp16: numpy has NO BLAS fp16 GEMM kernel (it upcasts element-by-element),
-    # so this is pathologically slow and NOT a fair fp16 device — only run it at the
+    # so this is pathologically slow and NOT a fair fp16 device - only run it at the
     # FLOOR size to document that "CPU fp16" is not a real option, then skip the big
     # ones (they take seconds for an uninteresting, GPU-fp16-identical relerr).
     if M * K * N <= 64 * 256 * 256:
@@ -256,7 +256,7 @@ def w_conv(Cin, Cout, H, W, k, depth, tag, energy=False):
     pad = k // 2
     x32 = (rng.standard_normal((1, Cin, H, W)).astype(np.float32))
     # He-style variance-preserving init (sqrt(2/fan_in)) so a deep ReLU stack keeps
-    # activations O(1) — a real ResNet does this via BatchNorm. Without it the
+    # activations O(1) - a real ResNet does this via BatchNorm. Without it the
     # activations decay geometrically below fp16's smallest normal and the fp16
     # error becomes an underflow artifact rather than a real precision number.
     Ws = [rng.standard_normal((Cout, (Cin if d == 0 else Cout), k, k)).astype(np.float32)
@@ -307,7 +307,7 @@ def w_conv(Cin, Cout, H, W, k, depth, tag, energy=False):
                 if e:
                     RESULTS[wl]["energy_gpu"] = e
 
-    # CPU fp32 (numpy naive) — only for the SMALL conv; the big stack is too slow on CPU
+    # CPU fp32 (numpy naive) - only for the SMALL conv; the big stack is too slow on CPU
     if depth * Cout * H * W <= 256 * 32 * 32 * 4:
         refr = _np_conv_stack(x32, Ws, pad, relu=True)
         lat, _ = cpu_run(lambda: _np_conv_stack(x32, Ws, pad, relu=True), reps=5)
@@ -555,7 +555,7 @@ def w_resnet18():
     wl = "ResNet-18 forward (1x3x224x224)"
     print(f"\n=== {wl} ===", flush=True)
     if not HAVE_TV:
-        note(wl, "skipped — torchvision unavailable.")
+        note(wl, "skipped - torchvision unavailable.")
         return
     rng = np.random.default_rng(6)
     img = rng.standard_normal((1, 3, 224, 224)).astype(np.float32)
@@ -600,7 +600,7 @@ def w_minilm():
     wl = "MiniLM encoder (1 sentence)"
     print(f"\n=== {wl} ===", flush=True)
     if not HAVE_HF:
-        note(wl, "skipped — transformers unavailable.")
+        note(wl, "skipped - transformers unavailable.")
         return
     NAME = "sentence-transformers/all-MiniLM-L6-v2"
     text = "The Apple Neural Engine is a specialized accelerator for matrix math."

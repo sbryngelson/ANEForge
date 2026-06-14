@@ -6,7 +6,7 @@ Two things this guards:
    Switching to the F0-native ``exp(0)==1`` makes the whole module M1-capable.
 2. ``special.sin`` / ``special.cos`` give a portable trig path on chips where native
    sin/cos do not exist. Domain is [-pi/2, pi/2] (documented, like every other
-   function in special.py). The decomposition uses only mul/sub/exp — native on M1 — so
+   function in special.py). The decomposition uses only mul/sub/exp - native on M1 - so
    it is validated here on the M5 against numpy; the same graph runs on M1.
 
 Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_special_trig.py -q

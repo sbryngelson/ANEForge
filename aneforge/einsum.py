@@ -1,4 +1,4 @@
-"""aneforge.einsum — a general `einsum(equation, *operands) -> Tensor` that
+"""aneforge.einsum - a general `einsum(equation, *operands) -> Tensor` that
 decomposes a numpy-style subscript equation into a sequence of aneforge graph ops
 (transpose / reshape / matmul-bmm / broadcast-mul / reduce-sum) so the whole
 contraction runs as ONE fused e5rt program on the Apple Neural Engine.
@@ -36,7 +36,7 @@ REDUCTION-ONLY and OUTER products are handled directly:
 
 WHAT IS *NOT* SUPPORTED (rejected with a clear error, never wrong results)
 -------------------------------------------------------------------------
-Any equation with a REPEATED index inside a single operand — diagonal / trace
+Any equation with a REPEATED index inside a single operand - diagonal / trace
 extraction (`ii->i`, `ii->`, `...ii->...`). Reading a tensor's diagonal is a
 GATHER, unsupported on the ANE (per the op-conformance finding), with no
 matmul/reduce decomposition. These raise `EinsumUnsupported`. Ellipsis (`...`)
@@ -109,7 +109,7 @@ def _reduce_repeats_check(sub: str) -> None:
         dup = sorted({ch for ch in sub if sub.count(ch) > 1})
         raise EinsumUnsupported(
             f"einsum: repeated index {dup} within operand '{sub}' is a diagonal/trace "
-            f"extraction, which needs gather — unsupported on the ANE. "
+            f"extraction, which needs gather - unsupported on the ANE. "
             f"(Reject rather than return wrong results.)")
 
 

@@ -23,14 +23,14 @@ def main():
 
     print("native geometry/matching ops (netplist bridge - graph cut, like af.sdpa):")
 
-    # --- cross_product: cross(a, b) of two 3-vectors -------------------------
+    # cross_product: cross(a, b) of two 3-vectors
     a = rng.standard_normal(3).astype(np.float16)
     b = rng.standard_normal(3).astype(np.float16)
     net = af.compile(af.cross_product(af.input((3,)), af.input((3,))))
     ok.append(report("cross_product", net(a, b),
                      np.cross(a.astype(np.float32), b.astype(np.float32))))
 
-    # --- cross_correlation: valid (no-flip) template matching ----------------
+    # cross_correlation: valid (no-flip) template matching
     xc = rng.standard_normal((5, 5)).astype(np.float16)
     tmpl = rng.standard_normal((3, 3)).astype(np.float16)
     net = af.compile(af.cross_correlation(af.input((5, 5)), af.input((3, 3))))
@@ -42,7 +42,7 @@ def main():
             ref[i, j] = (xf[i:i + Th, j:j + Tw] * tf).sum()
     ok.append(report("cross_correlation", net(xc, tmpl), ref))
 
-    # --- cost_volume: L1 stereo matching cost, disparity range R --------------
+    # cost_volume: L1 stereo matching cost, disparity range R
     Wa, R = 4, 2
     aux = rng.standard_normal(Wa).astype(np.float16)
     refrow = rng.standard_normal(Wa + R).astype(np.float16)
@@ -51,7 +51,7 @@ def main():
     ref = np.stack([np.abs(auxf - rf[d:d + Wa]) for d in range(R + 1)], axis=0)
     ok.append(report("cost_volume", net(aux, refrow), ref))
 
-    # --- fps: L2 furthest-point sampling, seeded at index 0 ------------------
+    # fps: L2 furthest-point sampling, seeded at index 0
     N, k = 10, 4
     P = rng.integers(0, 12, size=(N, 3)).astype(np.float16); P[:, 2] = 0
     net = af.compile(af.fps(af.input((N, 3)), k))
@@ -61,7 +61,7 @@ def main():
         d = np.minimum(d, dist); sel.append(int(np.argmax(d)))
     ok.append(report("fps (L2)", net(P), Pf[sel], exact=True))
 
-    # --- radius_search: L2 ball-query membership matrix ----------------------
+    # radius_search: L2 ball-query membership matrix
     Np, Nc, radius = 6, 3, 3.0
     Pr = rng.integers(0, 6, size=(Np, 3)).astype(np.float16); Pr[:, 2] = 0
     Cr = rng.integers(0, 6, size=(Nc, 3)).astype(np.float16); Cr[:, 2] = 0

@@ -69,7 +69,7 @@ def guard_before_compile() -> None:
             f"{wait:.1f}s (a defensive backstop for the autotuner's burst of variant "
             f"compiles). Set ANEFORGE_DISABLE_COMPILE_BREAKER=1 to override.")
     warnings.warn(
-        f"aneforge: pacing this compile by {wait:.1f}s — a compile failed recently "
+        f"aneforge: pacing this compile by {wait:.1f}s - a compile failed recently "
         f"(a defensive backstop for the autotuner's burst of variant compiles). "
         f"(ANEFORGE_DISABLE_COMPILE_BREAKER=1 to override.)",
         stacklevel=3)

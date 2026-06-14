@@ -79,7 +79,7 @@ def minmax_norm_fused(x: np.ndarray, *, dimension: str = "Width",
 
     Args:
         x: fp16 array of logical shape (B=1, C, H, W).
-        dimension: reduction axis — "Width" (default) or "Height".
+        dimension: reduction axis - "Width" (default) or "Height".
                    "Channel" is ARCH-GATED (compile failure) on this host.
         epsilon: stability eps added to the (max-min) denominator.
 

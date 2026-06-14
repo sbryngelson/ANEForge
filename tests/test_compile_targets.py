@@ -1,4 +1,4 @@
-"""compile(target=...) — gate lowering on the target ANE family.
+"""compile(target=...) - gate lowering on the target ANE family.
 
 The gate runs once at the top of compile(): resolve the family, substitute below-floor
 ops that have an in-graph decomposition (sin/cos -> special.py), and raise a clear
@@ -84,7 +84,7 @@ def test_m5_offset_slice_does_not_warn():
 # --- cross_compile_check: static preflight pre-gate (family-cap CI keystone) ---
 def test_cross_compile_check_rejects_family_cap_violation_statically(monkeypatch):
     # A conv with kW=14 fits A16 (<=15) but exceeds the A13 cap (<=13). cross_compile_check
-    # for h13 must reject it from preflight ALONE — not lean on the host cross-compiler,
+    # for h13 must reject it from preflight ALONE - not lean on the host cross-compiler,
     # which may not enforce a different family's dim caps. The e5rt compiler must not even
     # be reached for a statically-rejectable graph.
     from aneforge import _compile, _runtime
@@ -98,7 +98,7 @@ def test_cross_compile_check_rejects_family_cap_violation_statically(monkeypatch
 
 def test_cross_compile_check_passes_valid_graph_to_compiler(monkeypatch):
     # A graph with no static violation must still flow through to the e5rt compiler and
-    # return its verdict (here stubbed to success) — the pre-gate is a filter, not a wall.
+    # return its verdict (here stubbed to success) - the pre-gate is a filter, not a wall.
     from aneforge import _compile, _runtime
     g = af.conv(af.input((1, 3, 32, 32)), np.zeros((8, 3, 3, 11), np.float32), pad=0)
     monkeypatch.setattr(_runtime, "compile_check", lambda *a, **k: 0)

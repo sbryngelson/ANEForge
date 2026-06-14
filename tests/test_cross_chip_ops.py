@@ -1,7 +1,7 @@
 """Ops that M1 (A13) cannot run but newer Macs can. On M1 hardware we test the
 TWO things that are testable: (1) the op catalog correctly declares each op's
 cross-chip availability (walled/bridge on M1, native on the supporting family),
-and (2) aneforge GUARDS them on M1 — it refuses (clear arch-gate error) rather
+and (2) aneforge GUARDS them on M1 - it refuses (clear arch-gate error) rather
 than silently miscompiling, and the same graph compiles when targeting a chip
 that supports it. The op cannot actually EXECUTE here (that needs the newer silicon)."""
 from __future__ import annotations
@@ -31,7 +31,7 @@ GATED = ["affine", "topk", "sort", "sin", "cos", "resize_bilinear",
 @pytest.mark.parametrize("op", [g for g in GATED if g in oc.OP_CATALOG])
 def test_catalog_declares_cross_chip(op):
     d = oc.OP_CATALOG[op]
-    # not natively runnable on M1 (walled, or bridge=host-decomposed — never plain native)
+    # not natively runnable on M1 (walled, or bridge=host-decomposed - never plain native)
     assert d["m1"] != "native", f"{op} claims native on M1 but is gated"
     # a newer family runs it (native somewhere above M1, or it's a bridge op)
     higher_native = any(d[k] == "native" for k in ("m2", "m3", "m4_m5"))
@@ -39,7 +39,7 @@ def test_catalog_declares_cross_chip(op):
 
 
 def test_catalog_capability_grows_m1_to_m5():
-    # M5 (family 5) runs at least as many native ops as M1 (family 2) — capability is a ladder.
+    # M5 (family 5) runs at least as many native ops as M1 (family 2) - capability is a ladder.
     m1 = set(oc.ops_on("m1", "native"))
     m5 = set(oc.ops_on("m5", "native"))
     assert m1 <= m5, f"M1-native ops not all M5-native: {sorted(m1 - m5)}"
@@ -69,7 +69,7 @@ def test_m1_refuses_gated_op(name, mk, monkeypatch):
 
 @requires_ane
 def test_sort_compiles_for_m5_not_m1(monkeypatch):
-    """The exact graph M1 refuses compiles when targeting M5 — proof the op is M5-runnable."""
+    """The exact graph M1 refuses compiles when targeting M5 - proof the op is M5-runnable."""
     g_m5 = af.sort(af.input((1, 16)))
     monkeypatch.setenv("ANEFORGE_TARGET", "h16s"); TG._cpu_brand.cache_clear()
     af.compile(g_m5, target="h16s")                 # must not raise (M5/A16 supports sort)
@@ -87,12 +87,12 @@ def test_sort_compiles_for_m5_not_m1(monkeypatch):
 def test_gather_last_axis_matches_numpy():
     import numpy as np
     # fp16-EXACT integer inputs (distinct values, well under 2048) so array_equal tests
-    # element SELECTION precisely — a wrong element is an integer mismatch fp16 can't mask.
+    # element SELECTION precisely - a wrong element is an integer mismatch fp16 can't mask.
     x2 = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
     idx2 = [3, 0, 15, 7, 7, 1]
     got2 = af.compile(af.gather(af.input((8, 16)), idx2, axis=1))(x2)
     assert np.array_equal(got2, x2[:, idx2]), "2D last-axis gather not exact"
-    # 3D last-axis (axis 2) — the transpose-routing must generalize past rank 2
+    # 3D last-axis (axis 2) - the transpose-routing must generalize past rank 2
     x3 = np.arange(2 * 4 * 6, dtype=np.float32).reshape(2, 4, 6)
     idx3 = [5, 1, 0, 3]
     got3 = af.compile(af.gather(af.input((2, 4, 6)), idx3, axis=2))(x3)
@@ -105,7 +105,7 @@ def test_gather_last_axis_matches_numpy():
 # --- regression: the width-slice hazard guard targets the confirmed patterns -------------
 # Two silicon-pinned modes (a2a323a refined the wrong-element mode; M2 silicon corrected the
 # saturation family bound): (1) WRONG ELEMENTS only when >=2 width-offset slices are
-# CONCATENATED (single slices select correctly — 180-config M2 sweep is exact); (2) magnitude
+# CONCATENATED (single slices select correctly - 180-config M2 sweep is exact); (2) magnitude
 # SATURATION (|v|>4094 -> inf) on a single width slice, confirmed on A13 AND A14 (M2 probe);
 # A15 pending M3. A16/M5 unaffected.
 def test_width_slice_guard_modes():

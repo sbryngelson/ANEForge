@@ -1,7 +1,7 @@
 """Graph-rewrite infrastructure for the aneforge optimizer.
 
 Tensors are immutable/pure (op + srcs + attrs), so a "rewrite" is not in-place
-mutation — it RE-DERIVES the output DAG, substituting new nodes at match sites
+mutation - it RE-DERIVES the output DAG, substituting new nodes at match sites
 and rebuilding every node on the path from a match up to `out`. Shared subgraphs
 are cloned once (memoized by node identity) so a diamond stays a diamond, not two
 copies.
@@ -15,7 +15,7 @@ On top of that, two concrete rewrites the optimizer uses:
 
   - `sdpa_to_decomposed` : replace one (or all) native-`sdpa` node(s) with the
     metamorphic-PROVEN bit-identical decomposed form
-    `((q @ k^T) * scale).softmax(-1) @ v` — built from aneforge ops (bmm/muls/
+    `((q @ k^T) * scale).softmax(-1) @ v` - built from aneforge ops (bmm/muls/
     softmax), which fuse into ONE e5rt program (no native-SDPA graph cut). Being
     bit-identical (see the reverse-engineering corpus + tests/fuzz_metamorphic
     `mha_vs_sdpa`), it is LOSSLESS: the optimizer picks native-vs-decomposed
@@ -23,7 +23,7 @@ On top of that, two concrete rewrites the optimizer uses:
 
   - `set_node_int8` : tag a specific weight-bearing node with an `int8` attr so
     the compiler streams just that node's weight as int8 (a per-weight, LOSSY
-    rewrite — opt-in, accuracy-gated by the tuner).
+    rewrite - opt-in, accuracy-gated by the tuner).
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
     rewritten sources), or None to keep the rebuilt node as-is. The clone is memoized
     by source-node identity, so shared subgraphs are rewritten exactly once and stay
     shared. Inputs (and any node `rule` leaves unchanged with unchanged sources) are
-    returned unchanged, so a no-op rule yields the SAME object — the optimizer relies
+    returned unchanged, so a no-op rule yields the SAME object - the optimizer relies
     on that to keep opt=0 byte-identical.
     """
     memo: dict[int, Tensor] = {}
@@ -69,7 +69,7 @@ def _decompose_sdpa(node: Tensor) -> Tensor:
         scores = (q @ k.transpose([0,1,3,2])) * scale
         a      = scores.softmax(-1)
         out    = a @ v
-    q/k/v are [1, H, S, D]; the result is [1, H, S, D]. Pure fused MIL — no cut."""
+    q/k/v are [1, H, S, D]; the result is [1, H, S, D]. Pure fused MIL - no cut."""
     q, k, v = node.srcs
     scale = node.attrs["scale"]
     scores = (q @ k.transpose([0, 1, 3, 2])) * float(scale)
@@ -226,7 +226,7 @@ def reduce_sum_to_matmul(out: Tensor, only_idx: set[int] | None = None) -> Tenso
 
 # --------------------------------------------------------------------------- #
 # BRIDGE-ELIMINATION rewrites (replace a native netplist cut with a fused        #
-# decomposition built from _EMIT ops). Each is lossless — validated on-device     #
+# decomposition built from _EMIT ops). Each is lossless - validated on-device     #
 # to agree with the bridge within fp16 op-noise (tests/test_routes.py), same       #
 # proof class as sdpa<->decomposed. Removing the cut lets the region fuse into     #
 # one e5rt program (estimate() costs it cheaper accordingly).                       #
@@ -250,7 +250,7 @@ def _decompose_minmax_norm(node: Tensor) -> Tensor:
 def _flatten_to_reshape(node: Tensor) -> Tensor:
     """Rebuild a `flatten` node (native Flatten bridge, [C,H,W] -> [prod]) as a plain
     fused `reshape` to the same 1-D shape. BIT-IDENTICAL (both are a contiguous
-    row-major collapse — test_routes.py measures relerr 0.0), so it is LOSSLESS and
+    row-major collapse - test_routes.py measures relerr 0.0), so it is LOSSLESS and
     removes the netplist cut entirely."""
     (x,) = node.srcs
     return x.reshape(node.shape)
@@ -266,7 +266,7 @@ def _decompose_lrn(node: Tensor) -> Tensor:
     the bridge's TRUE effective alpha):
         lrn(alpha, beta, k)  ==  local_response_norm(size=C, alpha=alpha*C, beta, k)
     where C = x.shape[1]. LOSSLESS, so the optimizer picks native-vs-fused purely by
-    speed — and the fused route removes the cut (~1250x faster on a conv->lrn->relu
+    speed - and the fused route removes the cut (~1250x faster on a conv->lrn->relu
     block). The fused op also drops the C<16 cap the bridge carries."""
     (x,) = node.srcs
     C = node.shape[1]
@@ -289,7 +289,7 @@ _BRIDGE_DECOMPOSERS = {
 
 def decompose_bridge(out: Tensor, decomp_idx: set[int]) -> Tensor:
     """Rewrite the bridge nodes at the given ORIGINAL-graph topo indices to their fused
-    decomposition (sdpa/minmax_norm/flatten/lrn — see `_BRIDGE_DECOMPOSERS`). Walks the
+    decomposition (sdpa/minmax_norm/flatten/lrn - see `_BRIDGE_DECOMPOSERS`). Walks the
     original graph so the indices are stable, rebuilding bottom-up. A node whose op has
     no registered decomposer is left as-is (single-route). Returns a new output DAG."""
     from ._compile import _topo

@@ -2,7 +2,7 @@
 
 `compile(out)` topologically orders the graph, emits a single MIL function (one op
 per graph node, weights packed into one BLOBFILE), and hands it to e5rt on the ANE.
-Each op's MIL is produced by a small handler registered with `@op(...)` — the
+Each op's MIL is produced by a small handler registered with `@op(...)` - the
 registry doubles as the set of ops aneforge can reach on the device.
 """
 from __future__ import annotations
@@ -72,10 +72,10 @@ class _Emitter:
         self.compress_atol = compress_atol
         self.block_size = block_size       # inner-dim block for compress="blockwise"
         # compress="auto" is family-aware: only encodings that stream natively on the
-        # target family are auto candidates — a folding encoding costs accuracy for zero
+        # target family are auto candidates - a folding encoding costs accuracy for zero
         # bandwidth win, so fp16 dominates it (h13/M1 streams int4-LUT + sparse; A14+ stream
         # all four). family=None keeps every branch enabled (historical behavior);
-        # explicit single-mode knobs are never filtered — the user's call.
+        # explicit single-mode knobs are never filtered - the user's call.
         if self.compress == "auto" and family is not None:
             from . import _targets as TG
             self._auto_streams = TG.native_streams(family)
@@ -186,7 +186,7 @@ class _Emitter:
                 # (Espresso "Not implemented"); it only feeds elementwise consumers, so we
                 # bridge it through a +0 add to a dense fp16 result that can back a
                 # matmul/conv. Net: dequantized in-program, not streamed as int8 (disk ~2x
-                # smaller, no bandwidth win — unlike int4-LUT/sparse).
+                # smaller, no bandwidth win - unlike int4-LUT/sparse).
                 shp = list(W.shape)
                 self.line(f'tensor<int8, {shp}> {name}_d = const()[name = string("{name}_d"), '
                           f'val = tensor<int8, {shp}>(BLOBFILE(path = string("{path}"), offset = uint64({od})))];')
@@ -321,7 +321,7 @@ def _e_muls(em, t, n, s):
 @op("adds")
 def _e_adds(em, t, n, s):
     # scalar add (x + k), the additive sibling of muls. A const fp16 broadcast-added
-    # to x — the only fused way to inject a scalar offset (e.g. a normalization eps),
+    # to x - the only fused way to inject a scalar offset (e.g. a normalization eps),
     # since _binary requires two graph Tensors. Bit-faithful: the const is fp16-rounded
     # exactly as muls rounds its scalar.
     k = float(np.float16(t.attrs["k"])).hex()
@@ -372,7 +372,7 @@ def _e_bmm(em, t, n, s):
 def _e_conv(em, t, n, s):
     a = t.attrs
     # per-channel int8 is routable as a conv weight on the ANE: constexpr_affine_dequantize
-    # feeds the conv weight operand directly (no +0 bridge — unlike constexpr_blockwise_
+    # feeds the conv weight operand directly (no +0 bridge - unlike constexpr_blockwise_
     # shift_scale). Measured on h13/M1: int8 conv compiles+runs at cos~1.0 vs fp16,
     # relerr ~0.6% vs fp32 ref (the expected per-channel int8 error), and ~halves the
     # DRAM weight bytes (dequant-in-program at the MAC port). int4-LUT/sparse stay as
@@ -783,7 +783,7 @@ class Model:
         self._prog = prog
         self._inputs = inputs
         # The ordered input Tensor objects (same order as `inputs`); lets callers
-        # (e.g. autograd.Trainer) map each compiled input back to its source Tensor —
+        # (e.g. autograd.Trainer) map each compiled input back to its source Tensor -
         # trainable parameter vs provided data. Additive; no effect on inference.
         self._input_tensors = input_tensors if input_tensors is not None else []
         self._out_name, self._out_shape = out_name, out_shape
@@ -822,7 +822,7 @@ class Model:
         return self._prog.output_view(self._out_name)
 
     def execute(self) -> None:
-        """Run once without binding inputs / reading outputs — pair with
+        """Run once without binding inputs / reading outputs - pair with
         `input_view`/`output_view` for a zero-copy loop."""
         self._prog.execute()
 
@@ -890,7 +890,7 @@ def _lower_fused_to_dir(out: Tensor, build_dir=None, int8: bool = False):
 def cross_compile_check(out: Tensor, target, int8: bool = False) -> bool:
     """Does the graph rooted at `out` compile for another ANE family, checked from this
     host? `target` is a compiler arch string ('h13') or a family int. Returns True iff
-    the e5rt compiler produces a library for that TargetArchitecture — compile-level
+    the e5rt compiler produces a library for that TargetArchitecture - compile-level
     validation only (it does not, and on a different-family host cannot, execute there).
 
     The keystone of cross-chip CI: validate that the op corpus compiles for every chip
@@ -910,7 +910,7 @@ def cross_compile_check(out: Tensor, target, int8: bool = False) -> bool:
     # Static pre-gate: a target's per-family caps (conv kernel width, max tensor dim, ops
     # below their MinimumFamily floor) are HAL-data gated, and the host cross-compiler does
     # not reliably enforce a different family's caps when emitting for its TargetArchitecture
-    # — so a cap violation would compile here and only fail on the real silicon, a false CI
+    # - so a cap violation would compile here and only fail on the real silicon, a false CI
     # pass. preflight() answers the same question statically and family-aware (it is what
     # compile(target=) gates on), so reject up front and skip the compiler entirely.
     fam = TG.family_of_arch(arch)
@@ -1034,7 +1034,7 @@ class DispatchFloorWarning(UserWarning):
     """Emitted by `compile` when a program is dispatch-floor-bound: its predicted ANE
     time is dominated by the fixed per-call dispatch + firmware round-trip, so each call
     costs about the same however small the work is. Dispatch is single-in-flight, so
-    threads/concurrency do not amortize it — only larger batches or more ops per program do.
+    threads/concurrency do not amortize it - only larger batches or more ops per program do.
     Silence with `warnings.filterwarnings('ignore', category=aneforge.DispatchFloorWarning)`."""
 
 
@@ -1054,7 +1054,7 @@ def _dispatch_floor_signal(out: Tensor) -> None:
             f"aneforge.compile: dispatch-floor estimate was unavailable ({e!r}); a "
             f"floor-bound program would not be flagged.", stacklevel=3)
         return
-    if pred > floor * 1.5:          # already compute/bytes-bound — amortizing buys little
+    if pred > floor * 1.5:          # already compute/bytes-bound - amortizing buys little
         return
     import warnings
     msg = ("aneforge.compile: dispatch-floor-bound program (predicted "
@@ -1096,7 +1096,7 @@ def _warn_h13_slice_saturation(out: Tensor, family: int) -> None:
     lower through a Q.4 fixed-point crop-DMA (an implied x16 scale). Two distinct,
     silicon-pinned failure modes:
 
-      (1) wrong elements when multiple width-offset slices are concatenated — confirmed
+      (1) wrong elements when multiple width-offset slices are concatenated - confirmed
           on A14 (the gather axis-1 bug) and A13, at any magnitude. A single width-offset
           slice selects the correct elements (a 180-config bare-slice sweep is numpy-exact
           on A14), so this mode is specific to the concat-of-width-slices pattern.
@@ -1117,7 +1117,7 @@ def _warn_h13_slice_saturation(out: Tensor, family: int) -> None:
     sat_family = int(family) <= int(TG.Family.A14)   # saturation measured on A13 + A14
     for t in _topo(out):
         # Mode (1): a concat of >= 2 nonzero-width-offset slices (the gather / im2col
-        # pattern) — wrong elements on any pre-A16 family.
+        # pattern) - wrong elements on any pre-A16 family.
         if t.op == "concat":
             n_w = sum(1 for s in t.srcs if s.op == "slice_by_size"
                       and (s.attrs.get("begin") or [0])[-1] > 0)
@@ -1141,7 +1141,7 @@ def _warn_h13_slice_saturation(out: Tensor, family: int) -> None:
 class CrossChipFP16Warning(UserWarning):
     """Emitted by `cross_compile_check` when a graph compiles for a different-family
     target but carries an op whose fp16 VALUE can diverge from the host's on that chip
-    (per the Direction B HAL-field predictor). The compile is still valid — this is a
+    (per the Direction B HAL-field predictor). The compile is still valid - this is a
     numeric heads-up, not a rejection. Silence with
     `warnings.filterwarnings('ignore', category=aneforge.CrossChipFP16Warning)`."""
 
@@ -1256,7 +1256,7 @@ def _retarget_for(out: Tensor, target) -> Tensor:
     memo: dict[int, Tensor] = {}
     for t in _topo(out):
         if not t.srcs:
-            memo[id(t)] = t                                   # input / leaf — reuse
+            memo[id(t)] = t                                   # input / leaf - reuse
             continue
         new_srcs = [memo[id(s)] for s in t.srcs]
         if TG.op_status(t.op, fam) == "decompose":
@@ -1279,7 +1279,7 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt="routes",
     native-SDPA sub-program).
 
     `opt` selects the graph optimizer (default `'routes'`):
-      - `opt='routes'` (default) : the lossless route pass — cost-model-driven, per
+      - `opt='routes'` (default) : the lossless route pass - cost-model-driven, per
                       shape, choosing for each route-bearing bridge node (sdpa,
                       minmax_norm, flatten, lrn) between the native bridge (a graph
                       cut) and the proven-equivalent fused decomposition (cut removed),
@@ -1289,11 +1289,11 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt="routes",
                       `sdpa` the cost model keeps native where it wins (long
                       sequences), so the default never blindly removes a cut that
                       helps.
-      - `opt=0`   : no optimization — the historical, byte-identical path
+      - `opt=0`   : no optimization - the historical, byte-identical path
                       (`int8` honored as given). Use this for byte-identity tests.
       - `opt=1`   : cost-model pick over the full variant set (route swaps and the
                       lossy whole-graph int8 variant), without measuring on-device.
-      - `opt=2` / `opt='max'` : autotune — measure the legal proven-safe variants
+      - `opt=2` / `opt='max'` : autotune - measure the legal proven-safe variants
                       on the ANE, validate each vs the opt=0 baseline, return the
                       fastest correct one (cached; instant on a cache hit).
 
@@ -1302,9 +1302,9 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt="routes",
     when the weight is >=50% zeros), 'blockwise' (per-inner-block int8 via
     `constexpr_blockwise_shift_scale`, `block_size` columns per scale,
     accuracy-gated -> int8 -> fp16), or 'auto' (per-weight: sparse if sparse, else int4
-    if accurate, else int8, else fp16 — the most aggressive encoding that stays
+    if accurate, else int8, else fp16 - the most aggressive encoding that stays
     correct). 'auto' is family-aware: only encodings that stream natively on the
-    `target` family (host-detected when `target=None`) are candidates — on h13/M1
+    `target` family (host-detected when `target=None`) are candidates - on h13/M1
     that is int4-LUT + sparse, so auto streams those (sparse for >=50%-zero weights) but
     skips int8/blockwise (they fold to dense fp16: accuracy cost, no bandwidth win) and a
     rejected int4 falls to fp16. Explicit single-mode knobs are never filtered.
@@ -1595,7 +1595,7 @@ def _subgraph(target, source_ids):
 
 class SegmentedModel:
     """A compiled plan: e5rt program segments interleaved with native-ANE
-    sub-program calls (sdpa / argmax / topk — see NETPLIST_OPS). Tensors thread
+    sub-program calls (sdpa / argmax / topk - see NETPLIST_OPS). Tensors thread
     between segments as host fp16 arrays (correctness-first; a persistent IOSurface
     worker is the throughput follow-up)."""
 
@@ -1653,7 +1653,7 @@ class SegmentedModel:
         try:
             from . import _netplist_worker as nw
             if not nw.has_worker(st["op"]):
-                # No worker route exists for this op — the subprocess bridge IS the
+                # No worker route exists for this op - the subprocess bridge IS the
                 # normal path, not a degradation; stay silent.
                 run = NETPLIST_OPS[st["op"]][0]
                 self._worker_runs[sid] = run
