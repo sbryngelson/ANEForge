@@ -164,11 +164,9 @@ def _horner():
     chain into a single program).
     feasibility: WORKS.
 
-    Coefficients are baked as constant *tensors* via a 1-element broadcast trick:
-    we add a constant by multiplying the input-by-zero plus a bias is awkward, so we
-    fold coefficients as scalar muls/adds is not possible (no scalar add). Instead we
-    carry the coefficient vector as a second graph input (a constant fed at run
-    time). x is in [-1,1] to keep the powers from overflowing fp16. Degree 6.
+    Coefficients are carried as a second graph input (the [1, D+1] coeff vector, fed
+    at run time); _col() selects each c_i as a [1,1] tensor that broadcasts over the
+    32 lanes. x is in [-1,1] to keep the powers from overflowing fp16. Degree 6.
     tol=0.03: Horner is the *numerically stable* eval; the only error is fp16
     rounding of ~6 fused mul/adds, so this stays tight.
     """
@@ -178,13 +176,8 @@ def _horner():
     cvec = coeffs.reshape(1, D + 1)
 
     def build(xt, ct):
-        # ct is [1, D+1]; slice each coeff as a [1,1] broadcastable constant via mean
-        # over a 1-wide window is overkill - use dynamic_slice-free indexing by
-        # building per-coeff [1,1] tensors through reshape of single columns.
-        # Simpler: feed coeffs already split is not possible (one input array), so we
-        # use reduce over a one-hot... too heavy. We instead express Horner with the
-        # coeff vector broadcast against accumulators of width 32 using add of a
-        # column. Implement by transposing the coeff row into the chain:
+        # ct is [1, D+1]; _col(ct, i) selects coeff i as a [1,1] tensor that
+        # broadcasts over the 32 lanes, so the whole recurrence stays fused.
         acc = None
         for i in range(D, -1, -1):
             ci = _col(ct, i)                  # [1,1] -> broadcasts over the 32 lanes
@@ -203,20 +196,11 @@ def _horner():
 
 
 def _col(t: af.Tensor, i: int) -> af.Tensor:
-    """Slice column i of a [1, W] tensor as a [1,1] tensor via a reduce over a
-    1-wide window. We avoid dynamic_slice (graph cut) by reshaping: a [1,W] row
-    reshaped to [W,1] then reduce_sum over a single-element axis isn't a clean
-    index. Instead use transpose+reshape to isolate the element when W is static.
-    """
+    """Select column i of a [1, W] tensor as a [1,1] tensor by matmul against a
+    one-hot column selector (a folded constant weight); stays fused, no graph cut."""
     W = t.shape[1]
-    t.transpose([1, 0]).reshape(W, 1, 1)        # [W,1,1], element i is row i
-    # reduce over a 1-hot is heavy; static index via reshape+slice through mean of a
-    # window of width 1 centered at i: use sum over a masked copy. Simplest robust
-    # static index that stays fused: reshape to [W,1] and take row i with a matmul
-    # against a one-hot selector (a folded constant weight).
     sel = np.zeros((W, 1), np.float16); sel[i, 0] = 1.0
-    flat = t                                            # [1,W]
-    return flat @ sel.astype(np.float16)                # [1,1]
+    return t @ sel.astype(np.float16)                   # [1,W] @ [W,1] -> [1,1]
 
 
 def _stencil_laplacian():
@@ -232,7 +216,6 @@ def _stencil_laplacian():
     """
     dt = 0.1
     lap = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], np.float32)
-    (np.eye(3, k=0) * 0.0)  # placeholder; build identity+dt*lap as [1,1,3,3]
     K = np.zeros((1, 1, 3, 3), np.float32)
     K[0, 0] = dt * lap
     K[0, 0, 1, 1] += 1.0          # identity center -> u + dt*Lap(u)
@@ -667,7 +650,6 @@ def run_numerical(cases, verbose: bool = True):
     print("\n" + "-" * 100)
     print("WHAT NUMERICAL COMPUTING FITS THE ANE (fp16 feed-forward dataflow)")
     print("-" * 100)
-    {c.name for c in LAPACK_PROBES}
     for c in LAPACK_PROBES:
         recs = [r for r in all_results if r["name"] == c.name]
         st = recs[0]["status"] if recs else "?"

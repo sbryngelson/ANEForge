@@ -12,10 +12,6 @@ from aneforge import autograd as agrad
 from aneforge.streaming import CheckpointedStack
 
 
-def requires_ane(fn):
-    return fn
-
-
 def _cos(a, b):
     a = np.asarray(a, np.float64).ravel(); b = np.asarray(b, np.float64).ravel()
     return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
@@ -32,7 +28,6 @@ def _example_params(D, rng):
             (rng.standard_normal((D, D)) * 0.2).astype(np.float32)]
 
 
-@requires_ane
 def test_streamed_grads_match_monolith():
     rng = np.random.default_rng(0)
     B, D, NL = 4, 8, 5
@@ -72,7 +67,6 @@ def test_streamed_grads_match_monolith():
             assert c > 0.999, (i, j, c)
 
 
-@requires_ane
 def test_deep_stack_compiles_and_trains():
     # A deep stack (more layers than a monolith compiles cheaply) trains: a sum-target
     # regression where SGD over streamed grads drives the loss down. Compile cost is two

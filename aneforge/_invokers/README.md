@@ -3,7 +3,7 @@
 The ObjC sources the native-layer **bridge ops** compile and exec at runtime. Each
 authors a netplist (`Type=<Layer>`) program and invokes it on the Apple Neural Engine
 through Apple's private frameworks, returning the result to the Python `_bridges/`
-module that called it. Kept in the package so the bridges are self-contained — no
+module that called it. Kept in the package so the bridges are self-contained - no
 dependency on the reverse-engineering corpus.
 
 Each is a generic invoker shared across an op family:

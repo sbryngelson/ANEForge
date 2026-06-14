@@ -119,9 +119,8 @@ def ai_elementwise(reads, writes, flops_per_elem, n, bpe):
 
 def build_archetype_ai():
     """Return a list of archetype dicts with AI computed from real counts + the formula
-    string, for fp16 (GPU/ANE) traffic. AI is dtype-dependent only through bpe; we report
-    fp16 AI as the canonical value and note CPU fp32 halves the byte-count-per-element-...
-    actually fp32 DOUBLES bytes so HALVES AI - handled in placement per device."""
+    string, for fp16 (GPU/ANE) traffic. AI is dtype-dependent only through bytes-per-
+    element: CPU fp32 doubles the bytes/elem, halving AI; handled per device in placement."""
     rows = []
 
     # ---- matmul: square N (compute archetype) + GEMV/decode (the key low-AI case) ----
@@ -129,7 +128,7 @@ def build_archetype_ai():
         f, b, ai = ai_matmul(N, N, N, FP16)
         rows.append({
             "archetype": f"matmul square N={N}", "class": "compute",
-            "formula": "2N^3 / (3N^2)*2B = N/3 FLOP/elem-pair -> AI=N/3 (fp16: /2B cancels in ratio... see note)",
+            "formula": "AI = 2N^3 / (3N^2 * 2B) = N/3",
             "flops": f, "bytes_fp16": b, "ai_fp16": ai,
             "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
             "represents": ["matmul(large)", "bmm", "linear"],

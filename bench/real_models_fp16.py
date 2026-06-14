@@ -71,9 +71,8 @@ def _row(wl, device, dtype, *, lat_s, relerr_v, energy=None):
     extra = ""
     if "mJ_per_inf" in r:
         extra = f"  {r['active_pkg_W']:5.2f} W (CV {r.get('pkg_cv_pct',0):.0f}%)  {r['mJ_per_inf']:7.1f} mJ/inf"
-    print(f"  {device+' '+dtype:<16} {lat_s*1e3:8.3f} ms{extra}"
-          f"  relerr {relerr_v:.2e}" if relerr_v is not None else
-          f"  {device+' '+dtype:<16} {lat_s*1e3:8.3f} ms{extra}")
+    line = f"  {device+' '+dtype:<16} {lat_s*1e3:8.3f} ms{extra}"
+    print(line + (f"  relerr {relerr_v:.2e}" if relerr_v is not None else ""))
 
 
 def resnet18(window):

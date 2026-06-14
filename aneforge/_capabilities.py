@@ -642,7 +642,7 @@ def _introspect_sweep(already: set[str]) -> list[dict[str, Any]]:
             if klass == "reachable":
                 entry["note"] = (entry.get("note") or "") + (
                     " Sweep klass 'reachable' = compiles + runs (presence), correctness not "
-                    "numerically pinned against a reference." if "note" not in _SWEEP_NOTE.get(op, "") else "")
+                    "numerically pinned against a reference." if op not in _SWEEP_NOTE else "")
                 entry["note"] = entry["note"].strip()
             out.append(entry)
         elif op in _NOT_AUTHORABLE_OPS:

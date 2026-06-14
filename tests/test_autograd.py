@@ -5,12 +5,6 @@ import pytest
 import aneforge as af
 from aneforge import autograd as agrad
 
-# The forward+backward MNIST gate runs on the ANE. Every test in this suite already
-# runs on the engine via af.compile, so `requires_ane` is an identity decorator kept
-# for parity with the plan's @requires_ane (no separate runtime guard needed here).
-def requires_ane(fn):
-    return fn
-
 
 def test_parameter_is_trainable_input():
     p = agrad.parameter(np.ones((2, 3), np.float32))
@@ -165,7 +159,6 @@ def _cos(a, b):
     return float(a.ravel() @ b.ravel() / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
 
 
-@requires_ane
 def test_transpose_grad():
     rng = np.random.default_rng(50)
     xv = rng.standard_normal((2, 3, 4)).astype(np.float32)
@@ -177,7 +170,6 @@ def test_transpose_grad():
     assert _cos(gx, ref) > 0.99 and np.allclose(gx, ref, atol=3e-2), (_cos(gx, ref),)
 
 
-@requires_ane
 def test_reshape_grad():
     rng = np.random.default_rng(51)
     xv = rng.standard_normal((2, 6)).astype(np.float32)
@@ -189,7 +181,6 @@ def test_reshape_grad():
     assert _cos(gx, ref) > 0.99 and np.allclose(gx, ref, atol=3e-2)
 
 
-@requires_ane
 def test_concat_and_slice_grad():
     # concat vjp slices g per source; slice_by_size vjp scatters g back. Compose
     # them: y = concat([x[:, :3], x[:, 3:]], axis=1) should give d/dx = w (identity).
@@ -204,7 +195,6 @@ def test_concat_and_slice_grad():
     assert _cos(gx, wv) > 0.99 and np.allclose(gx, wv, atol=3e-2)
 
 
-@requires_ane
 def test_relu_grad():
     rng = np.random.default_rng(53)
     xv = rng.standard_normal((4, 5)).astype(np.float32)
@@ -216,7 +206,6 @@ def test_relu_grad():
     assert _cos(gx, ref) > 0.99 and np.allclose(gx, ref, atol=3e-2)
 
 
-@requires_ane
 def test_silu_grad():
     rng = np.random.default_rng(60)
     xv = rng.standard_normal((4, 5)).astype(np.float32)
@@ -239,7 +228,6 @@ def _fd_grad(fwd, xv, wv, eps=1e-2):
     return G
 
 
-@requires_ane
 def test_rms_norm_grad():
     rng = np.random.default_rng(61); D = 16
     xv = rng.standard_normal((4, D)).astype(np.float32)
@@ -252,7 +240,6 @@ def test_rms_norm_grad():
     assert _cos(gx, ref) > 0.99, (_cos(gx, ref),)
 
 
-@requires_ane
 def test_layer_norm_grad():
     rng = np.random.default_rng(62); D = 16
     xv = rng.standard_normal((4, D)).astype(np.float32)
@@ -268,7 +255,6 @@ def test_layer_norm_grad():
     assert _cos(gx, ref) > 0.99, (_cos(gx, ref),)
 
 
-@requires_ane
 def test_conv_grad_wrt_input():
     # native conv node: grad wrt input = conv_transpose(g, W). stride=1, pad in {0,1}.
     rng = np.random.default_rng(54)
@@ -309,7 +295,6 @@ def _np_conv_transpose(g, W, pad=0):
     return dxp[:, :, pad:H-pad, pad:Wd-pad] if pad else dxp
 
 
-@requires_ane
 def test_avg_pool_grad():
     rng = np.random.default_rng(55)
     N, C, H, W, k = 2, 3, 8, 8, 2
@@ -322,7 +307,6 @@ def test_avg_pool_grad():
     assert _cos(gx, ref) > 0.99 and np.allclose(gx, ref, atol=3e-2)
 
 
-@requires_ane
 def test_max_pool_grad():
     # max_pool backward routes g to the argmax of each window, built without
     # gather/scatter (upsample the pooled max back over each k*k block, mask the
@@ -349,7 +333,6 @@ def test_max_pool_grad():
     assert _cos(gx, ref) > 0.99 and gx.shape == xv.shape, (_cos(gx, ref), gx.shape)
 
 
-@requires_ane
 def test_conv2d_trainable_grads():
     # the trainable conv (weight is a real parameter): BOTH input and weight grads
     # are produced on the ANE and match a numpy conv reference (stride=1, pad=0).
@@ -375,7 +358,6 @@ def test_conv2d_trainable_grads():
     assert _cos(gW, dW_ref) > 0.99, _cos(gW, dW_ref)
 
 
-@requires_ane
 def test_mha_is_differentiable():
     # a full multi-head attention block is differentiable end to end on the ANE:
     # the input gradient matches a numpy finite-difference reference within fp16.
@@ -459,7 +441,6 @@ def test_adam_minimizes_quadratic():
     assert np.allclose(w.attrs["value"], c, atol=1e-2)
 
 
-@requires_ane
 def test_cnn_trains_on_subset():
     # conv -> relu -> avg_pool -> flatten -> linear -> softmax-CE, forward+backward
     # on the ANE. The conv weight is a trainable parameter (built from primitives).
@@ -495,7 +476,6 @@ def test_cnn_trains_on_subset():
     assert l1 < 0.4 * l0 and acc1 > acc0 + 0.3, (l0, l1, acc0, acc1)
 
 
-@requires_ane
 def test_cnn_maxpool_trains_on_subset():
     # the avg_pool CNN with the pool swapped to max_pool: conv -> relu -> max_pool
     # -> flatten -> linear -> softmax-CE, forward+backward on the ANE. Exercises the
@@ -530,7 +510,6 @@ def test_cnn_maxpool_trains_on_subset():
     assert l1 < 0.4 * l0 and acc1 > acc0 + 0.3, (l0, l1, acc0, acc1)
 
 
-@requires_ane
 def test_transformer_block_trains():
     # mha + residual + MLP + residual, forward+backward on the ANE; attention is
     # differentiable end to end. Loss drops well below the initial value on a toy task.
@@ -560,7 +539,6 @@ def test_transformer_block_trains():
     assert l1 < 0.25 * l0, (l0, l1)
 
 
-@requires_ane
 def test_layer_norm_trainable_affine_forward_matches_baked():
     # passing parameter Tensors for gamma/beta composes normalize + learnable affine;
     # the forward must equal the native baked-affine layer_norm with the same values.
@@ -578,7 +556,6 @@ def test_layer_norm_trainable_affine_forward_matches_baked():
     assert _cos(got, baked) > 0.999, _cos(got, baked)
 
 
-@requires_ane
 def test_layer_norm_affine_params_train():
     # the affine gamma/beta are trainable: recover a known target affine from unit init.
     rng = np.random.default_rng(71); M, D = 8, 16
@@ -601,7 +578,6 @@ def test_layer_norm_affine_params_train():
     assert _cos(g1, gv) > 0.99 and _cos(b1, bv) > 0.99      # affine recovered
 
 
-@requires_ane
 def test_rms_norm_affine_param_trains():
     rng = np.random.default_rng(72); M, D = 8, 16
     xv = rng.standard_normal((M, D)).astype(np.float32)
@@ -621,7 +597,6 @@ def test_rms_norm_affine_param_trains():
     assert _cos(g1, gv) > 0.99
 
 
-@requires_ane
 def test_charlm_trains_and_predicts():
     # A small multi-layer causal char-LM trains end to end on the engine: one-hot
     # embedding (matmul, not gather), causal-masked attention, RMSNorm + SwiGLU, and a
@@ -668,7 +643,6 @@ def test_charlm_trains_and_predicts():
     assert acc >= 0.95, acc
 
 
-@requires_ane
 def test_charlm_generalizes_on_corpus():
     # Trained on random windows of a structured corpus's TRAIN split, the char-LM
     # predicts held-out VAL windows it never trained on, well above the unigram
@@ -727,7 +701,6 @@ def test_charlm_generalizes_on_corpus():
     assert acc > 2 * baseline and acc > 0.45, (acc, baseline)   # generalizes, not memorizes
 
 
-@requires_ane
 def test_prenorm_transformer_block_trains():
     # Pre-norm transformer block (layer_norm before attention and before the MLP),
     # forward+backward on the ANE. The gradient flows THROUGH layer_norm to the
@@ -761,7 +734,6 @@ def test_prenorm_transformer_block_trains():
     assert l1 < 0.25 * l0, (l0, l1)
 
 
-@requires_ane
 def test_llama_block_trains():
     # LLaMA-style block: rms_norm (pre-norm) + attention + rms_norm + SwiGLU
     # (silu gate). Exercises rms_norm and silu gradients end to end; trainable
@@ -834,7 +806,6 @@ def test_classifier_trains_synthetic():
     assert acc1 > 0.9 and acc1 > acc0, (acc0, acc1)
 
 
-@requires_ane
 def test_mnist_mlp_trains():
     # 784->128->10 GELU MLP, full-batch (N=1000), softmax-CE + Adam, forward+backward
     # on the ANE. Train==test==1000 so the one forward-logits program serves both the
@@ -879,7 +850,6 @@ def test_accuracy_chunking_returns_one_pred_per_row():
     assert acc == 1.0
 
 
-@requires_ane
 def test_minibatch_trains_subset():
     from pathlib import Path
     d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
@@ -955,7 +925,6 @@ def test_on_ane_stack3_update_returns_three_arrays():
     assert np.allclose(V2, v_ref, atol=3e-2)
 
 
-@requires_ane
 def test_on_ane_sgd_trains_subset():
     from pathlib import Path
     d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
@@ -978,7 +947,6 @@ def test_on_ane_sgd_trains_subset():
     assert tr.accuracy(Xte, yte) > 0.80
 
 
-@requires_ane
 def test_on_ane_adam_trains_subset():
     from pathlib import Path
     d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
@@ -1045,7 +1013,6 @@ def test_compile_multi_two_outputs():
     mm.release()
 
 
-@requires_ane
 def test_resident_sgd_matches_host_reference():
     # A fused fwd+bwd+SGD step holds both weights RESIDENT on-device across steps
     # (host feeds only x,y,lr); the resident weights match a host SGD reference.
@@ -1087,7 +1054,6 @@ def test_resident_sgd_matches_host_reference():
     assert cos(W1r, W1h) > 0.99 and cos(W2r, W2h) > 0.99
 
 
-@requires_ane
 def test_resident_adam_trains_subset_and_state_stays_resident():
     from pathlib import Path
     d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
@@ -1119,7 +1085,6 @@ def test_resident_adam_trains_subset_and_state_stays_resident():
     tr.release()
 
 
-@requires_ane
 def test_resident_cnn_trains_subset():
     # the resident-state path (previously MLP-validated) also compiles + trains for
     # a CNN: the whole step (primitive-built trainable-conv forward + backward +
@@ -1162,7 +1127,6 @@ def test_resident_cnn_trains_subset():
     assert acc1 > 0.85 and acc1 > acc0, (acc0, acc1)
 
 
-@requires_ane
 def test_resident_transformer_block_trains():
     # the resident-state path also compiles + trains for a transformer block:
     # mha + residual + MLP + residual, the whole step (forward + backward + eight-
@@ -1193,7 +1157,6 @@ def test_resident_transformer_block_trains():
     assert l1 < 0.25 * l0, (l0, l1)
 
 
-@requires_ane
 def test_unrolled_trainer_resident_trains_and_state_stays_resident():
     # K Adam steps unrolled into ONE program, optimizer state RESIDENT on-device.
     d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
@@ -1221,7 +1184,6 @@ def test_unrolled_trainer_resident_trains_and_state_stays_resident():
     tr.release()
 
 
-@requires_ane
 def test_unrolled_trainer_resident_matches_nonresident():
     # resident and host-shuttle paths must produce the SAME trained weights (the only
     # difference is WHERE state lives, not the math).
@@ -1257,7 +1219,6 @@ def _fd_unary(fwd, xv, wv, eps=1e-2):
     return G
 
 
-@requires_ane
 @pytest.mark.parametrize("name,build,fwd,pos", [
     ("exp", lambda x: x.exp(), np.exp, False),
     ("sqrt", lambda x: x.sqrt(), np.sqrt, True),
@@ -1287,7 +1248,6 @@ def test_unary_vjps(name, build, fwd, pos):
     assert _cos(gx, ref) > 0.97, (name, _cos(gx, ref))
 
 
-@requires_ane
 def test_group_norm_grad():
     rng = np.random.default_rng(63); N, C, H, W, G = 1, 8, 4, 4, 2
     xv = rng.standard_normal((N, C, H, W)).astype(np.float32)

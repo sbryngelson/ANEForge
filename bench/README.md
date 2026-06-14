@@ -1,8 +1,8 @@
-# `bench/` — measurement tooling
+# `bench/` - measurement tooling
 
 The scripts that produce every measured number in the characterization paper.
 Each writes a committed JSON to [`results/`](results/). For the full
-claim → command → result-file table and the environment requirements, see
+claim -> command -> result-file table and the environment requirements, see
 [`docs/reproducibility.md`](../docs/reproducibility.md); to run everything end to
 end use [`scripts/reproduce.sh`](../scripts/reproduce.sh).
 
