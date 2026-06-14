@@ -5,13 +5,13 @@ rewrite; the pass-rate and per-case relerr must not regress. Each case builds a
 graph, compiles it (``af.compile``), runs it on the M-series ANE, and asserts the
 output against a numpy golden reference within a per-category tolerance.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/run_corpus.py
+    PYTHONPATH=. python3 tests/run_corpus.py
 
 Optimizer-diff reuse: import ALL_CASES and tests._corpus.run_case to run the same
 builds with optimization on/off and diff the two ANE outputs directly.
 
 Also pytest-compatible (the default suite skips it, so name the file):
-KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. pytest tests/run_corpus.py
+PYTHONPATH=. pytest tests/run_corpus.py
 """
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))          # tests/  -> _corpus
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # repo root -> aneforge
+
+import aneforge  # noqa: F401,E402  (importing the package sets KMP_DUPLICATE_LIB_OK before numpy loads)
 
 from _corpus import run_corpus, eval_case  # noqa: E402
 import test_nn_blocks  # noqa: E402

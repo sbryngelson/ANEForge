@@ -55,9 +55,9 @@ graphs compiled and run on the ANE and compared against numpy references at
 fp16. It must be green before a release.
 
 ```sh
-KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. .venv/bin/python tests/run_corpus.py   # the corpus gate
-PYTHONPATH=. .venv/bin/python tests/op_smoketest.py                          # per-op smoke test
-KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. .venv/bin/python -m pytest tests/ -q   # full suite
+PYTHONPATH=. .venv/bin/python tests/run_corpus.py   # the corpus gate
+PYTHONPATH=. .venv/bin/python tests/op_smoketest.py # per-op smoke test
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -q   # full suite
 ```
 
 The pytest suite runs each test in its own forked subprocess. Every `compile`

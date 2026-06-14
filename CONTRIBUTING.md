@@ -37,7 +37,7 @@ git config core.hooksPath .githooks   # off-hardware pre-commit checks
 The corpus is the gate and must pass before a change lands:
 
 ```sh
-KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/run_corpus.py
+PYTHONPATH=. python3 tests/run_corpus.py
 ```
 
 Most tests need a real ANE, so CI runs only the off-hardware checks. Run the

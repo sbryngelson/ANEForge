@@ -168,8 +168,8 @@ The correctness corpus compiles and runs every op and kernel on the ANE, and is
 the project's reproducibility gate:
 
 ```sh
-KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/run_corpus.py
-KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/ -q
+PYTHONPATH=. python3 tests/run_corpus.py
+PYTHONPATH=. python3 -m pytest tests/ -q
 ```
 
 ## Documentation

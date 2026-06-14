@@ -3,7 +3,7 @@
 Throughput / dispatch benchmarks, not how-to demos. Run from the repo root, e.g.
 
 ```sh
-KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 examples/benchmarks/bench_encoder_batched.py
+PYTHONPATH=. python3 examples/benchmarks/bench_encoder_batched.py
 ```
 
 - `bench_encoder_batched.py` - batched encoder serving throughput on the ANE.
