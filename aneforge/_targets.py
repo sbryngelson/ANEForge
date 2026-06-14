@@ -419,6 +419,21 @@ def preflight(out, family: int) -> Preflight:
     rep = Preflight(family=int(family))
     seen: set = set()
 
+    if not supports_mil(family):
+        # Below the H13+ MIL floor (Family.OLDER): the e5rt/MIL path carries the hard
+        # "MIL is only supported for H13+ ANE architectures" assert, so NOTHING runs.
+        # Report every op as rejected (not ok) without querying the per-family limits,
+        # which are only defined at or above the floor — limit() raises below it.
+        walk = [out]
+        while walk:
+            t = walk.pop()
+            if id(t) in seen:
+                continue
+            seen.add(id(t))
+            walk.extend(t.srcs)
+            rep.reject.append(OpReport(op=t.op, shape=tuple(t.shape), status="reject"))
+        return rep
+
     max_dim = limit("max_tensor_dim", family)          # spatial/contraction extent
     chan_dim = limit("channel_extent", family)
     tr_dim = limit("transpose_extent", family)
