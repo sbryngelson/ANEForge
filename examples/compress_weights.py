@@ -39,9 +39,7 @@ def _weights_bytes(out, **kw):
 
 
 def part_a_resnet18():
-    print("=" * 78)
-    print("PART A - accuracy x size : ImageNet ResNet-18, whole net as one ANE program")
-    print("=" * 78)
+    _common.head("PART A - accuracy x size : ImageNet ResNet-18, whole net as one ANE program")
     try:
         import torch, torchvision
     except Exception as e:  # noqa: BLE001
@@ -63,7 +61,6 @@ def part_a_resnet18():
 
     print(f"\n{'compress':>9} | {'logit cosine':>12} | {'top-1 match':>11} | "
           f"{'weights.bin':>12} | {'vs fp16':>8}")
-    print("-" * 66)
     fp16_bytes = None
     for mode, atol, label in rows:
         d = tempfile.mkdtemp(prefix="cdemo_rn_")
@@ -96,9 +93,7 @@ def _median_ms(net, x, warmup=20, iters=100):
 
 
 def part_b_streaming_speedup():
-    print("\n" + "=" * 78)
-    print("PART B - streaming SPEEDUP : one big bandwidth-bound matmul (4096x4096, B=1)")
-    print("=" * 78)
+    _common.head("PART B - streaming SPEEDUP : one big bandwidth-bound matmul (4096x4096, B=1)")
     rng = np.random.default_rng(1)
     K = N = 4096
     x = rng.standard_normal((1, K)).astype(np.float16)
@@ -111,7 +106,6 @@ def part_b_streaming_speedup():
 
     print(f"\n{'compress':>9} | {'weight':>7} | {'latency (ms)':>12} | {'speedup':>8} | "
           f"{'weights.bin':>12}")
-    print("-" * 62)
     rows = [
         ("None",   Wd, {}),
         ("int8",   Wd, {"compress": "int8"}),

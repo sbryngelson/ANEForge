@@ -38,13 +38,13 @@ import _common   # noqa: F401  (sets env + repo-root path; import before aneforg
 import numpy as np
 import aneforge.fft as F
 
-# ---- brand palette for the console ----------------------------------------
+# brand palette for the console
 TEAL, RUST, DIM, BOLD, GREY, R = (
     "\033[38;2;72;187;170m", "\033[38;2;235;130;70m", "\033[2m",
     "\033[1m", "\033[38;2;150;150;150m", "\033[0m")
 CHECK = f"{TEAL}OK{R}"
 
-# ---- simulation parameters -------------------------------------------------
+# simulation parameters
 N = 256                # grid
 L = 2.0 * np.pi        # periodic domain [0, 2pi)^2
 NU = 7e-4              # vorticity viscosity
@@ -152,7 +152,7 @@ def main():
     def field_of(re, im):
         r, _ = INV(re, im); return r                  # real physical field of a spectrum
 
-    # ---- initial state: vortices to stir, "ANEForge" dye to be stirred -------
+    # initial state: vortices to stir, "ANEForge" dye to be stirred
     whr, whi = FWD(vortex_field(X, Y))
     whr = (whr * mask).astype(np.float32); whi = (whi * mask).astype(np.float32)
     cr, ci = FWD(wordmark())
@@ -184,7 +184,7 @@ def main():
         ni = ((mu * im - 0.5 * DT * (mu * N1i + N2i)) * filt).astype(np.float32)
         return nr, ni, rest
 
-    # ---- evolve --------------------------------------------------------------
+    # evolve
     out(f"  {GREY}solve{R}   {DIM}{STEPS} steps on a {N}x{N} grid, "
         f"vorticity + dye, every FFT on the engine{R}")
     frames = []; n_fft = 0
@@ -222,9 +222,7 @@ def main():
     return 0 if ok else 1
 
 
-# --------------------------------------------------------------------------- #
 # rendering                                                                   #
-# --------------------------------------------------------------------------- #
 
 def colormap(c):
     """Map a dye field in [0,1] to RGB via the perceptual inferno table. Flat (no

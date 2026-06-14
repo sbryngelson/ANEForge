@@ -60,14 +60,14 @@ def main():
     heads = lambda t: t.reshape(S, HEADS, dh).transpose([1, 0, 2])
 
     t0 = time.time()
-    # --- embedding stage (compiled once): a0 = onehot @ W_emb + W_pos ---
+    # embedding stage (compiled once): a0 = onehot @ W_emb + W_pos
     tok = af.input((S, V)); We = agrad.parameter(rnd((V, D))); Wp = agrad.parameter(rnd((S, D)))
     a0 = tok @ We + Wp
     embed_fwd = af.compile(a0)
     ga0 = af.input((S, D)); eg = agrad.backward_from(ga0, a0, [We, Wp])
     embed_bwd = compile_multi([eg[We], eg[Wp]])
 
-    # --- the repeated transformer layer, compiled ONCE and reused for all NLAYERS ---
+    # the repeated transformer layer, compiled ONCE and reused for all NLAYERS
     mask = af.input((S, S)); mask.attrs["value"] = cmask
 
     def layer(p, x):
@@ -86,7 +86,7 @@ def main():
                rnd((D, FF)), rnd((D, FF)), rnd((FF, D)),
                np.ones((1, D), np.float32), np.ones((1, D), np.float32))] for _ in range(NLAYERS)]
 
-    # --- output stage (compiled once): logits = rms_norm(aN, fin) @ W_out ---
+    # output stage (compiled once): logits = rms_norm(aN, fin) @ W_out
     aN = af.input((S, D)); fin = agrad.parameter(np.ones((1, D), np.float32)); Wo_h = agrad.parameter(rnd((D, V)))
     logits = aN.rms_norm(fin) @ Wo_h
     head_fwd = af.compile(logits)
@@ -102,7 +102,6 @@ def main():
         fin.attrs["value"].copy(), Wo_h.attrs["value"].copy()
 
     print(f"\n{'step':>6} | {'cross-entropy':>13}")
-    print("-" * 24)
     for it in range(STEPS):
         # forward
         a0v = run(embed_fwd, {id(tok): Xv.astype(np.float16), id(We): Wev.astype(np.float16),

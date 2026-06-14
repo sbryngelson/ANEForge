@@ -90,7 +90,6 @@ def main():
           f"program; data + lr + optimizer state ALL resident on-device")
     print("the training loop is just `prog.execute()` - the host feeds NOTHING per dispatch")
     print(f"\n{'dispatch':>9} | {'steps':>6} | {'loss':>10}")
-    print("-" * 30)
     for it in range(DISPATCHES):
         prog.execute()                                            # no set_input - host-free
         if it % 10 == 0 or it == DISPATCHES - 1:

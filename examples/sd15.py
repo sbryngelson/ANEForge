@@ -61,9 +61,7 @@ OUT_PNG = str(Path(__file__).resolve().parent / "sd15_out.png")
 VAE_ANE_MAX_HW = 128   # group_norm compiles up to here; larger feature maps -> host
 
 
-# ===========================================================================
 # Shared op builders (used by both the per-component graphs and the block split)
-# ===========================================================================
 def _gn(x, g, p, eps): return x.group_norm(g(p + ".weight"), g(p + ".bias"), GR, eps=eps)
 def _ln(x, g, p): return x.layer_norm(g(p + ".weight"), g(p + ".bias"), eps=1e-5)
 
@@ -99,7 +97,6 @@ def _unet_transformer(x, context, g, p, H):
     return af.conv(hh, g(p + ".proj_out.weight"), bias=g(p + ".proj_out.bias")) + res
 
 
-# ---------------------------------------------------------------------------
 # UNet as a CHAIN of per-block e5rt programs.
 #   conv_in -> [down0 down1 down2 down3] -> mid -> [up0 up1 up2 up3] -> conv_out
 # Each builder takes aneforge input Tensors and returns the block output Tensor;
@@ -107,7 +104,6 @@ def _unet_transformer(x, context, g, p, H):
 # stack (verified vs diffusers: conv_in pushes 1; down0-2 push [r0,r1,downsamp];
 # down3 pushes [r0,r1] -> 12 total; each up block pops 3, resnet r concats
 # skips[2-r] because diffusers pops res_hidden_states_tuple[-1] first).
-# ---------------------------------------------------------------------------
 class UNetANE:
     def __init__(self, g, has):
         self.g, self.has = g, has
@@ -123,7 +119,7 @@ class UNetANE:
         self.up_skip_ch = {0: [1280, 1280, 1280], 1: [640, 1280, 1280],
                            2: [320, 640, 640], 3: [320, 320, 320]}
 
-    # ---- block graph builders ----
+    # block graph builders
     def _conv_in(self, x):
         g = self.g
         return af.conv(x, g("conv_in.weight"), pad=1, bias=g("conv_in.bias"))
@@ -200,7 +196,7 @@ def main():
     usd = {k: v.detach().numpy().astype(np.float32) for k, v in unet.state_dict().items()}
     ug, uhas = (lambda k: usd[k]), (lambda k: k in usd)
 
-    # ---- TEXT (host torch): cond + uncond CLIP embeddings -------------------
+    # TEXT (host torch): cond + uncond CLIP embeddings
     def encode(prompt):
         ids = tok(prompt, padding="max_length", max_length=tok.model_max_length,
                   truncation=True, return_tensors="pt").input_ids
@@ -211,7 +207,7 @@ def main():
     cond_np, uncond_np = cond.numpy()[0], uncond.numpy()[0]
     print(f"  CLIP text embeds: cond {tuple(cond.shape)}  uncond {tuple(uncond.shape)} (host torch)")
 
-    # ---- COMPILE UNet: try ONE program, fall back to per-block split --------
+    # COMPILE UNet: try ONE program, fall back to per-block split
     print("compiling UNet ...")
     unet_blocks = UNetANE(ug, uhas)
     one_program = False
@@ -243,7 +239,7 @@ def main():
         with torch.no_grad():
             return unet.time_embedding(unet.time_proj(torch.as_tensor([int(t)])).float()).numpy()
 
-    # ---- Per-RESNET ANE sub-programs (the split that actually compiles) -----
+    # Per-RESNET ANE sub-programs (the split that actually compiles)
     # Each down/up resnet (+ its transformer) and each downsampler/upsampler is one
     # small e5rt program, chained host-side; the skip stack is carried as numpy.
     # up3 (final CrossAttnUpBlock at 64x64) and conv_out hit the group_norm
@@ -349,7 +345,7 @@ def main():
         with torch.no_grad():
             return unet(lat, torch.as_tensor([int(t)]), encoder_hidden_states=ctx).sample
 
-    # ---- VAE: ANE through 128x128, host for 256/512 -------------------------
+    # VAE: ANE through 128x128, host for 256/512
     # build ANE programs for post_quant->conv_in->mid->up0->up1 (all <=128x128).
     vsd = {k: v.detach().numpy().astype(np.float32) for k, v in vae.state_dict().items()}
     vg, vhas = (lambda k: vsd[k]), (lambda k: k in vsd)
@@ -404,7 +400,7 @@ def main():
             h = vae.decoder.conv_norm_out(h); h = vae.decoder.conv_act(h); h = vae.decoder.conv_out(h)
         return h.numpy()
 
-    # ---- PER-COMPONENT validation (the real headline) -----------------------
+    # PER-COMPONENT validation (the real headline)
     sched.set_timesteps(STEPS)
     t0 = sched.timesteps[0]
     gen = torch.Generator().manual_seed(SEED)
@@ -424,7 +420,7 @@ def main():
     print(f"  VAE decode  relerr    {vae_rel:.4f}   (ANE front <=128, host tail) "
           f"{'OK' if vae_rel < 0.05 else 'HIGH (fp16)'}")
 
-    # ---- DENOISE LOOP (host scheduler, CFG, UNet on ANE) --------------------
+    # DENOISE LOOP (host scheduler, CFG, UNet on ANE)
     def denoise(unet_fn):
         sc = type(sched).from_config(sched.config)
         sc.set_timesteps(STEPS)
@@ -448,7 +444,7 @@ def main():
     lat_ref = denoise(lambda inp, t, ctx: unet_torch(inp, t, ctx))
     lat_rel = relerr(lat_ane.numpy(), lat_ref.numpy())
 
-    # ---- Diagnose the CFG cancellation (why the image degrades) -------------
+    # Diagnose the CFG cancellation (why the image degrades)
     # guided noise = uncond + g*(cond-uncond). |cond-uncond| is a TINY difference of
     # two large near-identical UNet outputs, so the fp16 per-output error swamps it.
     nc_ane = run_unet(lat0.numpy(), t0, cond_np); nu_ane = run_unet(lat0.numpy(), t0, uncond_np)
@@ -459,7 +455,7 @@ def main():
     guided_ref = nu_ref + GUIDANCE * diff_ref
     guided_rel = relerr(guided_ane, guided_ref)
 
-    # ---- VAE decode final latent (ANE front + host tail) -> PNG -------------
+    # VAE decode final latent (ANE front + host tail) -> PNG
     sf = vae.config.scaling_factor
     img_ane = vae_decode_hybrid(lat_ane / sf)
     with torch.no_grad():

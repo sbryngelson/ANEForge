@@ -52,7 +52,6 @@ def main():
     print("pre-norm transformer block (layer_norm -> mha -> residual -> layer_norm -> "
           "MLP -> residual); forward + backward on the ANE, LayerNorm affine trained too")
     print(f"\n{'step':>6} | {'loss':>10}")
-    print("-" * 21)
     l0 = tr.loss()
     for it in range(STEPS):
         tr.step()

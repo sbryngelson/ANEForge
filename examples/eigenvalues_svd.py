@@ -12,15 +12,13 @@ singular values of a large matrix use a randomized sketch - every step on-engine
 """
 import sys
 
-from _common import f16, relerr, spd, general, sym   # sets env + repo-root path
+from _common import head, f16, relerr, spd, general, sym   # sets env + repo-root path
 import numpy as np
 from aneforge.linalg import eigh, eigvals, generalized_eigh, svd, svdvals_topk
 
 
 def main():
-    print("=" * 78)
-    print("SPECTRUM - full symmetric eig + SVD (cyclic Jacobi) + geev + sygv, on the ANE")
-    print("=" * 78)
+    head("SPECTRUM - full symmetric eig + SVD (cyclic Jacobi) + geev + sygv, on the ANE")
     r = np.random.default_rng(7)
 
     # full symmetric spectrum: one unrolled Jacobi program (n=8)

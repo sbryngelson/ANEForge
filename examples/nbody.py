@@ -79,13 +79,13 @@ def main():
     print(f"N-body force compiled: {prog.n_ops} ANE ops "
           f"(broadcast diff + rsqrt^3 + masked reduction), N={N}")
 
-    # ---- acceleration on the ANE ----
+    # acceleration on the ANE
     a_ane = np.asarray(prog(p0, mask, mj)).reshape(N, 3).astype(np.float32)
     a_ref = ref_accel(p0, masses)
     a_relerr = float(np.linalg.norm(a_ane - a_ref) / np.linalg.norm(a_ref))
     print(f"  acceleration relerr vs fp32 numpy: {a_relerr:.3e}")
 
-    # ---- one explicit kick-drift step (done host-side from the ANE accel) ----
+    # one explicit kick-drift step (done host-side from the ANE accel)
     v1_ane = v0.astype(np.float32) + a_ane * DT
     p1_ane = p0.astype(np.float32) + v1_ane * DT
     v1_ref = v0.astype(np.float32) + a_ref * DT

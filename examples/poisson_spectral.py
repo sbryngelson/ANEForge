@@ -24,7 +24,7 @@ discretization error.
 import sys
 import time
 
-from _common import relerr   # sets env + repo-root path; import before aneforge
+from _common import head, relerr   # sets env + repo-root path; import before aneforge
 import numpy as np
 import aneforge.fft as agfft
 
@@ -33,7 +33,7 @@ def spectral_poisson(N=64, L=2.0 * np.pi):
     """Solve lap(u)=f on a periodic [0,L)^2 grid by the Fourier method, the 2-D FFTs
     on the ANE (one fused program each). Manufactured solution -> reports relerr +
     the lap(u)~f spectral-residual check."""
-    # ---- grid + manufactured smooth solution -------------------------------- #
+    # grid + manufactured smooth solution
     x = np.linspace(0.0, L, N, endpoint=False)
     X, Y = np.meshgrid(x, x, indexing="ij")
     # u_true = sum of a few low sinusoids (periodic, smooth, zero-mean).
@@ -42,19 +42,19 @@ def spectral_poisson(N=64, L=2.0 * np.pi):
               + 0.3 * np.cos(2 * X) * np.cos(2 * Y))
     u_true -= u_true.mean()
 
-    # ---- analytic forcing f = lap(u_true) ----------------------------------- #
+    # analytic forcing f = lap(u_true)
     # lap[sin(a x) g(b y)] etc - differentiate each term in closed form.
     f = (-(1 + 4) * np.sin(X) * np.cos(2 * Y)
          - (9 + 1) * 0.5 * np.sin(3 * X) * np.sin(Y)
          - (4 + 4) * 0.3 * np.cos(2 * X) * np.cos(2 * Y))
 
-    # ---- spectral wavenumbers (periodic, fundamental period L) -------------- #
+    # spectral wavenumbers (periodic, fundamental period L)
     k = np.fft.fftfreq(N, d=L / N) * 2.0 * np.pi          # angular wavenumbers
     KX, KY = np.meshgrid(k, k, indexing="ij")
     denom = -(KX**2 + KY**2)
     denom[0, 0] = 1.0                                     # avoid /0; DC set below
 
-    # ---- the solve: ANE transform -> host divide -> ANE inverse ------------- #
+    # the solve: ANE transform -> host divide -> ANE inverse
     f_re, f_im = agfft.fft2(f)                            # one fused ANE program
     u_re = f_re / denom
     u_im = f_im / denom
@@ -64,7 +64,7 @@ def spectral_poisson(N=64, L=2.0 * np.pi):
 
     err = relerr(u, u_true)
 
-    # ---- verify the spectral Laplacian round-trip lap(u) ~ f ---------------- #
+    # verify the spectral Laplacian round-trip lap(u) ~ f
     # lap(u) via the SAME ANE FFTs: f_check = real(iFFT2( -(kx^2+ky^2) FFT2(u) )).
     cu_re, cu_im = agfft.fft2(u)
     lap_re = cu_re * denom; lap_im = cu_im * denom
@@ -77,9 +77,7 @@ def spectral_poisson(N=64, L=2.0 * np.pi):
 
 def main():
     N = 64
-    print("=" * 78)
-    print(f"SPECTRAL POISSON SOLVER  lap(u)=f  on a {N}x{N} periodic grid, FFTs on the ANE")
-    print("=" * 78)
+    head(f"SPECTRAL POISSON SOLVER  lap(u)=f  on a {N}x{N} periodic grid, FFTs on the ANE")
     print("    method: u = real(iFFT2( FFT2(f) / -(kx^2+ky^2) ))")
     print("    each 2-D FFT = ONE fused ANE program (8 GEMMs; was 128 host-looped dispatches)")
     t0 = time.perf_counter()

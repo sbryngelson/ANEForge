@@ -54,7 +54,6 @@ def main():
     gen = batches(Xtr, ytr, BATCH, seed=SEED)
     print(f"CIFAR-10 CNN trained on the ANE - batch {BATCH}, {STEPS} steps")
     print(f"\n{'step':>6} | {'train loss':>10} | {'test acc':>9}")
-    print("-" * 34)
     t0 = time.perf_counter()
     for step in range(1, STEPS + 1):
         Xb, yb = next(gen)

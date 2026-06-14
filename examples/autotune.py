@@ -39,9 +39,7 @@ from aneforge._compile import compile as _compile
 from aneforge._optimize import _config_label, _graph_key, _input_shapes
 
 
-# --------------------------------------------------------------------------- #
 # measurement helpers                                                          #
-# --------------------------------------------------------------------------- #
 def bench(net, inputs, reps: int = 30, warmup: int = 8) -> float:
     """End-to-end latency in microseconds: warmup, then MIN over reps."""
     for _ in range(warmup):
@@ -74,11 +72,9 @@ def tuner_decision(out) -> str:
         return "?"
 
 
-# --------------------------------------------------------------------------- #
 # graph builders (aneforge public ops + the loaders' exposed real weights)     #
 # These rebuild the SAME graph the loaders compile internally, but return the  #
 # output Tensor so af.tune() can optimize it. Inputs already-embedded (host).  #
-# --------------------------------------------------------------------------- #
 def resnet18_graph(clf):
     """Rebuild ResNet-18's ANE graph from clf.sd (folded BN) -> output Tensor."""
     sd = clf.sd
@@ -143,9 +139,7 @@ def attn_block_graph(H, S, D):
     return o.linear(Wo)
 
 
-# --------------------------------------------------------------------------- #
 # per-model runner: opt=0 baseline vs tune-lossless vs tune-int8              #
-# --------------------------------------------------------------------------- #
 def run_model(label, build_graph, make_inputs, has_int8):
     """Compile/measure opt=0, tune-lossless, tune-int8 (if applicable); assert the
     optimized outputs match the opt=0 baseline; return a results row."""
@@ -207,10 +201,10 @@ def fmt_speedup(base, us):
 
 
 def main():
-    print("aneforge optimizer demo - real models on the M5 ANE\n" + "=" * 70)
+    _common.head("aneforge optimizer demo - real models on the M5 ANE")
     rows = []
 
-    # ---- ResNet-18 (vision; weight-heavy convs) ----
+    # ResNet-18 (vision; weight-heavy convs)
     print("\n[1/4] ResNet-18 (vision, conv-heavy)...")
     clf = af.load_resnet18()
     rng = np.random.default_rng(0)
@@ -218,7 +212,7 @@ def main():
     rows.append(run_model("ResNet-18", lambda: resnet18_graph(clf),
                           lambda: [img], has_int8=True))
 
-    # ---- MiniLM encoder (matmul-heavy, attention) ----
+    # MiniLM encoder (matmul-heavy, attention)
     print("[2/4] MiniLM all-MiniLM-L6-v2 encoder (S=32)...")
     enc = af.load("sentence-transformers/all-MiniLM-L6-v2")
     S = 32
@@ -226,7 +220,7 @@ def main():
     rows.append(run_model("MiniLM(S=32)", lambda: minilm_graph(enc, S),
                           lambda: [emb], has_int8=True))
 
-    # ---- attention block via af.sdpa, two sizes (route rewrite) ----
+    # attention block via af.sdpa, two sizes (route rewrite)
     for (Hh, Ss, Dd) in [(8, 32, 64), (8, 256, 64)]:
         print(f"[{'3' if Ss==32 else '4'}/4] Attention block H={Hh} S={Ss} D={Dd} (af.sdpa route rewrite)...")
         Dm = Hh * Dd
@@ -235,18 +229,15 @@ def main():
                               lambda Hh=Hh, Ss=Ss, Dd=Dd: attn_block_graph(Hh, Ss, Dd),
                               lambda xin=xin: [xin], has_int8=False))
 
-    # ---- results table ----
-    print("\n" + "=" * 118)
+    # results table
     print(f"{'model':14s} | {'opt=0 (us)':>11s} | {'tune-lossless (us, x)':>21s} | "
           f"{'tune-int8 (us, x)':>21s} | {'maxdiff ll/int8':>16s} | {'tuner chose (int8 run)':<22s}")
-    print("-" * 118)
     for r in rows:
         i8d = f"{r['i8_diff']:.3f}" if r["i8_diff"] is not None else "n/a"
         print(f"{r['label']:14s} | {r['base_us']:11.1f} | "
               f"{fmt_speedup(r['base_us'], r['ll_us']):>21s} | "
               f"{fmt_speedup(r['base_us'], r['i8_us']):>21s} | "
               f"{r['ll_diff']:.4f} / {i8d:>6s} | {r['i8_decision']:<22s}")
-    print("=" * 118)
     print("note: a 'tuner chose' label of int8=False in the int8 column means the int8 variant was")
     print("      measured but NOT selected (rejected on accuracy at atol=0.1, or below the 1.10x")
     print("      lossy-speedup margin) - so that column reports the fp16 fallback the tuner returned.")

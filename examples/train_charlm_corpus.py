@@ -92,7 +92,6 @@ def main():
     baseline = float((ids[ntr + 1:n] == mfc).mean())
 
     print(f"\n{'step':>6} | {'train CE':>9} | {'val acc':>8}")
-    print("-" * 30)
     for it in range(STEPS):
         i = int(rng.integers(0, ntr - S - 1))
         tr.data[x] = onehot(ids[i:i + S]); tr.data[y] = onehot(ids[i + 1:i + S + 1])
