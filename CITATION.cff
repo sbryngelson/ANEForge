@@ -9,5 +9,5 @@ authors:
 repository-code: "https://github.com/sbryngelson/ANEForge"
 doi: 10.5281/zenodo.20672609
 license: MIT
-version: "0.1.0"
-date-released: "2026-06-10"
+version: "0.1.1"
+date-released: "2026-06-14"
