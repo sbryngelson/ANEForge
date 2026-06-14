@@ -11,10 +11,6 @@ Supported reduction axes:
 
 Epsilon convention: `Params.Epsilon` is a fp16 bit pattern, NOT a float
 real.  Pass `fp16_bits(desired_eps)`.
-
-Run:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=the reverse-engineering corpus \
-        python3 -m aneforge._bridges.minmax_norm_fused
 """
 
 from __future__ import annotations

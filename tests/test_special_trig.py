@@ -9,7 +9,7 @@ Two things this guards:
    function in special.py). The decomposition uses only mul/sub/exp - native on M1 - so
    it is validated here on the M5 against numpy; the same graph runs on M1.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_special_trig.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_special_trig.py -q
 """
 import numpy as np
 

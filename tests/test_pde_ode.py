@@ -43,7 +43,7 @@ time) and indexed with a one-hot ``@`` select - exactly the pattern test_numeric
 uses for Horner coefficients. The reference applies the identical constants.
 
 Run:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/test_pde_ode.py
+    PYTHONPATH=. python3 tests/test_pde_ode.py
 """
 from __future__ import annotations
 

@@ -11,7 +11,7 @@ records the conditioning envelope. The families whose only method is a pivoted/r
 DIRECT factorization (full spectrum, pivoted LU/QR) are the documented walls - listed,
 not run. Accumulation is via matmul (the ANE's wide >=fp32 accumulator).
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/test_lapack.py
+Run: PYTHONPATH=. python3 tests/test_lapack.py
 """
 from __future__ import annotations
 import os

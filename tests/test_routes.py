@@ -15,7 +15,7 @@ drift: the route registry (``_capabilities.route_registry``), the executable bui
 (``_optimize._route_ids``).
 
 Run standalone:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/test_routes.py
+    PYTHONPATH=. python3 tests/test_routes.py
 """
 import sys
 from pathlib import Path

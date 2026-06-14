@@ -4,7 +4,7 @@ Camera/decoded-video bytes feed the model directly; the uint8->fp16 cast + the
 ``scale*x + bias`` normalisation run as in-graph ANE ops. Each test compiles+runs a
 real graph fed a uint8 array and checks it against a host-fp16 reference.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_image_input.py -q
+    PYTHONPATH=. python3 -m pytest tests/test_image_input.py -q
 """
 from __future__ import annotations
 

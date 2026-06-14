@@ -50,7 +50,7 @@ IS fair and is included as the attention class.
 
 Run from repo root (energy needs passwordless sudo for powermetrics):
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/device_compare_wattcomplete.py
+    PYTHONPATH=. python3 bench/device_compare_wattcomplete.py
 
 Writes bench/results/device_compare_wattcomplete_results.json alongside the printed
 tables. --quick runs a reduced rep/window for a smoke test.

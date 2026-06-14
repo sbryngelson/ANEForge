@@ -7,7 +7,7 @@ tiling limit (kW <= 15).
 
 These are pure graph-construction tests (no ANE): nothing is compiled or run.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_builder_guards.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_builder_guards.py -q
 """
 import numpy as np
 import pytest

@@ -64,7 +64,7 @@ Each returns numpy arrays; under the hood it builds an aneforge graph, compiles 
 ONE fused e5rt program, and runs it on the ANE. A `Plan` object (fft_plan / rfft_plan)
 compiles once and runs many times.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 aneforge/fft.py
+    PYTHONPATH=. python3 aneforge/fft.py
 """
 from __future__ import annotations
 

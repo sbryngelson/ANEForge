@@ -44,7 +44,7 @@ silently omit an op. Emitted as a table to the JSON + printed.
 
 Run from repo root (energy needs passwordless sudo for powermetrics):
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/device_bandwidth_roofline.py
+    PYTHONPATH=. python3 bench/device_bandwidth_roofline.py
 
 --quick runs a reduced window + a coarser size sweep for a smoke test.
 Writes bench/results/device_bandwidth_roofline_results.json alongside the tables.

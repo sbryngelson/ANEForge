@@ -9,7 +9,7 @@ cross_compile_check compiles on this M5 host for another family's TargetArchitec
 these touch the dylib. The Trainer guard is host-static but the construction does
 compile tiny programs.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_fp16_cross_chip.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_fp16_cross_chip.py -q
 """
 import warnings
 

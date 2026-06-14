@@ -28,7 +28,7 @@ This is the AI-lever demonstration the roofline predicts, complementary to the
 amortization demonstration (the conv stack) the paper already has.
 
 Run from repo root:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/below_ridge_fusion.py
+    PYTHONPATH=. python3 bench/below_ridge_fusion.py
 optionally with --window for the power pass. Writes results/below_ridge_fusion.json.
 """
 from __future__ import annotations

@@ -73,6 +73,13 @@ state round-trip remains). See examples/train_mnist_mlp.py.
 Layout: graph.py (Tensor + ops), _compile.py (per-op emit registry + compile),
 _blob.py (weight packing), autograd.py (on-ANE autograd), models.py (pretrained loaders).
 """
+# Tolerate a duplicate OpenMP runtime in one process: numpy/MKL and the ANE
+# runtime dylib each bring their own libomp, and without this the second to load
+# aborts the process. Set before any import that pulls in numpy so OpenMP sees it
+# at initialization; setdefault keeps it user-overridable.
+import os as _os
+_os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 try:
     from ._version import __version__            # written by hatch-vcs at build time
 except ImportError:                              # raw source checkout, not yet built

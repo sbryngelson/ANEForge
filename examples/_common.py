@@ -1,6 +1,7 @@
 """Shared example scaffolding - environment setup plus the few helpers every demo
-repeated verbatim. Import this FIRST in an example (before aneforge): importing it
-sets KMP_DUPLICATE_LIB_OK and puts the repo root on sys.path.
+repeated verbatim. Import this FIRST in an example: it puts the repo root on
+sys.path and imports aneforge, which sets the OpenMP duplicate-runtime guard
+before numpy loads.
 
 Deliberately minimal: error metrics, conditioned random test matrices, and the
 one-line pass/fail report. Demo logic stays in the demos so each file remains a
@@ -11,8 +12,8 @@ import sys
 import warnings
 from pathlib import Path
 
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # repo root -> import aneforge
+import aneforge  # noqa: F401  (importing the package sets KMP_DUPLICATE_LIB_OK before numpy loads OpenMP)
 
 import numpy as np
 

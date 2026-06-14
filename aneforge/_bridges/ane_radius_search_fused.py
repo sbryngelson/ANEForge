@@ -14,10 +14,6 @@ Schema (accepted unit dictionary)::
      "OutputChannels": 1,
      "OutputType": "Float16",
      "Params": {"Radius": r}}
-
-Run::
-
-    python3 -m aneforge._bridges.ane_radius_search_fused
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ for all 28 chips from one extraction. Two anchors, both measured/fit on M1:
 Cross-chip throughput scales by ``cores * eff_freq(0.8*fmax)`` relative to M1:
   M5 (H17s) ~5.5x, H17d (Ultra) ~22x, M11 ~0.1x.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_cost_model_analytic.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_cost_model_analytic.py -q
 """
 import numpy as np
 

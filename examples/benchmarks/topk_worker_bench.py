@@ -15,7 +15,7 @@ keeps the per-call eval() dispatch. To see the batched path's effect directly:
 
     --batch   route topk through eval_batch (one round-trip) instead of per-call
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 examples/benchmarks/topk_worker_bench.py
+    PYTHONPATH=. python3 examples/benchmarks/topk_worker_bench.py
 """
 import sys
 import time

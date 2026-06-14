@@ -8,7 +8,7 @@ On the M5 dev host (family 5) everything is native, so target=None is a no-op fa
 and existing compiles are byte-identical. The decompose path IS verifiable here, because
 the rewritten graph (sin -> mul/exp polynomial) is all-native and runs on the M5.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_compile_targets.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_compile_targets.py -q
 """
 import numpy as np
 import pytest

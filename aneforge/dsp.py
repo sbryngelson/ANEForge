@@ -37,7 +37,7 @@ CONVENTIONS (inherited):
   * Everything is fp16 on-device; the matmul accumulator is wide (>=fp32), so the
     error floor is fp16 INPUT/twiddle rounding (~few e-4), flat in length.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 aneforge/dsp.py
+    PYTHONPATH=. python3 aneforge/dsp.py
 """
 from __future__ import annotations
 

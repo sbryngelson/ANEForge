@@ -10,7 +10,7 @@ the fp16-vs-fp16 GPU/ANE energy ratio can be reported. It reuses the exact model
 builders from device_compare_wattcomplete.py.
 
 Run from repo root (energy needs passwordless sudo):
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/real_models_fp16.py --window 6
+    PYTHONPATH=. python3 bench/real_models_fp16.py --window 6
 Writes bench/results/real_models_fp16_results.json.
 """
 from __future__ import annotations

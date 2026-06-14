@@ -19,7 +19,7 @@ The point of this corpus is twofold:
 
 Run::
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/test_blas.py
+    PYTHONPATH=. python3 tests/test_blas.py
 
 The shared harness (tests/_corpus.py) does build->compile->run->compare. We reuse
 its ``Case`` record, ``eval_case`` and the gate accounting, and add a BLAS-specific

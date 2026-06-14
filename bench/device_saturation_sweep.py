@@ -32,7 +32,7 @@ NOT the same product as the fp16 peaks and is labeled as such everywhere.
 
 Run from repo root (energy needs passwordless sudo for powermetrics):
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/device_saturation_sweep.py
+    PYTHONPATH=. python3 bench/device_saturation_sweep.py
 
 Writes bench/results/device_saturation_sweep_results.json alongside the printed
 tables. --quick trims the largest (multi-second) sizes and shortens the power window

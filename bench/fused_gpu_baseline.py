@@ -23,7 +23,7 @@ the GPU close the perf/watt gap, or flip any ANE win? We report it plainly eithe
 
 Run from repo root (energy needs passwordless sudo):
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/fused_gpu_baseline.py
+    PYTHONPATH=. python3 bench/fused_gpu_baseline.py
 
 Writes bench/results/fused_gpu_baseline_results.json. --quick reduces the window.
 """

@@ -12,7 +12,7 @@ A2 = persistent Path-A worker (aneforge/_netplist_worker.py +
 We measure per-call wall latency under each, single-call (cold) and over a
 32-call steady-state loop, and assert A2 produces BIT-IDENTICAL outputs.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 examples/benchmarks/rank_worker_bench.py
+    PYTHONPATH=. python3 examples/benchmarks/rank_worker_bench.py
 """
 import os
 import sys

@@ -13,7 +13,7 @@ Compile-level only (cross-target programs can't execute on this host); numeric
 correctness still needs the real silicon. Bridge/segmented cases are skipped (the
 cross-target checker is fused-route only).
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=.:tests python3 -m pytest tests/test_cross_compile_matrix.py -q
+Run: PYTHONPATH=.:tests python3 -m pytest tests/test_cross_compile_matrix.py -q
 """
 import sys
 import warnings

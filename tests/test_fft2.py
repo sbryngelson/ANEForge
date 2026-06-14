@@ -4,7 +4,7 @@ The 2-D DFT of an [M,N] complex field is F_M @ X @ F_N^T - a handful of real GEM
 so it fuses into a single e5rt program instead of host-looping the 1-D plan over
 M rows + N columns (M+N dispatches).
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. .venv/bin/python -m pytest tests/test_fft2.py -q
+Run: PYTHONPATH=. .venv/bin/python -m pytest tests/test_fft2.py -q
 """
 from __future__ import annotations
 import os

@@ -12,7 +12,7 @@ We measure per-call wall latency under each, single-call and over a 32-call loop
 to show A2's amortization. A2 is selected by default; A1 is forced with
 ANEFORGE_NETPLIST_WORKER=0.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 examples/benchmarks/sdpa_worker_bench.py
+    PYTHONPATH=. python3 examples/benchmarks/sdpa_worker_bench.py
 """
 import os
 import sys

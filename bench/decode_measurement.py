@@ -54,7 +54,7 @@ CONFIG (default, TinyLlama/GPT-small class):
 
 Run from repo root (energy needs passwordless sudo for powermetrics):
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/decode_measurement.py
+    PYTHONPATH=. python3 bench/decode_measurement.py
 
 Writes bench/results/decode_measurement_results.json. --quick shrinks the model
 (d=1024,L=4) and the power window for a smoke test. Devices run SEQUENTIALLY.

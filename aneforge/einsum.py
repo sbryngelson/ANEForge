@@ -43,7 +43,7 @@ matmul/reduce decomposition. These raise `EinsumUnsupported`. Ellipsis (`...`)
 is also not implemented (v1).
 
 Run the self-test (validates a battery vs `numpy.einsum` on the ANE):
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 aneforge/einsum.py
+    PYTHONPATH=. python3 aneforge/einsum.py
 """
 from __future__ import annotations
 
