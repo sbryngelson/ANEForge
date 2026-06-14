@@ -8,7 +8,7 @@ that IS static dataflow, and those UNROLL into a single on-ANE program (no host 
 This file is the map: for each LAPACK problem family it runs the ANE method fully on the
 engine, validates against the numpy fp64 reference on the SAME fp16-rounded system, and
 records the conditioning envelope. The families whose only method is a pivoted/recursive
-DIRECT factorization (full spectrum, pivoted LU/QR) are the documented walls — listed,
+DIRECT factorization (full spectrum, pivoted LU/QR) are the documented walls - listed,
 not run. Accumulation is via matmul (the ANE's wide >=fp32 accumulator).
 
 Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/test_lapack.py
@@ -85,7 +85,7 @@ def check_qr(cond):        # A = Q R reconstruction (QR is not unique; check the
     return relerr(Q @ R, A), 5e-3
 
 
-def check_cholesky(cond):  # A = L Lᵀ reconstruction, SPD
+def check_cholesky(cond):  # A = L L^T reconstruction, SPD
     A = _spd(8, cond, int(cond) + 22); Lc = L.cholesky(f16(A))
     return relerr(Lc @ Lc.T, A), 5e-3
 
@@ -148,23 +148,23 @@ CASES = [
     ("FULL eig sym (syev)",     "eigh (cyclic Jacobi)","fully on ANE (small n)", check_full_eig,      (1e1, 1e2)),
     ("generalized eig (sygv)",  "chol+trinv+eigh",     "fully on ANE (small n)", check_generalized_eig, (1e1,)),
     ("nonsymmetric eig (geev)", "eigvals (unshifted QR)","fully on ANE (small n)", check_nonsym_eig,    (1e1,)),
-    ("FULL SVD (gesvd)",        "svd = eigh(AᵀA)",     "fully on ANE (small n)", check_full_svd,      (1e1,)),
+    ("FULL SVD (gesvd)",        "svd = eigh(A^TA)",     "fully on ANE (small n)", check_full_svd,      (1e1,)),
     ("top-k SVD (gesvd)",       "svdvals_topk",        "fully on ANE",          check_topk_svd,      (1e1,)),
 ]
 
 REACHABLE_UNBUILT: list = []   # QR / Cholesky / LU now built (above); nothing left in this tier
 
-# The genuine walls — they need data-dependent CONTROL FLOW or OUTPUT SIZE, which static
+# The genuine walls - they need data-dependent CONTROL FLOW or OUTPUT SIZE, which static
 # dataflow cannot express even with fixed iteration:
 WALLED = [
-    ("rank-revealing / adaptive-tolerance", "data-dependent OUTPUT SIZE (how many values > tol) — "
+    ("rank-revealing / adaptive-tolerance", "data-dependent OUTPUT SIZE (how many values > tol) - "
         "cannot emit a runtime-sized result; only all-n + a mask. The one irreducible wall."),
 ]
 
 
 def main():
     print("=" * 86)
-    print("LAPACK on the ANE — problem families, fitting method, fp16 conditioning envelope")
+    print("LAPACK on the ANE - problem families, fitting method, fp16 conditioning envelope")
     print("=" * 86)
     print(f"{'family':>26} | {'ANE method':>18} | {'where':>20} | {'cond':>5} | {'relerr':>9} | st")
     print("-" * 86)
@@ -180,7 +180,7 @@ def main():
         print("\nREACHABLE, not yet built:")
         for fam, why in REACHABLE_UNBUILT:
             print(f"  - {fam}: {why}")
-    print("\nWALLED — needs data-dependent CONTROL FLOW or OUTPUT SIZE (static dataflow can't):")
+    print("\nWALLED - needs data-dependent CONTROL FLOW or OUTPUT SIZE (static dataflow can't):")
     for fam, why in WALLED:
         print(f"  - {fam}: {why}")
     print("\nreading: solvers, least squares, dominant pairs, the FULL dense factorizations")
@@ -192,7 +192,7 @@ def main():
     print("  SVD is cond^2 (cond(A)<=1e1); dominant eig/SVD need a spectral GAP. The remaining")
     print("  pivoted LU runs via a true argmax pivot (SEGMENTED, one bridge cut/column); the")
     print("  nonsymmetric eig runs as unrolled unshifted QR (one program, complex pairs from 2x2")
-    print("  blocks). The ONLY irreducible wall left is rank-revealing — a data-dependent OUTPUT")
+    print("  blocks). The ONLY irreducible wall left is rank-revealing - a data-dependent OUTPUT")
     print("  SIZE a static program cannot emit (it can only return all-n values plus a mask).")
     print("\n" + "=" * 86)
     print(f"GATE: {'GREEN' if red == 0 else 'RED'}  "

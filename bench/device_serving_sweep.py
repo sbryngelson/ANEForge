@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Batched SERVING sweep — ANE (aneforge fp16) vs GPU (MLX fp16) across BATCH SIZE.
+"""Batched SERVING sweep - ANE (aneforge fp16) vs GPU (MLX fp16) across BATCH SIZE.
 
 The serving-regime complement to the single-stream device map
 (``device_compare_wattcomplete.py``). That harness answers "which device per op at
 B=1". This one answers the serving question: *as you batch, where does the GPU's
-throughput (and its throughput/watt) overtake the ANE's?* — the crossover that
+throughput (and its throughput/watt) overtake the ANE's?* - the crossover that
 decides which accelerator a serving deployment should target at a given batch size.
 
-METHODOLOGY — reused verbatim from device_compare_wattcomplete (see that file's
+METHODOLOGY - reused verbatim from device_compare_wattcomplete (see that file's
 docstring for the full rationale); this script imports its energy harness so the
 numbers are produced by the SAME code:
 
   * idle-subtracted ACTIVE power; headline = total-package power from powermetrics'
-    own ``Combined Power (CPU + GPU + ANE)`` line (NOT a hand-summed rail total —
+    own ``Combined Power (CPU + GPU + ANE)`` line (NOT a hand-summed rail total -
     the GPU rail prints twice per sample block);
   * median + CV% over the per-sample package totals (CV>35% is FLAGGED low-confidence);
   * sustained loop driven until the sampler process EXITS (the fix that got CV to
@@ -21,20 +21,20 @@ numbers are produced by the SAME code:
     sides; forced device sync (compiled-net call on ANE, ``mx.eval`` on GPU).
 
 TRUE BATCHING ON BOTH SIDES: each workload is ONE compiled program with a real
-batch dimension B (NOT multi-stream). The ANE true-batches — dispatch amortizes
-over B — so a real batch dim is the fair apples-to-apples vs GPU batching. We sweep
+batch dimension B (NOT multi-stream). The ANE true-batches - dispatch amortizes
+over B - so a real batch dim is the fair apples-to-apples vs GPU batching. We sweep
 B in {1, 4, 16, 64, 256}; if an ANE workload fails to compile / OOMs at some B we
 report the cap as a finding (we do NOT silently drop it or fall back to multi-stream).
 
 WORKLOADS (4, serving-relevant):
-  1. vision    — a 3x3 conv stack -> GAP -> FC, image-classifier serving (N=B images,
+  1. vision    - a 3x3 conv stack -> GAP -> FC, image-classifier serving (N=B images,
                  conv's native batch dim).
-  2. encoder   — a transformer-encoder block (attn + MLP + 2 layernorms) at S=128,
+  2. encoder   - a transformer-encoder block (attn + MLP + 2 layernorms) at S=128,
                  batched over B sequences; embedding serving. Batched as a rank-3/4
                  graph (layernorm folds B into rows [B*S, D]).
-  3. attention — the self-attention block alone at S=128, batched over B (rank-4
+  3. attention - the self-attention block alone at S=128, batched over B (rank-4
                  q@k / softmax / @v). The decomposed-SDPA route, true-batched.
-  4. gemm      — the batched GEMM [B,M,K] @ [K,N] underlying serving, the throughput
+  4. gemm      - the batched GEMM [B,M,K] @ [K,N] underlying serving, the throughput
                  primitive.
 
 METRICS per (workload, B, device):
@@ -44,7 +44,7 @@ METRICS per (workload, B, device):
   * accuracy = relerr vs fp32 reference.
 
 DELIVERABLE = the two crossovers per workload: the B where GPU THROUGHPUT overtakes
-ANE, and the B where GPU THROUGHPUT/WATT overtakes ANE (typically a larger B — the
+ANE, and the B where GPU THROUGHPUT/WATT overtakes ANE (typically a larger B - the
 ANE's watt advantage persists past its throughput advantage). Printed explicitly.
 
 Run from repo root (energy needs passwordless sudo for powermetrics)::
@@ -109,7 +109,7 @@ def measure_point(wl, device, B, run_once, *, items_per_call, relerr_val, tag):
         sane = apw == apw and apw > 0
         # plausibility guard, same as wattcomplete's _attach_energy
         if device == "ANE" and e.get("ane_active_mW", 0.0) < 5.0 and not e["flags"]:
-            e["flags"].append("ANE rail ~0 mW during ANE workload — likely a 100ms sampling miss")
+            e["flags"].append("ANE rail ~0 mW during ANE workload - likely a 100ms sampling miss")
         # the loop's own per-iter time is the steady-state call time; throughput/watt
         # and energy/item use it (the min-latency above is the headline call time).
         loop_items_s = items_per_call / (e["iter_ms"] / 1e3)
@@ -142,7 +142,7 @@ def cap(wl, device, B, exc):
         {"device": device, "B": B, "error": f"{type(exc).__name__}: {exc}"})
 
 
-# WORKLOADS — TRUE-batched on both devices (one program, real batch dim B)
+# WORKLOADS - TRUE-batched on both devices (one program, real batch dim B)
 def wl_vision(batches):
     """Conv classifier: 3x3 conv stack -> GAP -> FC. N=B images (conv native batch)."""
     wl = "vision (conv-stack->GAP->FC classifier)"
@@ -295,7 +295,7 @@ def wl_encoder(batches):
                     var = mx.mean((z - mu) ** 2, axis=-1, keepdims=True)
                     return (z - mu) * mx.rsqrt(var + 1e-5) * g + b
 
-                def mgelu(z):  # tanh approximation — matches the fp64 reference's gelu
+                def mgelu(z):  # tanh approximation - matches the fp64 reference's gelu
                     return 0.5 * z * (1 + mx.tanh(np.sqrt(2 / np.pi) * (z + 0.044715 * z ** 3)))
 
                 def run():
@@ -463,7 +463,7 @@ def _crossover(ane, gpu):
 
 def analyze_and_print():
     print("\n" + "=" * 100)
-    print(" BATCHED SERVING SWEEP — crossover analysis")
+    print(" BATCHED SERVING SWEEP - crossover analysis")
     print(" throughput = items/s (steady-state loop); perf/W = items/s per active-package-W")
     print("=" * 100)
     if HAVE_SUDO:
@@ -525,10 +525,10 @@ def main() -> int:
     batches = [int(x) for x in args.batches.split(",")] if args.batches else BATCHES
 
     print("=" * 100)
-    print(" device_serving_sweep — ANE vs MLX-GPU, batched-serving crossover")
+    print(" device_serving_sweep - ANE vs MLX-GPU, batched-serving crossover")
     print("=" * 100)
     print(f" backends: ANE={'yes' if HAVE_ANE else 'NO'}  MLX={'yes' if HAVE_MLX else 'NO'}")
-    print(f" powermetrics(sudo)={'yes' if HAVE_SUDO else 'NO — energy skipped'}  "
+    print(f" powermetrics(sudo)={'yes' if HAVE_SUDO else 'NO - energy skipped'}  "
           f"window={wc.WINDOW}s  batches={batches}")
 
     if HAVE_SUDO:

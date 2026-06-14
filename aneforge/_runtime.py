@@ -1,4 +1,4 @@
-"""aneforge's device runtime — a lean ctypes wrapper over libane_e5rt_dispatch.dylib.
+"""aneforge's device runtime - a lean ctypes wrapper over libane_e5rt_dispatch.dylib.
 
 The *only* low-level dependency of the aneforge package. Exposes exactly what the
 compiler needs: compile a MIL program, eval it (bind fp16 inputs, run, read fp16
@@ -111,7 +111,7 @@ class _Dylib:
         lib.ane_e5rt_program_release.argtypes = [ctypes.c_void_p]
         # Resident-state support: rebind an input port to read another port's output
         # buffer (within one program). Aliasing an op's own output onto its own input
-        # makes that tensor persist on-device across executes — the basis for resident
+        # makes that tensor persist on-device across executes - the basis for resident
         # optimizer state during training (see autograd.Trainer resident path).
         lib.ane_e5rt_program_share_buffer.restype = ctypes.c_int
         lib.ane_e5rt_program_share_buffer.argtypes = [
@@ -223,7 +223,7 @@ class Program:
     # ---- resident-state primitives (granular set / execute / read + alias) ----
     # `eval` binds all inputs and reads all outputs every call. For resident
     # training we seed state ports once, alias each state output onto its input,
-    # then per step feed only the data ports and execute — no state copy.
+    # then per step feed only the data ports and execute - no state copy.
 
     def share_buffer(self, src_op_idx: int, src_out_port: str,
                      dst_op_idx: int, dst_in_port: str) -> None:
@@ -313,7 +313,7 @@ class Program:
 
 
 class E5RT:
-    """Compiles a MIL program into a ready-to-run :class:`Program`. Stateless —
+    """Compiles a MIL program into a ready-to-run :class:`Program`. Stateless -
     each `compile` is independent (no shared global compiler)."""
 
     @staticmethod

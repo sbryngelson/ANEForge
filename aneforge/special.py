@@ -1,4 +1,4 @@
-"""aneforge.special — special functions evaluated on the Apple Neural Engine as
+"""aneforge.special - special functions evaluated on the Apple Neural Engine as
 fused fp16 polynomial chains.
 
 The ANE's strength is a long, dependent chain of fused fp16 mul/add (one e5rt
@@ -32,7 +32,7 @@ THE TWO CONSTRAINTS that shape the implementations:
   * no scalar add and no in-graph branch. The graph has `* scalar` (muls) but
     no `+ scalar` and no data-dependent control flow. We add a constant `c`
     with `_const(x, c)` (a `cos(0)=1` ones tensor times `c`), and use only
-    *fixed*, smooth range reduction — never a per-element branch / variable
+    *fixed*, smooth range reduction - never a per-element branch / variable
     step count. Functions needing a data-dependent reduction (gamma far outside
     [1,2], lgamma reflection for x<0) are scoped to the range a single static
     graph can cover, documented per function.
@@ -60,7 +60,7 @@ def _const(like: Tensor, c: float) -> Tensor:
 
     Built on `exp` rather than `cos` on purpose: `exp` is an F0 native unary
     (every ANE family, M1 included), whereas native `cos` is A15+ (family 4). A
-    cos-based constant would silently break this whole module on M1/H13 — and
+    cos-based constant would silently break this whole module on M1/H13 - and
     `special.cos` below is one of the things that must run there.
     """
     return (like * 0.0).exp() * float(c)
@@ -83,7 +83,7 @@ def _poly_in(x2: Tensor, coeffs_low_first) -> Tensor:
 
 
 # --------------------------------------------------------------------------- #
-# sin / cos — portable trig for chips without the native op                   #
+# sin / cos - portable trig for chips without the native op                   #
 # --------------------------------------------------------------------------- #
 
 # Native sin/cos are A15+ (family 4): they run on M5 but NOT on M1/H13. These
@@ -118,13 +118,13 @@ def sin(x: Tensor) -> Tensor:
 def cos(x: Tensor) -> Tensor:
     """`cos(x)` for x in [-pi/2, pi/2] as a fused fp16 polynomial (`Q(x^2)`).
 
-    Portable companion to `sin` above — native cos is A15+, this runs everywhere
+    Portable companion to `sin` above - native cos is A15+, this runs everywhere
     M1 included. Reduce arguments outside [-pi/2, pi/2] on the host."""
     return _poly_in(x * x, _COS_Q)
 
 
 # --------------------------------------------------------------------------- #
-# erfc — complementary error function (the cancellation case)                 #
+# erfc - complementary error function (the cancellation case)                 #
 # --------------------------------------------------------------------------- #
 
 # Abramowitz & Stegun 7.1.26: erfc(x) = poly(t) * exp(-x^2), t = 1/(1+p x), x>=0.
@@ -138,7 +138,7 @@ _ERFC_A = [0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429]
 def erfc(x: Tensor) -> Tensor:
     """Complementary error function `erfc(x) = 1 - erf(x)` for `x >= 0`.
 
-    Direct rational*exp form (A&S 7.1.26) — does NOT cancel for large x, unlike
+    Direct rational*exp form (A&S 7.1.26) - does NOT cancel for large x, unlike
     `1 - native_erf`. Valid for x in [0, ~6] (erfc decays smoothly; the exp
     underflows to 0 past x~6, the correct limit). For x<0 use the identity
     erfc(-x)=2-erfc(x) on the host (a branch the static graph can't do).
@@ -150,12 +150,12 @@ def erfc(x: Tensor) -> Tensor:
 
 
 # --------------------------------------------------------------------------- #
-# expm1 / log1p — the small-argument cancellation pair                        #
+# expm1 / log1p - the small-argument cancellation pair                        #
 # --------------------------------------------------------------------------- #
 
 def expm1(x: Tensor) -> Tensor:
     """`exp(x) - 1` accurate near 0 (where `exp(x)-1` cancels). Taylor
-    `x(1 + x/2 + x^2/6 + ... + x^5/720)` — valid for |x| <= ~0.7. Outside that,
+    `x(1 + x/2 + x^2/6 + ... + x^5/720)` - valid for |x| <= ~0.7. Outside that,
     use `x.exp()` and subtract 1 with `_const` (no cancellation there)."""
     # x * (1 + x(1/2 + x(1/6 + x(1/24 + x(1/120 + x/720)))))
     inner = _horner(x, [1.0 / 720, 1.0 / 120, 1.0 / 24, 1.0 / 6, 0.5, 1.0])
@@ -169,7 +169,7 @@ _LOG1P_RATIO = [-0.052037525556684096, 0.15799617916430397, -0.20925805696435787
 
 def log1p(x: Tensor) -> Tensor:
     """`log(1 + x)` accurate near 0 (where `log(1+x)` cancels). Evaluated as
-    `x * poly(x)` with a deg-7 minimax of `log1p(x)/x` — valid for x in
+    `x * poly(x)` with a deg-7 minimax of `log1p(x)/x` - valid for x in
     [-0.5, 1.0]. The `x*` factor keeps it exact at 0."""
     return x * _horner(x, _LOG1P_RATIO)
 
@@ -211,7 +211,7 @@ def gamma(x: Tensor) -> Tensor:
     SCOPE / HONESTY: gamma grows super-exponentially and overflows fp16 (>65504)
     past x~8.3, so it is fundamentally fp16-narrow. Extending [1,2] to a wider
     window needs the recurrence Gamma(x+1)=x*Gamma(x) applied a data-dependent
-    number of times — not expressible in one static graph. For a wider but
+    number of times - not expressible in one static graph. For a wider but
     still-fp16-bounded range use `gamma_via_lgamma` (x in [1, ~7.5]), which routes
     through `exp(lgamma(x))` instead.
     """
@@ -279,7 +279,7 @@ def exp_wide(x: Tensor, splits: int = 1) -> Tensor:
     relerr ~1.4e-3 over [-10,10]); the squaring re-rounding usually costs MORE
     than the small-argument benefit gains, so per-point accuracy is the same or
     slightly worse. Provided for completeness. fp16's output range (max 65504)
-    caps exp at x~11 regardless of method — splitting can never extend the range,
+    caps exp at x~11 regardless of method - splitting can never extend the range,
     only (at best marginally) trade accuracy.
     """
     e = (x * (1.0 / (1 << splits))).exp()
@@ -294,7 +294,7 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
     accurate, then scale back.
 
     HONEST FINDING: native fp16 log is already good (~1e-3 over [1e-2, 1e4]) and
-    this matches rather than clearly beats it — the sqrt chain re-rounds. Useful
+    this matches rather than clearly beats it - the sqrt chain re-rounds. Useful
     mainly as a documented range-reduction recipe; the native `x.log()` is the
     better default on this hardware."""
     r = x
@@ -339,7 +339,7 @@ if __name__ == "__main__":
 
     results = []
 
-    # erfc — the cancellation showcase
+    # erfc - the cancellation showcase
     xs, out = run(erfc, 0.0, 6.0)
     ref = sp.erfc(xs[0])
     e = relerr(out, ref)
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     results.append(("log1p", "[-0.5, 1.0]", "relerr", relerr(out, sp.log1p(xs[0])),
                     "PASS; x*poly keeps it exact at 0"))
 
-    # lgamma — relative error away from its zeros (x>=2.5; lgamma=0 at x=1,2 makes
+    # lgamma - relative error away from its zeros (x>=2.5; lgamma=0 at x=1,2 makes
     # relerr ill-defined there). The worst ABSOLUTE error is at those zeros (~0.2,
     # fp16 reconstructing a near-zero value); we report both.
     xs, out = run(lgamma, 1.0, 8.0)
@@ -396,7 +396,7 @@ if __name__ == "__main__":
                     "PASS; -ln singularity at 0 (x must be > 0)"))
 
     # exp_wide vs native exp accuracy at wide range (per-point median, the fair
-    # metric — max-relerr is dominated by the single largest output)
+    # metric - max-relerr is dominated by the single largest output)
     xs, out = run(exp_wide, -10.0, 10.0)
     ref = np.exp(xs[0])
     m = ref < 60000.0

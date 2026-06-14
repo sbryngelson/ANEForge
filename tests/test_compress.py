@@ -31,7 +31,7 @@ def test_palettize_lut4_is_deterministic():
     assert a == b                                  # no RNG: byte-stable output
 
 
-# Task 2 — compress= mode plumbing in _Emitter
+# Task 2 - compress= mode plumbing in _Emitter
 from aneforge import _compile
 
 
@@ -58,7 +58,7 @@ def test_compress_none_matches_int8_false_mil():
     assert a.n_ops == b.n_ops
 
 
-# Task 3 — int4-LUT weight branch + accuracy gate in _Emitter.weight
+# Task 3 - int4-LUT weight branch + accuracy gate in _Emitter.weight
 def test_weight_int4_falls_back_when_inaccurate():
     """A weight 16 levels can't represent within budget falls back, never errors."""
     em = _compile._Emitter(int8=False, compress="int4", compress_atol=1e-4)
@@ -110,7 +110,7 @@ def test_weight_int4_used_when_accurate():
     assert "constexpr_lut_to_dense" in "\n".join(em.lines)
 
 
-# Task 4 — on-device tests: int4-LUT runs on the ANE + weights.bin is smaller
+# Task 4 - on-device tests: int4-LUT runs on the ANE + weights.bin is smaller
 def _ane_available():
     try:
         from aneforge._runtime import _find_dylib
@@ -190,7 +190,7 @@ def test_int4_conv_runs_on_ane_and_is_close():
     assert b"constexpr_lut_to_dense" in Path(d, "model.mil").read_bytes()
 
 
-# Task 8 — sparse weight streaming (constexpr_sparse_to_dense)
+# Task 8 - sparse weight streaming (constexpr_sparse_to_dense)
 def test_sparsify_roundtrip():
     W = np.random.default_rng(8).standard_normal((32, 64)).astype(np.float32)
     W[np.abs(W) < 0.5] = 0.0                        # introduce real zeros
@@ -245,7 +245,7 @@ def test_sparse_matmul_runs_on_ane_and_is_close():
     net.release()
 
 
-# Feature 1 — compress="auto": per-weight best-correct-smallest encoding
+# Feature 1 - compress="auto": per-weight best-correct-smallest encoding
 # precedence: sparse (if sparse) -> int4 (if accurate) -> int8 -> fp16
 def test_auto_picks_sparse_on_sparse_weight():
     em = _compile._Emitter(int8=False, compress="auto")
@@ -327,9 +327,9 @@ def test_auto_matmul_runs_on_ane():
     net.release()
 
 
-# Feature — family-aware compress="auto": only encodings that STREAM natively on
+# Feature - family-aware compress="auto": only encodings that STREAM natively on
 # the target family are auto candidates (h13/M1 streams int4-LUT + sparse;
-# int8/blockwise fold to dense fp16 there — accuracy cost, no bandwidth win).
+# int8/blockwise fold to dense fp16 there - accuracy cost, no bandwidth win).
 def test_native_streams_table():
     from aneforge import _targets as TG
     # M1: int4-LUT + sparse stream (round-9: compress="sparse" -> constexpr_sparse_to_dense,
@@ -390,7 +390,7 @@ def test_explicit_modes_not_filtered_by_family():
 @requires_ane
 def test_auto_target_h13_compiles_native_stream():
     """End-to-end plumbing: af.compile(compress='auto', target='h13') routes the
-    family into the emitter — the sparse-eligible weight comes out sparse (a
+    family into the emitter - the sparse-eligible weight comes out sparse (a
     native h13 stream, preferred over int4), int8/blockwise never appear (they
     fold on h13), and the program still runs (sparse is family-2-native)."""
     import aneforge as af
@@ -414,7 +414,7 @@ def test_auto_target_h13_compiles_native_stream():
     net.release()
 
 
-# Feature 2 — conv-sparse (allow_sparse on conv); 4-D mask unverified on device
+# Feature 2 - conv-sparse (allow_sparse on conv); 4-D mask unverified on device
 @requires_ane
 def test_sparse_conv_runs_on_ane():
     import aneforge as af
@@ -436,7 +436,7 @@ def test_sparse_conv_runs_on_ane():
     assert b"constexpr_sparse_to_dense" in Path(d, "model.mil").read_bytes()
 
 
-# Feature 3 — blockwise-affine compression (constexpr_blockwise_shift_scale)
+# Feature 3 - blockwise-affine compression (constexpr_blockwise_shift_scale)
 def test_quantize_blockwise_roundtrip():
     rng = np.random.default_rng(30)
     W = rng.standard_normal((32, 64)).astype(np.float32)

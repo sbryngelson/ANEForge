@@ -1,7 +1,7 @@
 """Spectral / signal / statistical scientific-kernel corpus for aneforge.
 
 The marquee probe: **can the Apple Neural Engine do an FFT?** The ANE has NO complex
-dtype — compute is fp16 real only. So every complex kernel here is emulated as a PAIR
+dtype - compute is fp16 real only. So every complex kernel here is emulated as a PAIR
 of real tensors ``(real, imag)`` with hand-expanded complex arithmetic
 ``(a+bi)(c+di) = (ac-bd) + (ad+bc)i``. The question is whether that emulation is
 (1) *expressible* as an aneforge graph and (2) *numerically usable* in fp16, and if so,
@@ -10,18 +10,18 @@ of real tensors ``(real, imag)`` with hand-expanded complex arithmetic
 Five families, each built as an aneforge graph, compiled + run on the ANE, validated
 against a numpy/scipy fp32 golden at an fp16-appropriate tolerance:
 
-1. SPECTRAL (the headline) — the DFT as a twiddle-matrix matmul (X = x @ W_N^T over
+1. SPECTRAL (the headline) - the DFT as a twiddle-matrix matmul (X = x @ W_N^T over
    real/imag pairs) swept across N, plus a fully-unrolled radix-2 (DIT) butterfly FFT.
    The verdict block at the end answers "is FFT viable on the ANE, and where/why does
    it break?".
-2. SIGNAL — a FIR filter (1D conv) and autocorrelation (the cracked CrossCorrelation
+2. SIGNAL - a FIR filter (1D conv) and autocorrelation (the cracked CrossCorrelation
    bridge + a conv-based variant).
-3. MONTE CARLO — an MC integral and on-line mean/variance over a large sample
+3. MONTE CARLO - an MC integral and on-line mean/variance over a large sample
    (host-drawn samples fed as inputs; see the RANDOMNESS NOTE below).
-4. N-BODY — pairwise forces among N points via a broadcast diff
+4. N-BODY - pairwise forces among N points via a broadcast diff
    ([N,1,3]-[1,N,3]) + reduction; small N.
-5. QUADRATURE — Simpson and Gauss-Legendre integration as a weighted reduction
-   (cumsum is unsupported on the ANE — a documented boundary).
+5. QUADRATURE - Simpson and Gauss-Legendre integration as a weighted reduction
+   (cumsum is unsupported on the ANE - a documented boundary).
 
 RANDOMNESS NOTE: aneforge's public API exposes NO RandomGenerator op (the e5rt
 ``random_uniform`` surface is RE'd in the reverse-engineering corpus
@@ -72,7 +72,7 @@ def tagged(case: Case, cost: str, feasibility: str) -> Case:
     return case
 
 
-# SPECTRAL — the "can the ANE do an FFT?" probe (complex as real pairs)
+# SPECTRAL - the "can the ANE do an FFT?" probe (complex as real pairs)
 
 def _dft_matmul(N: int, tol: float):
     """Discrete Fourier transform as a dense twiddle-matrix matmul, complex emulated
@@ -86,12 +86,12 @@ def _dft_matmul(N: int, tol: float):
     Output = concat(Xr, Xi) as [1, 2N]. Two graph inputs: the real and imag parts of x.
 
     cost: COMPUTE (two [1,N]@[N,N] GEMMs against folded twiddle weights, plus two more
-      for the imag channel; the O(N^2) twiddle matrix is the cost — this is the naive
+      for the imag channel; the O(N^2) twiddle matrix is the cost - this is the naive
       DFT, not an FFT).
     feasibility: WORKS, and SURPRISINGLY fp16-robust in N.
 
     KEY FINDING (the marquee result): the DFT-matmul is fp16-CLEAN to large N because
-    the ANE matmul accumulator is wide (>=fp32) — the length-N twiddle sum does NOT
+    the ANE matmul accumulator is wide (>=fp32) - the length-N twiddle sum does NOT
     re-round per term, so the only error is fp16 rounding of the *inputs* and *twiddle
     constants*, which does NOT compound with N. Empirically relerr stays ~3e-4..6e-4
     FLAT from N=8 to N=2048 (verified on M5). So fp16 is not the wall for the transform
@@ -125,7 +125,7 @@ def _dft_matmul(N: int, tol: float):
 
 def _fft_butterfly_radix2(N: int, tol: float):
     """Radix-2 decimation-in-time (Cooley-Tukey) FFT, FULLY UNROLLED as a static graph
-    over (real, imag) lane pairs — the genuine butterfly, not a matmul.
+    over (real, imag) lane pairs - the genuine butterfly, not a matmul.
 
     Inputs are bit-reversed (a static permutation, expressed via one-hot matmul lane
     selects since the ANE has no gather), then log2(N) stages of butterflies combine
@@ -133,13 +133,13 @@ def _fft_butterfly_radix2(N: int, tol: float):
     (complex mul expanded over real/imag) and forms (a+t, a-t). Output = concat of the
     N real lanes then the N imag lanes.
 
-    cost: FLOOR/FUSION (many tiny dependent ops fused into ONE e5rt program — the whole
+    cost: FLOOR/FUSION (many tiny dependent ops fused into ONE e5rt program - the whole
       N*log2(N) butterfly network; dispatch-floor bound, the structural-expressibility
       probe, NOT compute-bound at these small N).
     feasibility: WORKS for small fixed N (verified correct at N=8, relerr ~1.8e-4).
 
     STRUCTURAL VERDICT: the butterfly is *expressible and correct* via complex-as-real
-    pairs, but ONLY by a per-N static unroll — the ANE is feed-forward with no in-graph
+    pairs, but ONLY by a per-N static unroll - the ANE is feed-forward with no in-graph
     loop, no scalar feedback, and no dynamic gather. The bit-reversal must be a folded
     one-hot matrix and every stage hand-emitted. So it compiles for a fixed N but does
     not scale to a data-sized FFT (same architectural wall as the LAPACK unrolls). For
@@ -221,18 +221,18 @@ def _rfft_power_spectrum(N: int, tol: float):
                   "compute", "works")
 
 
-# SIGNAL — FIR filter and autocorrelation
+# SIGNAL - FIR filter and autocorrelation
 
 def _fir_filter(L: int, K: int, tol: float):
     """FIR filter as a 1D convolution: y = conv(signal, taps), valid mode.
 
     Built on the ANE conv layer with the signal as [1,1,1,L] and the taps as a
     [1,1,1,K] kernel. NOTE the convention: the ANE conv is a CROSS-CORRELATION (no
-    kernel flip), matching ``np.correlate(sig, taps, 'valid')`` — verified on-device.
+    kernel flip), matching ``np.correlate(sig, taps, 'valid')`` - verified on-device.
     (A flipped reference, ``np.convolve``, mismatches by ~O(1), which is the convention
     check, not an error.)
 
-    cost: COMPUTE (a real conv — the ANE's home turf).
+    cost: COMPUTE (a real conv - the ANE's home turf).
     feasibility: WORKS.
     """
     sig = f16(1, 1, 1, L)
@@ -253,16 +253,16 @@ def _fir_filter(L: int, K: int, tol: float):
 
 def _autocorr_crosscorr(H: int, W: int, Th: int, Tw: int, tol: float):
     """Template autocorrelation via the cracked CrossCorrelation bridge (native ANE
-    CrossCorrelation layer — a path Apple's MIL frontend rejects).
+    CrossCorrelation layer - a path Apple's MIL frontend rejects).
 
     Valid (no-flip) correlation of a 2D map [H,W] with a smaller template [Th,Tw]:
         y[i,j] = sum_{u,v} x[i+u, j+v] * template[u,v].
     We feed the map and a template (the top-left patch of the map, so this is a true
     autocorrelation-style match). The bridge requires the template strictly smaller
-    than the map (a same-size template fails ANECCompile — documented arch limit), so a
+    than the map (a same-size template fails ANECCompile - documented arch limit), so a
     full single-lag inner product isn't this op; the windowed correlation is.
 
-    cost: MIXED (cut) — one native sub-program (graph cut), no surrounding fusion.
+    cost: MIXED (cut) - one native sub-program (graph cut), no surrounding fusion.
     feasibility: WORKS (cross_correlation is RE-recovered and runtime-proven).
     """
     x = f16(H, W)
@@ -291,7 +291,7 @@ def _autocorr_conv(L: int, Lk: int, tol: float):
     [1,1,1,Lk] constant kernel; the activation is the full signal. This yields the
     (L-Lk+1) windowed correlation values.
 
-    ARCH NOTE: the ANE conv backend supports only modest 1xK kernels here — a wide
+    ARCH NOTE: the ANE conv backend supports only modest 1xK kernels here - a wide
     kernel (e.g. K=16 on a length-32 row) is rejected ("Some ops are not supported on
     any of the specified backends"), so the lag window Lk must stay small (Lk<=~12 on
     these sizes). A short autocorrelation window is the typical DSP use anyway.
@@ -315,7 +315,7 @@ def _autocorr_conv(L: int, Lk: int, tol: float):
                   "compute", "works")
 
 
-# MONTE CARLO — host-drawn samples (see module RANDOMNESS NOTE), ANE reduces
+# MONTE CARLO - host-drawn samples (see module RANDOMNESS NOTE), ANE reduces
 
 def _mc_integral(M: int, tol: float):
     """Monte-Carlo integral of g(x)=exp(-x^2) over [0,1]: I ~ mean(g(U)), U~Uniform.
@@ -344,7 +344,7 @@ def _mc_integral(M: int, tol: float):
 def _mc_mean_var(M: int, tol: float):
     """MC mean & variance over a large sample (the core MC estimator state).
 
-    Var via E[g^2]-E[g]^2 (the cancellation-prone form) — the wide ANE accumulator
+    Var via E[g^2]-E[g]^2 (the cancellation-prone form) - the wide ANE accumulator
     keeps the two reductions clean so the residual is fp16 input rounding, not
     catastrophic cancellation. Output = concat(mean, var) as [1,2]. Samples host-drawn.
 
@@ -369,7 +369,7 @@ def _mc_mean_var(M: int, tol: float):
                   "reduction", "works")
 
 
-# N-BODY — pairwise interactions via broadcast diff + reduction
+# N-BODY - pairwise interactions via broadcast diff + reduction
 
 def _nbody_spring(N: int, tol: float):
     """Pairwise spring (linear) net force on N points: F_i = sum_j (p_j - p_i).
@@ -378,7 +378,7 @@ def _nbody_spring(N: int, tol: float):
     over j. This exercises the broadcast-diff + reduction pattern that underlies any
     N-body kernel; the linear force keeps the reference clean (no 1/r^2 fp16 blow-up).
 
-    cost: MIXED (a broadcast outer-difference [N,N,3] then a reduction — bandwidth grows
+    cost: MIXED (a broadcast outer-difference [N,N,3] then a reduction - bandwidth grows
       O(N^2) in the intermediate, reduction over j).
     feasibility: WORKS (small N).
     """
@@ -432,7 +432,7 @@ def _nbody_invsq_potential(N: int, tol: float):
                   "mixed", "fp16-limited")
 
 
-# QUADRATURE — weighted reduction (cumsum is unsupported: a boundary)
+# QUADRATURE - weighted reduction (cumsum is unsupported: a boundary)
 
 def _simpson(n: int, tol: float):
     """Composite Simpson integration of sin(x) on [0,pi] as a weighted reduction.
@@ -446,7 +446,7 @@ def _simpson(n: int, tol: float):
     feasibility: WORKS (relerr ~1e-5; the weighted sum is the wide-accumulator sweet
       spot). True value is 2.0.
 
-    BOUNDARY NOTE: a *running* integral / prefix-sum (cumsum) is NOT expressible — the
+    BOUNDARY NOTE: a *running* integral / prefix-sum (cumsum) is NOT expressible - the
     ANE has no scan/cumsum primitive (reductions collapse the axis; there is no
     inclusive-scan op and no in-graph loop). So definite integrals (one weighted
     reduction) fit, but cumulative/indefinite integrals do not.
@@ -547,7 +547,7 @@ def run_spectral(cases, verbose: bool = True):
     SPECTRAL verdict block. Returns (results, exit_code).
 
     Gate: PASS and XFAIL are green; FAIL, ERROR, XPASS are red. The feasibility tag is
-    reported alongside but does NOT change the gate — an arch-limited probe still
+    reported alongside but does NOT change the gate - an arch-limited probe still
     "passes" if its tiny fixed-N instance is numerically correct; the tag carries the
     *generalization* verdict.
     """
@@ -610,17 +610,17 @@ def run_spectral(cases, verbose: bool = True):
         bfst = ", ".join(f"{r['name'].split('_N')[1]}:{r['status']}({r['metric']})" for r in bf)
         print(f"  Radix-2 butterfly FFT (fully unrolled): {bfst}")
     print("\n  VERDICT:")
-    print("    YES — both a dense DFT (twiddle-matrix matmul) and a radix-2 butterfly FFT")
+    print("    YES - both a dense DFT (twiddle-matrix matmul) and a radix-2 butterfly FFT")
     print("    are EXPRESSIBLE and CORRECT on the ANE via complex-as-real-pairs")
     print("    arithmetic ((a+bi)(c+di) = (ac-bd)+(ad+bc)i over paired real tensors).")
     print("    * DFT-matmul: fp16-CLEAN to at least N=2048 (relerr ~ few e-4, flat in N).")
     print("      The limiter is NOT precision but the O(N^2) twiddle-matrix size/bandwidth")
-    print("      — it is a naive DFT, so cost grows quadratically; precision does not.")
+    print("      - it is a naive DFT, so cost grows quadratically; precision does not.")
     print("    * Butterfly FFT: correct for small fixed N, but expressible ONLY as a")
     print("      per-N STATIC UNROLL (the ANE is feed-forward: no in-graph loop, no scalar")
     print("      feedback, and bit-reversal needs a folded one-hot since there is no")
     print("      gather). So its O(N log N) advantage is not realizable as a graph at")
-    print("      useful N — the wall is ARCHITECTURAL (static unroll), not fp16.")
+    print("      useful N - the wall is ARCHITECTURAL (static unroll), not fp16.")
     print("    BOTTOM LINE: the ANE has no complex dtype, but FFT/DFT is viable through")
     print("    real-pair emulation; for practical sizes the dense DFT-matmul is the")
     print("    right tool (fp16-robust, fuses), and a true scaling FFT is blocked by the")

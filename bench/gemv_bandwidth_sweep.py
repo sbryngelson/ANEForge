@@ -182,7 +182,7 @@ def main() -> int:
     args = ap.parse_args()
 
     print("=" * 90)
-    print(" gemv_bandwidth_sweep — ANE weight-stream bandwidth climb-to-plateau")
+    print(" gemv_bandwidth_sweep - ANE weight-stream bandwidth climb-to-plateau")
     print("=" * 90)
     print(f" backends: ANE={'yes' if HAVE_ANE else 'NO'}  MLX={'yes' if HAVE_MLX else 'NO'}  "
           f"sudo={'yes' if HAVE_SUDO else 'NO (no power)'}")
@@ -195,7 +195,7 @@ def main() -> int:
 
     square = [512, 1024, 2048, 4096] if args.quick else [512, 1024, 2048, 4096, 6144, 8192]
     # power measured at EVERY square point so the weight-stream tier carries a
-    # GB/s/W column (the only sweep that previously lacked one — closes the
+    # GB/s/W column (the only sweep that previously lacked one - closes the
     # "watt-complete" asymmetry: the 24 GB/s activation path has GB/s/W in
     # Table 4, the weight path did not). Each point adds one power window.
     pw_at = set(square)
@@ -248,10 +248,10 @@ def main() -> int:
             within = abs(tm - 112) / 112
             verdict["tail_vs_112_pct"] = round(within * 100, 1)
             if within <= 0.25:
-                print(f" => tail bandwidth is within {within*100:.0f}% of the paper's 112 GB/s — "
+                print(f" => tail bandwidth is within {within*100:.0f}% of the paper's 112 GB/s - "
                       f"CORROBORATES the second (weight-stream) bandwidth.")
             else:
-                print(f" => tail bandwidth differs from 112 GB/s by {within*100:.0f}% — "
+                print(f" => tail bandwidth differs from 112 GB/s by {within*100:.0f}% - "
                       f"two-bandwidth claim may need softening.")
 
     out = Path(__file__).resolve().parent / "results" / "gemv_bandwidth_sweep_results.json"

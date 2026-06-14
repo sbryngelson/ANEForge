@@ -3,7 +3,7 @@
 These kernels are fp16, fixed-iteration, and (for the factorizations) UNROLLED into one
 program, so they have shape- and conditioning-dependent envelopes. This suite validates
 each against the numpy/scipy reference within its envelope, and deliberately sweeps
-SHAPES (tall / wide / square) for the SVD/QR/LU family — the wide case is what hid the
+SHAPES (tall / wide / square) for the SVD/QR/LU family - the wide case is what hid the
 ``svd`` Gram-matrix bug (it only ever formed A^T A, fine for tall A, a huge graph for wide
 A). Sizes are kept small: several kernels compile a deep unrolled graph.
 
@@ -155,7 +155,7 @@ def test_eigh_iterate_matches_unrolled():
 
 def test_eigh_iterate_beyond_unrolled_ceiling():
     # n=32 exceeds the ~n=20 cap of the unrolled program; only the iterate path reaches it
-    # (measured 1.4e-2 here; n=48 at ~1.2-1.8e-2 stays a documented probe — ~220s is too
+    # (measured 1.4e-2 here; n=48 at ~1.2-1.8e-2 stays a documented probe - ~220s is too
     # heavy for the gate).
     A = _sym_gapped(32, 1e1, 32)
     ref = np.sort(np.linalg.eigvalsh(A))

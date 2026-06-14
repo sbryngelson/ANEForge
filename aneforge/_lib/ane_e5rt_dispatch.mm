@@ -1,15 +1,15 @@
-// ane_e5rt_dispatch.mm — single-op dispatch wrapper over Espresso's e5rt_*
+// ane_e5rt_dispatch.mm - single-op dispatch wrapper over Espresso's e5rt_*
 // family, compiled as Objective-C++. Exposes the C ABI that aneforge's
 // runtime (aneforge/_runtime.py) binds via ctypes:
 //
-//   ane_e5rt_program_compile      — compile a MIL into a precompiled ANE op
+//   ane_e5rt_program_compile      - compile a MIL into a precompiled ANE op
 //   ane_e5rt_program_set_input_fp16 / get_output_fp16
-//   ane_e5rt_program_input_buffer / output_buffer  — zero-copy port buffers
-//   ane_e5rt_program_execute      — synchronous execute on the op's stream
-//   ane_e5rt_program_share_buffer — alias one op's output buffer onto another
+//   ane_e5rt_program_input_buffer / output_buffer  - zero-copy port buffers
+//   ane_e5rt_program_execute      - synchronous execute on the op's stream
+//   ane_e5rt_program_share_buffer - alias one op's output buffer onto another
 //                                   op's input port (resident-state chaining)
 //   ane_e5rt_program_release
-//   ane_e5rt_compile_check        — compile-only cross-target validation
+//   ane_e5rt_compile_check        - compile-only cross-target validation
 //
 // One compiled op owns one e5rt_execution_stream; encode + prepare are
 // deferred to the first execute (see finalize_program).
@@ -85,8 +85,8 @@ DECL(e5rt_execution_stream_release);
 DECL(e5rt_execution_stream_encode_operation);
 DECL(e5rt_execution_stream_execute_sync);
 // Espresso provides two stream-submission entrypoints:
-//   _e5rt_execution_stream_async_submit  — older, returns "Use submit_async".
-//   _e5rt_execution_stream_submit_async  — current; takes (stream, ObjC block).
+//   _e5rt_execution_stream_async_submit  - older, returns "Use submit_async".
+//   _e5rt_execution_stream_submit_async  - current; takes (stream, ObjC block).
 // We load the newer one. Block signature is `e5rt_error_code_t (^)(void)`.
 typedef e5rt_error_code_t (*e5rt_execution_stream_submit_async_fn)(void *stream, id block);
 static e5rt_execution_stream_submit_async_fn e5rt_execution_stream_submit_async = NULL;
@@ -454,7 +454,7 @@ done:
 
 // Finalize the program: prepare each op (only if previously encoded), reset
 // the stream (only if previously used), then encode every op in order.
-// Idempotent — after the first call sets prog->finalized=1; subsequent calls
+// Idempotent - after the first call sets prog->finalized=1; subsequent calls
 // short-circuit. Returns 0 on success.
 //
 // Important detail: `e5rt_execution_stream_operation_prepare_op_for_encode`
@@ -473,7 +473,7 @@ static int finalize_program(ane_e5rt_program_t *prog) {
 
   int need_reset = any_op_encoded(prog);
   if (need_reset) {
-    // Reset stream FIRST — this drops the encoded-op references inside the
+    // Reset stream FIRST - this drops the encoded-op references inside the
     // stream, letting prepare_op_for_encode legally transition encoded ops
     // back to "ReadyForEncode".
     e5rt_error_code_t err = e5rt_execution_stream_reset(prog->stream);
@@ -501,7 +501,7 @@ static int finalize_program(ane_e5rt_program_t *prog) {
 // free(NULL) is a no-op.
 static void prog_destroy(ane_e5rt_program_t *prog) {
   if (!prog) return;
-  // final_event is an ALIAS of the op's completion_event — not owned here.
+  // final_event is an ALIAS of the op's completion_event - not owned here.
   prog->final_event = NULL;
   if (prog->stream) e5rt_execution_stream_release(&prog->stream);
   for (size_t k = 0; k < prog->n_ops; k++) op_free_ports_and_op(&prog->ops[k]);
@@ -707,7 +707,7 @@ extern "C" int ane_e5rt_program_share_buffer(ane_e5rt_program_t *prog,
 }
 
 // =============================================================================
-// EXPERIMENTAL SURFACE — not bound by the Python frontend (aneforge/_runtime.py).
+// EXPERIMENTAL SURFACE - not bound by the Python frontend (aneforge/_runtime.py).
 //
 // The functions below are a directly-callable C research surface for multi-op
 // streams and async completion. The 9 production functions above are the only
@@ -773,7 +773,7 @@ extern "C" int ane_e5rt_program_add_op(ane_e5rt_program_t *prog,
   }
 
   // Bind a per-op completion event BEFORE we mark the op for encode. This is
-  // necessary so that bind-state mutations stay legal — once an op gets
+  // necessary so that bind-state mutations stay legal - once an op gets
   // encoded onto a stream Espresso refuses to change its bind state.
   {
     void *evt = NULL;
@@ -931,7 +931,7 @@ extern "C" int ane_e5rt_program_execute_async(ane_e5rt_program_t *prog) {
   }
 
   // submit_async takes a block typed `e5rt_error_code_t (^)(void)`. Per the
-  // disassembly the block is invoked inside `ExceptionSafeExecute` — the
+  // disassembly the block is invoked inside `ExceptionSafeExecute` - the
   // returned error code becomes the std::function's result. The submit
   // *itself* is what's async (kicked off internally), so the block returning
   // success is enough; the per-op completion events fire when ANE finishes.

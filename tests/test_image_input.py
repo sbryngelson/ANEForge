@@ -1,4 +1,4 @@
-"""Tests for af.image_input — uint8 image input dequantised to fp16 ON the engine.
+"""Tests for af.image_input - uint8 image input dequantised to fp16 ON the engine.
 
 Camera/decoded-video bytes feed the model directly; the uint8->fp16 cast + the
 ``scale*x + bias`` normalisation run as in-graph ANE ops. Each test compiles+runs a

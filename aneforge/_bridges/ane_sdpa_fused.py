@@ -78,7 +78,7 @@ def _expected_shape(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> tuple[int, .
         raise ValueError("Q, K, V must each have shape [B, H, S, D]")
     # K and V must share shape (same cached sequence); Q's SEQUENCE may differ from K/V's
     # (the native SDPA validator requires only "Q,K same embedding (W)" and "K,V same seq (C)")
-    # — the KV-cache DECODE shape: seq_q query tokens attend to seq_kv cached K/V.
+    # - the KV-cache DECODE shape: seq_q query tokens attend to seq_kv cached K/V.
     if K.shape != V.shape:
         raise ValueError(f"K and V must share shape (same cached sequence); got {K.shape}, {V.shape}")
     if Q.shape[0] != 1 or K.shape[0] != 1:
@@ -118,7 +118,7 @@ def sdpa_fused(
     """Native ANE fused-attention via the 8-byte ANECSDPALayerDesc.
 
     Compiles a netplist with SDPA + the constant-Scale bit set, dispatches via
-    _ANEInMemoryModel.  Bypasses Apple's MIL → decomposition pipeline.
+    _ANEInMemoryModel.  Bypasses Apple's MIL -> decomposition pipeline.
 
     Args:
         Q, K, V: fp16 arrays of shape `[1, heads, seq, d_head]`.
@@ -181,7 +181,7 @@ def sdpa_fused(
                   ("value", workdir / "in_value.f16")]
 
         if mask is not None or Sq != Skv:
-            # Edit the netplist for (a) the KV-cache DECODE shape — query seq Sq differs from
+            # Edit the netplist for (a) the KV-cache DECODE shape - query seq Sq differs from
             # cached K/V seq Skv, so query+output carry Sq channels while K/V carry Skv; and/or
             # (b) the OPTIONAL additive MASK bottom ([C=S_q, H=1, W=S_kv], the validator's layout:
             # "Mask Width axis must match K and V Channel axis or broadcastable"). Validated on M1:

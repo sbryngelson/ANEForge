@@ -14,7 +14,7 @@ where
 The key reuse hook is ``run_case(case, int8=False) -> np.ndarray``: it builds the
 graph, compiles it on the ANE, runs it on the case inputs, and returns the ANE
 output. A future optimizer can call ``run_case`` with optimization on/off and diff
-the two outputs against THIS corpus — same builds, same inputs, same goldens.
+the two outputs against THIS corpus - same builds, same inputs, same goldens.
 """
 from __future__ import annotations
 

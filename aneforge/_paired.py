@@ -1,4 +1,4 @@
-"""Paired-fp16 ("double-fp16") arithmetic for aneforge — extended precision with
+"""Paired-fp16 ("double-fp16") arithmetic for aneforge - extended precision with
 NO fp32 anywhere in the compute path.
 
 A value is carried as an *unevaluated pair* `(hi, lo)` with `hi = fp16(x)` and
@@ -11,22 +11,22 @@ The arithmetic is the classic *error-free transforms*, every intermediate rounde
 to fp16 (validated first in numpy then on-silicon in the reverse-engineering
 corpus; this module reuses those exact algorithms):
 
-  * TwoSum (Knuth)      — add/sub: `a+b = s + e` exactly, s = fl(a+b), all fp16.
-  * TwoProduct (Dekker) — mul: `a*b = p + e` exactly via a Veltkamp split, all fp16.
-  * compensated dot     — TwoProduct each element, then accumulate the product AND
+  * TwoSum (Knuth)      - add/sub: `a+b = s + e` exactly, s = fl(a+b), all fp16.
+  * TwoProduct (Dekker) - mul: `a*b = p + e` exactly via a Veltkamp split, all fp16.
+  * compensated dot     - TwoProduct each element, then accumulate the product AND
                           the error streams. CRUCIAL: accumulate via `@ ones`
                           (matmul, whose ANE accumulator is WIDE >= fp32), never via
                           `reduce_sum` (whose ANE accumulator is NARROW fp16 and
                           re-injects the error the compensation just removed).
 
-Why this beats plain fp16: the wall is *catastrophic cancellation* — a tiny result
+Why this beats plain fp16: the wall is *catastrophic cancellation* - a tiny result
 formed from large nearly-equal quantities, where the fp16 rounding of the operands
 and products (not the accumulation) swamps the signal. The lo terms capture exactly
 that rounding, so carrying (hi, lo) recovers it.
 
 COMPILER CAVEAT (verified): an aggressive algebraic simplifier could collapse
 `hi + lo` back to `hi` (since `lo` is, in exact arithmetic, "just the rounding
-of hi"), defeating the trick. On this ANE / e5rt it does NOT happen — the on-device
+of hi"), defeating the trick. On this ANE / e5rt it does NOT happen - the on-device
 Paired results match the numpy-fp16 proof bit-for-bit-close (validation in
 `examples/paired_fp16.py`). The transforms are opaque fp16 add/sub/mul chains with
 no fp32 island for the compiler to "see through", and e5rt preserves them. If a
@@ -133,7 +133,7 @@ class Paired:
             return Paired(self.hi * float(o), self.lo * float(o))
         o = _as_paired(o)
         p, e = _two_prod(self.hi, o.hi)        # exact hi*hi product + its rounding
-        # cross terms hi*lo + lo*hi captured in fp16 (lo*lo dropped — below fp16 ulp)
+        # cross terms hi*lo + lo*hi captured in fp16 (lo*lo dropped - below fp16 ulp)
         e = e + (self.hi * o.lo + self.lo * o.hi)
         return Paired(*_renorm(p, e))
     __rmul__ = __mul__
@@ -144,7 +144,7 @@ class Paired:
     def dot(self, o: "Paired", axis: int = -1) -> "Paired":
         """Compensated dot / contraction over `axis` (the down_proj / accurate-sum
         case). TwoProduct each element, then accumulate the product AND error streams
-        through `@ ones` — the WIDE matmul accumulator — never reduce_sum.
+        through `@ ones` - the WIDE matmul accumulator - never reduce_sum.
 
         Returns a Paired reduced along `axis` (keepdims). Pure fp16."""
         o = _as_paired(o)
@@ -176,7 +176,7 @@ class Paired:
         """Collapse the pair to its best single-fp16 approximation.
 
         That value is `hi` (the pair invariant is hi = fl(hi+lo), so fl(hi+lo)==hi).
-        We return `hi + lo` — identical in fp16 to `hi` for a normalized pair, but
+        We return `hi + lo` - identical in fp16 to `hi` for a normalized pair, but
         written as an explicit add so the compiler must MATERIALIZE lo into the result
         (a guard against a dead-code pass dropping the lo computation; if elided the
         on-device error would regress to plain fp16)."""
@@ -199,11 +199,11 @@ def _as_paired(o) -> Paired:
 def paired(hi: Tensor, lo: Tensor | None = None) -> Paired:
     """Public constructor for a :class:`Paired` (double-fp16) value.
 
-    `af.paired(x)`       — split an fp16 Tensor `x` into a pair (lo = 0). A genuine
+    `af.paired(x)`       - split an fp16 Tensor `x` into a pair (lo = 0). A genuine
                              fp16 input has no sub-ulp bits to carry, so the win comes
                              from the compensated *ops* capturing each operation's
                              rounding.
-    `af.paired(hi, lo)`  — wrap an already-split pair (hi, lo) that carries sub-ulp
+    `af.paired(hi, lo)`  - wrap an already-split pair (hi, lo) that carries sub-ulp
                              information (e.g. a residual or a value produced upstream
                              in higher working precision). The regime where paired-fp16
                              recovers the most (the CFG/regime-B case).

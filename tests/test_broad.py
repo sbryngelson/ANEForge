@@ -3,7 +3,7 @@
 test_shapes.py sweeps single ops across shapes; this sweeps realistic op
 *compositions* (attention block, MLP/FFN, conv->group_norm->relu residual) and
 batch/leading-dim variation at sizes larger than the existing small nn-block
-cases — where fusion + cross-op numerical interactions compound. Every case is
+cases - where fusion + cross-op numerical interactions compound. Every case is
 validated against a numpy fp32 golden. Folded into ALL_CASES (run_corpus.py).
 """
 from __future__ import annotations
@@ -120,7 +120,7 @@ def _deep_chain_case(D, depth):
     # A deep fp16 chain drifts vs fp32: each layer's activations are re-rounded to
     # fp16 and the gelu/relu nonlinearity compounds it across layers (the wide matmul
     # accumulator only helps WITHIN a matmul, not across them). Measured ~0.15 at
-    # depth 12, D=512 — an fp16-dataplane characteristic, not a bug. This case pins
+    # depth 12, D=512 - an fp16-dataplane characteristic, not a bug. This case pins
     # that the deep fused program compiles + runs within that drift band; a real
     # regression would push it well past 0.2.
     return Case(f"deep_chain_D{D}_d{depth}", "broad", build, ref, [x], tol=0.2)

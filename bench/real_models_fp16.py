@@ -196,7 +196,7 @@ def main() -> int:
     ap.add_argument("--window", type=float, default=6.0)
     args = ap.parse_args()
     print("=" * 80)
-    print(" real_models_fp16 — fp32 vs fp16 GPU baselines vs ANE")
+    print(" real_models_fp16 - fp32 vs fp16 GPU baselines vs ANE")
     print("=" * 80)
     if HAVE_SUDO and args.window > 0:
         wc.sample_idle(3.0)

@@ -467,7 +467,7 @@ def test_cnn_trains_on_subset():
     Xtr = d["Xtr"].astype(np.float32) / 255.0; ytr = d["ytr"].astype(np.int64)
     Xte = d["Xte"].astype(np.float32) / 255.0; yte = d["yte"].astype(np.int64)
     # Cap the full-batch size: aneforge's trainable-conv im2col tensors grow with the
-    # batch, so the COMPILE cost scales with B — B=1000 hangs the M1/h13 compiler for
+    # batch, so the COMPILE cost scales with B - B=1000 hangs the M1/h13 compiler for
     # minutes (it compiles fine on M5). 64 keeps the compile fast and is host-independent
     # (identical on M1 and M5); we trade the headline accuracy for a quick, portable check.
     N = min(Xtr.shape[0], 64)
@@ -672,7 +672,7 @@ def test_charlm_trains_and_predicts():
 def test_charlm_generalizes_on_corpus():
     # Trained on random windows of a structured corpus's TRAIN split, the char-LM
     # predicts held-out VAL windows it never trained on, well above the unigram
-    # baseline — generalization (transferable structure), not memorization.
+    # baseline - generalization (transferable structure), not memorization.
     from collections import Counter
     rng = np.random.default_rng(0)
     animals, verbs, advs = ["cat", "dog", "bird"], ["runs", "jumps", "sleeps"], ["fast", "slow"]
@@ -1131,7 +1131,7 @@ def test_resident_cnn_trains_subset():
     # The resident path compiles ONE program at the fixed batch B below, so its compile
     # cost is governed by B (modest, ~B=100), not the dataset size N. Unlike the
     # full-batch CNN tests, N must stay >= B here (minibatches of B are sampled from N),
-    # so it is not capped — capping it below B would yield zero training steps.
+    # so it is not capped - capping it below B would yield zero training steps.
     N = Xtr.shape[0]
     Xtr_img = Xtr.reshape(N, 1, 28, 28); Xte_img = Xte.reshape(-1, 1, 28, 28)
     K, Cout, k, pk = 10, 8, 3, 2

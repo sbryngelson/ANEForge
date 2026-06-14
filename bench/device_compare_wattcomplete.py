@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Watt-complete cross-device comparison — ANE (aneforge fp16) vs GPU (MLX) vs CPU.
+"""Watt-complete cross-device comparison - ANE (aneforge fp16) vs GPU (MLX) vs CPU.
 
 Companion to ``device_compare.py``. That harness covers raw latency + precision
 across every workload class but measures ENERGY for only two sustained loops. This
@@ -19,14 +19,14 @@ power methodology a reviewer will attack first done right:
   * CONFIDENCE. We report the MEDIAN total-package power AND the spread (CV% over the
     per-sample package totals, plus min/median/p90). A workload whose power CV is large
     is FLAGGED low-confidence rather than reported as a clean number. Implausible reads
-    (e.g. ANE 0 mW *during* an ANE workload — a 100 ms sampling miss) are flagged.
+    (e.g. ANE 0 mW *during* an ANE workload - a 100 ms sampling miss) are flagged.
 
   * STEADY STATE. Each sustained loop runs >= the requested window (default 4 s) after
     a warmup, long enough for stable 100 ms-interval sampling. perf/watt is throughput
     / active_W; for the real models we also report energy-per-inference in mJ.
 
   * ACCURACY ALONGSIDE. Every workload still reports relerr vs an fp32/fp64 numpy
-    reference, presented next to the speed/watt numbers — a speed win at worse accuracy
+    reference, presented next to the speed/watt numbers - a speed win at worse accuracy
     must be visible (GPU is more accurate than the ANE at large K, the ANE matches or
     beats it where the math is well-conditioned).
 
@@ -34,8 +34,8 @@ SCOPE = workload classes where the ANE-vs-GPU choice is REAL:
   1. GEMM at K = 256 (floor) / 1024 (bandwidth) / 4096 (compute)
   2. conv: a single 3x3 + a ResNet-ish 3x3 stack
   3. attention: the ViT self-attention block (vit_demo S=197 shape) + a long-seq S=512
-     shape; both via the in-graph af.mha (decomposed-SDPA fused route) — the FAIR
-     native-attention path. (NOT the subprocess-bridge SDPA — see EXCLUSIONS.)
+     shape; both via the in-graph af.mha (decomposed-SDPA fused route) - the FAIR
+     native-attention path. (NOT the subprocess-bridge SDPA - see EXCLUSIONS.)
   4. norm family: layer_norm, rms_norm, group_norm at representative sizes
   5. scientific kernels: matmul-DFT, a 2D 5-point stencil step, a fixed-iter Jacobi solve
   6. real models: ResNet-18, MiniLM encoder, full ViT-B/16 forward
@@ -44,7 +44,7 @@ EXCLUSIONS (stated honestly): the netplist *bridge* ops (sdpa-bridge / argmax / 
 cost_volume / radius_search / sort via the subprocess dispatch path) are NOT raced
 here. They run 25 ms - 2.5 s in the current subprocess path due to a DISPATCH artifact, not
 silicon speed; racing them against MLX would misrepresent the hardware. They are an
-ANE-EXCLUSIVE CAPABILITY, dispatch-bound in the current path — a separate story, not a
+ANE-EXCLUSIVE CAPABILITY, dispatch-bound in the current path - a separate story, not a
 fair speed race. The native in-graph af.sdpa / af.mha attention route (no subprocess)
 IS fair and is included as the attention class.
 
@@ -93,14 +93,14 @@ if HAVE_MLX:
 _RAIL = {"ane": re.compile(r"ANE Power:\s*([\d.]+)\s*mW"),
          "cpu": re.compile(r"CPU Power:\s*([\d.]+)\s*mW"),
          "gpu": re.compile(r"GPU Power:\s*([\d.]+)\s*mW")}
-# powermetrics prints the OS-computed package total once per sample — use it as the
+# powermetrics prints the OS-computed package total once per sample - use it as the
 # authoritative per-sample package number (avoids the GPU-rail double-print, which
 # appears twice per block and would misalign a hand-summed per-sample total).
 _PKG = re.compile(r"Combined Power \(CPU \+ GPU \+ ANE\):\s*([\d.]+)\s*mW")
 
 WINDOW = 6.0          # sustained-loop seconds (overridden by --quick)
 # powermetrics 'Power' is the AVERAGE over the sample interval. A sub-ms op sampled at
-# 100 ms catches the package mid-duty-cycle (huge CV — the exact artifact a reviewer
+# 100 ms catches the package mid-duty-cycle (huge CV - the exact artifact a reviewer
 # would flag). We integrate over a coarser 500 ms interval so each sample averages
 # many iterations -> the duty cycle is smoothed into a stable mean, and the residual
 # CV is real run-to-run variation, not a phase artifact.
@@ -157,7 +157,7 @@ def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None
     for _ in range(5):              # warmup before the sampling window
         run_once()
     # Size the sampler to the window and keep the workload loop running until the
-    # sampler EXITS (poll), so every integrated sample is captured under load — the
+    # sampler EXITS (poll), so every integrated sample is captured under load - the
     # earlier bug was the loop stopping at `window` while powermetrics kept sampling
     # idle for its remaining count, which manufactured the high CV.
     samples = max(8, int(window / (PM_INTERVAL_MS / 1000.0)))
@@ -190,8 +190,8 @@ def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None
         rail_active[rail] = active
 
     # per-sample OS-combined package total (powermetrics' own "Combined Power" line,
-    # which is the average over each sample interval — not an instantaneous spot read).
-    # CV is computed on the RAW loaded samples (no per-sample clamp — clamping at the
+    # which is the average over each sample interval - not an instantaneous spot read).
+    # CV is computed on the RAW loaded samples (no per-sample clamp - clamping at the
     # idle floor manufactures variance); idle is subtracted ONCE, from the median.
     if pkg:
         arr = np.array(pkg)
@@ -205,7 +205,7 @@ def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None
         out["active_pkg_p90_W"] = max(0.0, float(np.percentile(arr, 90)) - IDLE_PKG) / 1000.0
         out["active_pkg_cv_pct"] = cv          # CV of the loaded package draw
         if cv > 35.0:
-            flags.append(f"loaded-package CV {cv:.0f}% (>35%) — sub-ms op vs sampler, "
+            flags.append(f"loaded-package CV {cv:.0f}% (>35%) - sub-ms op vs sampler, "
                          f"low confidence")
     else:
         out["active_pkg_W"] = float("nan")
@@ -213,7 +213,7 @@ def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None
         flags.append("no powermetrics samples parsed")
 
     if ns and ns < 12:
-        flags.append(f"only {ns} pm samples — short window, treat as indicative")
+        flags.append(f"only {ns} pm samples - short window, treat as indicative")
     out["flags"] = flags
     return out
 
@@ -229,7 +229,7 @@ def _attach_energy(wl: str, device: str, run_once, *, tag: str,
     sane = apw == apw and apw > 0
     # plausibility: an ANE workload reading ~0 on the ANE rail is a sampling miss
     if device == "ANE" and e.get("ane_active_mW", 0.0) < 5.0 and not e["flags"]:
-        e["flags"].append("ANE rail ~0 mW during ANE workload — likely a 100ms sampling miss")
+        e["flags"].append("ANE rail ~0 mW during ANE workload - likely a 100ms sampling miss")
     if flops is not None and sane:
         e["perf_per_W"] = (flops / (e["iter_ms"] / 1e3)) / 1e9 / apw  # GFLOP/s per W
         e["perf_unit"] = "GFLOP/s/W"
@@ -591,7 +591,7 @@ def wl_resnet18():
     wl = "ResNet-18 forward (1x3x224x224)"
     print(f"\n=== {wl} ===", flush=True)
     if not HAVE_TV:
-        note(wl, "skipped — torchvision unavailable.")
+        note(wl, "skipped - torchvision unavailable.")
         return
     rng = np.random.default_rng(6)
     img = rng.standard_normal((1, 3, 224, 224)).astype(np.float32)
@@ -619,7 +619,7 @@ def wl_minilm():
     wl = "MiniLM encoder (1 sentence)"
     print(f"\n=== {wl} ===", flush=True)
     if not HAVE_HF:
-        note(wl, "skipped — transformers unavailable.")
+        note(wl, "skipped - transformers unavailable.")
         return
     NAME = "sentence-transformers/all-MiniLM-L6-v2"
     text = "The Apple Neural Engine is a specialized accelerator for matrix math."
@@ -650,7 +650,7 @@ def wl_vit_b16():
     wl = "ViT-B/16 forward (1x3x224x224, 197 tokens)"
     print(f"\n=== {wl} ===", flush=True)
     if not HAVE_TV:
-        note(wl, "skipped — torchvision unavailable.")
+        note(wl, "skipped - torchvision unavailable.")
         return
     sys.path.insert(0, str(REPO / "examples"))
     import vit_demo as vd
@@ -757,11 +757,11 @@ def main() -> int:
         WINDOW = args.window
 
     print("=" * 100)
-    print(" device_compare_wattcomplete — ANE vs MLX-GPU vs CPU, energy/watt complete")
+    print(" device_compare_wattcomplete - ANE vs MLX-GPU vs CPU, energy/watt complete")
     print("=" * 100)
     print(f" backends: ANE={'yes' if HAVE_ANE else 'NO'}  MLX={'yes' if HAVE_MLX else 'NO'}  "
           f"torchvision={'yes' if HAVE_TV else 'no'}  transformers={'yes' if HAVE_HF else 'no'}")
-    print(f" powermetrics(sudo)={'yes' if HAVE_SUDO else 'NO — energy skipped'}  window={WINDOW}s")
+    print(f" powermetrics(sudo)={'yes' if HAVE_SUDO else 'NO - energy skipped'}  window={WINDOW}s")
 
     if HAVE_SUDO:
         print("\n sampling idle baseline (no workload)...", flush=True)

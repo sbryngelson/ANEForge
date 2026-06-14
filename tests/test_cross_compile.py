@@ -3,7 +3,7 @@ checked from THIS host? (aneforge._compile.cross_compile_check)
 
 The e5rt compiler honors a ``TargetArchitecture`` option, and the compile step (produces
 a library) is separable from the device-load step. So on this M5 we can compile-check a
-graph for h13 (M1) etc. without an actual M1 — the keystone CI lever: validate that the
+graph for h13 (M1) etc. without an actual M1 - the keystone CI lever: validate that the
 op corpus compiles for every chip family on one box. (Numeric correctness still needs the
 real silicon; this is compile-level validation.)
 
@@ -32,7 +32,7 @@ def test_relu_compiles_for_h13():
 
 
 def test_relu_rejected_below_the_mil_floor():
-    # "MIL is only supported for H13+ ANE architectures" — even relu fails on h11/h12
+    # "MIL is only supported for H13+ ANE architectures" - even relu fails on h11/h12
     assert cross_compile_check(af.input((1, 64)).relu(), "h11") is False
     assert cross_compile_check(af.input((1, 64)).relu(), "h12") is False
 
@@ -40,9 +40,9 @@ def test_relu_rejected_below_the_mil_floor():
 @_NEEDS_A15_HOST
 def test_native_sin_follows_the_a15_floor():
     g = af.input((1, 64)).sin()           # RAW native MIL sin (A15+), not the decomposition
-    assert cross_compile_check(g, "h13") is False    # family 2 — rejected
-    assert cross_compile_check(g, "h14") is False    # family 3 — still below A15
-    assert cross_compile_check(g, "h15") is True     # family 4 — native
+    assert cross_compile_check(g, "h13") is False    # family 2 - rejected
+    assert cross_compile_check(g, "h14") is False    # family 3 - still below A15
+    assert cross_compile_check(g, "h15") is True     # family 4 - native
     assert cross_compile_check(g, 5) is True          # M5
 
 
@@ -63,7 +63,7 @@ def test_a17_a18_and_m11_targets_compile():
 
 def test_sd15_group_norm_tiling_cross_compiles():
     # The rank-4 tiled group_norm makes SD-1.5's big maps fit the per-axis cap. 640ch@64/G32
-    # (flat per-group 81920) tiles to D=20/H*W=4096 — under even the A13 16384 cap, so it
+    # (flat per-group 81920) tiles to D=20/H*W=4096 - under even the A13 16384 cap, so it
     # must compile on every family including h13 (M1). 512ch@128/G32 -> H*W=16384 fits too.
     import numpy as np
     for C, H, W, G in [(640, 64, 64, 32), (512, 128, 128, 32)]:
@@ -74,7 +74,7 @@ def test_sd15_group_norm_tiling_cross_compiles():
 
 def test_unknown_arch_raises_not_silently_passes():
     # e5rt silently falls back to the HOST target on an unknown TargetArchitecture
-    # string (measured: 'zzz' compiles), so cross_compile_check must gate the name —
+    # string (measured: 'zzz' compiles), so cross_compile_check must gate the name -
     # otherwise a typo'd CI matrix would validate nothing.
     import pytest
     with pytest.raises(ValueError, match="unknown ANE target arch"):

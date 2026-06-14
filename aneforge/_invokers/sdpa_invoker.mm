@@ -6,7 +6,7 @@
 // 8-byte ANECSDPALayerDesc fused-attention hardware layer.  Agent #41
 // cracked the validator's "Scale is expected to be constant" gate at
 // `ANECTensorDesc.byte[0x39] bit 0` on the 4th tensor (Scale).  Apple's
-// MIL→ANECIR translator sets that bit by lowering Scale as a MIL const
+// MIL->ANECIR translator sets that bit by lowering Scale as a MIL const
 // op.  When we author the netplist directly we set the bit by binding
 // Scale through the `Constants` array (the netplist's "tensor is
 // constant" mechanism).
@@ -207,7 +207,7 @@ static NSArray *indices_for_count(NSUInteger count) {
 }
 
 // -------------------------------------------------------------------------
-// CLI parser (deliberately tiny — no <argp.h>).
+// CLI parser (deliberately tiny - no <argp.h>).
 
 struct NamedFile {
   std::string symbol;
