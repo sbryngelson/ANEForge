@@ -10,10 +10,15 @@ def _cos(a, b):
 
 
 def _eval(t):
-    """Compile a graph whose only inputs carry attrs['value'] and eval on the ANE."""
+    """Compile a graph whose only inputs carry attrs['value'], eval on the ANE, and
+    release the program. The result is copied out first, so nothing dangles; releasing
+    frees the ANE program promptly rather than at interpreter teardown, which keeps the
+    forked suite from leaning on the shared device's lazy per-PID reclamation."""
     net = af.compile(t)
     feed = [s.attrs["value"].astype(np.float16) for s in net._input_tensors]
-    return np.asarray(net(*feed)), net
+    out = np.asarray(net(*feed)).copy()
+    net.release()
+    return out
 
 
 def test_conv2d_pad_forward_shape():
@@ -45,8 +50,8 @@ def test_conv2d_pad_grad_matches_torch():
     # comparison is meaningful while still exercising the padded backward + a mean.
     loss = (y * y).mean((0,))
     grads = agrad.backward(loss, [x, w], loss_scale=1.0)
-    gx_ane, _ = _eval(grads[x])
-    gw_ane, _ = _eval(grads[w])
+    gx_ane = _eval(grads[x])
+    gw_ane = _eval(grads[w])
 
     xt = torch.tensor(x_np, requires_grad=True)
     wt = torch.tensor(w_np, requires_grad=True)
@@ -75,7 +80,7 @@ def test_group_norm_train_grad_matches_torch():
     y = group_norm_train(x, gp, bp, G)
     loss = (y * y).mean(tuple(range(4)))
     grads = agrad.backward(loss, [x, gp, bp], loss_scale=1.0)
-    gx, _ = _eval(grads[x]); gg, _ = _eval(grads[gp]); gb, _ = _eval(grads[bp])
+    gx = _eval(grads[x]); gg = _eval(grads[gp]); gb = _eval(grads[bp])
 
     xt = torch.tensor(x_np, requires_grad=True)
     gt = torch.tensor(g_np.reshape(C), requires_grad=True)

@@ -66,7 +66,6 @@ def test_conv_int8_emits_affine_dequantize():
     em.weight("c_w", W, allow_int8=True, int8=None, allow_int4=True, allow_sparse=True)
     mil = "\n".join(em.lines)
     assert "constexpr_affine_dequantize" in mil
-    assert "const()" not in mil.split("constexpr_affine_dequantize")[0] or True  # branch took int8
 
 
 def test_conv_int8_halves_weight_bytes():

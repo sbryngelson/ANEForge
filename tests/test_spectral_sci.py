@@ -51,11 +51,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # tests/ -> import _c
 from _corpus import Case, eval_case  # noqa: E402
 import aneforge as af  # noqa: E402
 
-try:
-    HAVE_SCIPY = True
-except Exception:  # noqa: BLE001
-    HAVE_SCIPY = False
-
 rng = np.random.default_rng(20260529)
 
 

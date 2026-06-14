@@ -247,15 +247,3 @@ def numpy_reference(
     if scale is None:
         scale = 1.0 / math.sqrt(Q.shape[-1])
     return _numpy_reference(Q, K, V, float(scale))
-
-
-def manual_chain_reference(
-    Q: np.ndarray, K: np.ndarray, V: np.ndarray, scale: Optional[float] = None
-) -> np.ndarray:
-    """Reference computed as `matmul + softmax + matmul` chain.
-
-    The speed baseline vs the fused path, computed here in numpy fp32; for the
-    real ANE-resident chain you would invoke `ane.matmul`, `ane.softmax`,
-    `ane.matmul` against the same hardware.
-    """
-    return numpy_reference(Q, K, V, scale)

@@ -817,7 +817,7 @@ def precision_risk(out, verbose: bool = False) -> dict:
             continue
         # (b) CFG-style subtract - candidate cancellation (data-dependent, can't
         #     confirm structurally). Flag sub of two non-trivial activations.
-        if t.op == "sub" and len(t.srcs) == 2 and all(s.op != "input" or True for s in t.srcs):
+        if t.op == "sub" and len(t.srcs) == 2:
             big = _elems(t.shape) >= 64    # a vector/tensor sub (not a scalar bias)
             both_live = all(s.op not in ("muls",) for s in t.srcs)
             if big and both_live:

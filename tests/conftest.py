@@ -16,8 +16,17 @@ aneforge):
     this is set.
   - KMP_DUPLICATE_LIB_OK: tolerate the duplicate OpenMP runtime that numpy/the dylib
     can both pull in.
+  - OMP/MKL/OPENBLAS/VECLIB thread counts = 1: --forked calls os.fork() in a process
+    where numpy/torch may have started an OpenMP worker-thread pool. fork() does not
+    copy those worker threads, so the child inherits a broken pool, and the next
+    OpenMP op (e.g. torch CPU autograd in the grad-vs-torch CIFAR tests) faults inside
+    libomp (__kmp_fork_barrier) - a SIGSEGV that surfaced only late in the forked
+    suite. One OpenMP thread means there is no pool to break, so the fork is safe.
 """
 import os
 
 os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+for _thread_var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                    "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_thread_var, "1")

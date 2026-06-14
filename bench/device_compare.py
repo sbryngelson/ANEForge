@@ -75,10 +75,6 @@ try:
 except Exception as e:  # pragma: no cover
     MLX_ERR = f"{type(e).__name__}: {e}"
 try:
-    HAVE_TORCH = True
-except Exception:
-    pass
-try:
     import torchvision  # noqa: F401
     HAVE_TV = True
 except Exception:
