@@ -16,10 +16,6 @@ Non-obvious conventions:
        are identity-copied.  Use KernelChannel = C for full-tensor LRN; C must
        exceed KernelChannel-as-window only spatially - empirically C ==
        KernelChannel gives full coverage (C=5/KC=5).
-
-Run:
-    PYTHONPATH=the reverse-engineering corpus \
-        python3 -m aneforge._bridges.lrn_fused
 """
 
 from __future__ import annotations

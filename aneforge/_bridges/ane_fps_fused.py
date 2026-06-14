@@ -13,10 +13,6 @@ Schema (accepted unit dictionary)::
      "OutputChannels": 3,
      "OutputType": "Float16",
      "Params": {"CentroidCount": k, "DistanceMetric": "L1" | "L2"}}
-
-Run::
-
-    python3 -m aneforge._bridges.ane_fps_fused
 """
 
 from __future__ import annotations

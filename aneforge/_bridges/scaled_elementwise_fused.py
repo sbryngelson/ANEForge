@@ -4,10 +4,6 @@
 scalar scale factor:   y = scale * (x OP z).  `Params.Type` selects the
 elementwise op (Add / Mult / Sub / ...) and `Params.Scale` is a fp16 bit
 pattern (use `fp16_bits`).
-
-Run:
-    PYTHONPATH=the reverse-engineering corpus \
-        python3 -m aneforge._bridges.scaled_elementwise_fused
 """
 
 from __future__ import annotations
