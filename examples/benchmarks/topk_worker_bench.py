@@ -52,9 +52,7 @@ def main():
         # Drive the worker through eval_batch (all C rows in ONE round-trip) to
         # measure the batched-eval path directly.
         from aneforge import _netplist_worker as nw
-        bridge = next(p / "the reverse-engineering corpus" for p in Path(__file__).resolve().parents
-                      if (p / "the reverse-engineering corpus").exists())
-        worker, _ = nw.build_worker("topk", (C, W), {"k": k, "largest": True}, bridge)
+        worker, _ = nw.build_worker("topk", (C, W), {"k": k, "largest": True})
         xa = np.ascontiguousarray(xt.reshape(C, W))
 
         def call():

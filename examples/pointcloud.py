@@ -8,8 +8,8 @@ PointNet++-style set-abstraction step:
     2. RadiusSearch           (ane_radius_search_fused)  membership in an L2 ball per centroid
     3. CrossProduct           (ane_cross_product_fused)  surface normal from two edge vectors
 
-These layers aren't in the aneforge frontend yet, so the demo calls the the reverse-engineering corpus
-bridges directly. Each stage is validated against a numpy reference (exact for
+These layers aren't in the aneforge frontend yet, so the demo calls the in-package
+``aneforge._bridges`` modules directly. Each stage is validated against a numpy reference (exact for
 the integer-discretised FPS/RadiusSearch, fp16-tolerance for the cross product).
 
 Conventions worth stating honestly:
