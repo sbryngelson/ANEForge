@@ -25,7 +25,7 @@ device_compare_wattcomplete.
 
 Run from repo root (energy needs passwordless sudo for powermetrics):
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/gemv_bandwidth_sweep.py
+    PYTHONPATH=. python3 bench/gemv_bandwidth_sweep.py
 
 Writes bench/results/gemv_bandwidth_sweep_results.json. --quick caps sizes.
 """

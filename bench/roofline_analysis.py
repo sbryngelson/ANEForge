@@ -28,7 +28,7 @@ conv block achieved GFLOP/s on the ANE, a GEMV decode point). GEMM/conv/bandwidt
 are READ from the existing JSONs.
 
 Run from repo root:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/roofline_analysis.py
+    PYTHONPATH=. python3 bench/roofline_analysis.py
     # --no-measure  : skip the gap measurements (uses analytic AIxBW placeholders, labeled)
 """
 from __future__ import annotations

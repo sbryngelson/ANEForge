@@ -6,7 +6,7 @@ S, measuring embeds/sec + power, so encoder serving can be compared ANE-vs-GPU o
 both throughput and efficiency (the LLM-decode question, asked for the workload the
 ANE should actually win).
 
-    KMP_DUPLICATE_LIB_OK=TRUE python3 examples/benchmarks/bench_encoder_gpu.py
+    python3 examples/benchmarks/bench_encoder_gpu.py
 """
 import os, re, subprocess, sys, time
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")

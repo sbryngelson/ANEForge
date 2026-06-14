@@ -38,7 +38,7 @@ We reuse the shared harness (Case, eval_case) verbatim and keep the tag side-tab
 spectral verdict block in our own runner, so we don't touch _corpus.py.
 
 Run:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/test_spectral_sci.py
+    PYTHONPATH=. python3 tests/test_spectral_sci.py
 """
 from __future__ import annotations
 

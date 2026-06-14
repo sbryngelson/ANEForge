@@ -7,7 +7,7 @@ SHAPES (tall / wide / square) for the SVD/QR/LU family - the wide case is what h
 ``svd`` Gram-matrix bug (it only ever formed A^T A, fine for tall A, a huge graph for wide
 A). Sizes are kept small: several kernels compile a deep unrolled graph.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. .venv/bin/python -m pytest tests/test_linalg.py -q
+Run: PYTHONPATH=. .venv/bin/python -m pytest tests/test_linalg.py -q
 """
 from __future__ import annotations
 import os

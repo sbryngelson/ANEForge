@@ -64,7 +64,7 @@ API (importable as `from aneforge.linalg import conjugate_gradient, qr, eigh, ..
     pca(X, k, ...)                            - randomized_svd of centered data
 
 Run the self-test:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 aneforge/linalg.py
+    PYTHONPATH=. python3 aneforge/linalg.py
 """
 from __future__ import annotations
 

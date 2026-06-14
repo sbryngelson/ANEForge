@@ -6,7 +6,7 @@ the ANE per-axis cap. This lets SD-1.5's 640ch@64 and 512ch@128 maps compile + r
 the flattened extent (81920 / 262144) overflowed. These tests pin small-shape correctness,
 big-shape correctness vs fp32, and the relaxed construction guard.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_group_norm_tiling.py -q
+    PYTHONPATH=. python3 -m pytest tests/test_group_norm_tiling.py -q
 """
 from __future__ import annotations
 

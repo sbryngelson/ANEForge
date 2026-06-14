@@ -20,7 +20,7 @@ predicted token relative to fp16/fp32 on identical weights. A single forward (no
 sustained loop) keeps it fast and avoids the decode-loop's session-state issues.
 
 Run from repo root:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/decode_int8_accuracy.py
+    PYTHONPATH=. python3 bench/decode_int8_accuracy.py
 Writes bench/results/decode_int8_accuracy.json.
 """
 from __future__ import annotations

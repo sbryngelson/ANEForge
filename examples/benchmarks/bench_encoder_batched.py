@@ -9,7 +9,7 @@ Reuses the weights loaded by af.Encoder; builds a batched [B,S,D] encoder graph 
 fuses it into one program per (B,S). Correctness is checked against the
 transformers fp32 reference; throughput is reported vs B.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. \\
+    PYTHONPATH=. \\
         python3 examples/benchmarks/bench_encoder_batched.py
 """
 import os, sys, time

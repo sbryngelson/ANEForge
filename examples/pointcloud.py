@@ -18,7 +18,7 @@ Conventions worth stating honestly:
     * RadiusSearch returns a [points x centroids] uint8 membership matrix
       (1 = inside the L2 ball); we transpose to [centroids x points] for grouping.
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. \\
+    PYTHONPATH=. \\
         python3 examples/pointcloud.py
 """
 import sys

@@ -32,9 +32,9 @@ cd "$REPO" || exit 1
 # real exit code (for CI); the default runs the full paper-artifact reproduction.
 MODE="${1:-all}"
 
-# Most tools want the repo root importable and OpenMP duplicate-lib tolerated.
+# Most tools want the repo root importable (aneforge tolerates the duplicate
+# OpenMP runtime itself, on import).
 export PYTHONPATH="$REPO"
-export KMP_DUPLICATE_LIB_OK=TRUE
 
 PASS=0; FAIL=0
 section() { printf '\n\033[1m========== %s ==========\033[0m\n' "$1"; }
@@ -79,19 +79,19 @@ section "§ Single-stream device map — ANE vs GPU vs CPU [needs sudo + MLX]"
 # CLAIM (Table 'device map', Fig 1): latency, fp16 relerr, idle-subtracted
 #        per-rail watts, perf/watt across the workload classes.
 run "Device map (wattcomplete; powermetrics per-rail)" \
-  "sudo -E env PYTHONPATH=$REPO KMP_DUPLICATE_LIB_OK=TRUE python3 bench/device_compare_wattcomplete.py --window 6"
+  "sudo -E env PYTHONPATH=$REPO python3 bench/device_compare_wattcomplete.py --window 6"
 
 # -----------------------------------------------------------------------------
 section "§ Compute / bandwidth / serving sweeps [needs sudo + MLX]"
 # CLAIM (Fig 2, compute peaks): saturation ceilings + large-square-GEMM falloff.
 run "Saturation sweep" \
-  "sudo -E env PYTHONPATH=$REPO KMP_DUPLICATE_LIB_OK=TRUE python3 bench/device_saturation_sweep.py"
+  "sudo -E env PYTHONPATH=$REPO python3 bench/device_saturation_sweep.py"
 # CLAIM (Fig 3, bandwidth ceiling): the two effective bandwidths + roofline.
 run "Bandwidth roofline sweep" \
-  "sudo -E env PYTHONPATH=$REPO KMP_DUPLICATE_LIB_OK=TRUE python3 bench/device_bandwidth_roofline.py --window 6"
+  "sudo -E env PYTHONPATH=$REPO python3 bench/device_bandwidth_roofline.py --window 6"
 # CLAIM (Fig 5, crossover): batched-serving throughput + throughput/watt.
 run "Serving sweep (batched multi-stream)" \
-  "sudo -E env PYTHONPATH=$REPO KMP_DUPLICATE_LIB_OK=TRUE python3 bench/device_serving_sweep.py --window 5"
+  "sudo -E env PYTHONPATH=$REPO python3 bench/device_serving_sweep.py --window 5"
 
 # -----------------------------------------------------------------------------
 section "§ Roofline synthesis (reads the saturation + bandwidth JSONs above)"
@@ -102,11 +102,11 @@ run "Roofline analysis" \
 # -----------------------------------------------------------------------------
 section "§ Appendix claims: fused-GPU baseline, weight stream, decode [needs sudo]"
 run "Fused-GPU baseline" \
-  "sudo -E env PYTHONPATH=$REPO KMP_DUPLICATE_LIB_OK=TRUE python3 bench/fused_gpu_baseline.py"
+  "sudo -E env PYTHONPATH=$REPO python3 bench/fused_gpu_baseline.py"
 run "Weight-stream (GEMV-K) sweep" \
-  "sudo -E env PYTHONPATH=$REPO KMP_DUPLICATE_LIB_OK=TRUE python3 bench/gemv_bandwidth_sweep.py"
+  "sudo -E env PYTHONPATH=$REPO python3 bench/gemv_bandwidth_sweep.py"
 run "End-to-end LLM decode sweep" \
-  "sudo -E env PYTHONPATH=$REPO KMP_DUPLICATE_LIB_OK=TRUE python3 bench/decode_measurement.py"
+  "sudo -E env PYTHONPATH=$REPO python3 bench/decode_measurement.py"
 
 # -----------------------------------------------------------------------------
 section "§ Compressed-weight streaming (latency only, no sudo) [needs MLX]"

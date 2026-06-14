@@ -6,7 +6,7 @@ elementwise op (Add / Mult / Sub / ...) and `Params.Scale` is a fp16 bit
 pattern (use `fp16_bits`).
 
 Run:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=the reverse-engineering corpus \
+    PYTHONPATH=the reverse-engineering corpus \
         python3 -m aneforge._bridges.scaled_elementwise_fused
 """
 

@@ -8,7 +8,7 @@ failures; no failure-count cap is needed.
 These are pure unit tests (no ANE): a fake clock replaces _monotonic/_sleep so no
 real time passes.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_compile_breaker.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_compile_breaker.py -q
 """
 import warnings
 

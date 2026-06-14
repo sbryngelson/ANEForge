@@ -9,7 +9,7 @@ the L1 matching cost for each disparity `d in [0, R]` and position `x in [0, Wa)
 returning `(R+1)` disparity planes each of width `Wa`.
 
 Run:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=the reverse-engineering corpus python3 \
+    PYTHONPATH=the reverse-engineering corpus python3 \
         aneforge/_bridges/ane_cost_volume_fused.py
 """
 

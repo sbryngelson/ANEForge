@@ -16,7 +16,7 @@ style as test_compile_breaker.py):
      RuntimeError naming the file (a broken installation), not a KeyError blaming
      the arch name.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_tune_guards.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_tune_guards.py -q
 """
 import warnings
 

@@ -49,7 +49,7 @@ ANE's watt advantage persists past its throughput advantage). Printed explicitly
 
 Run from repo root (energy needs passwordless sudo for powermetrics)::
 
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 bench/device_serving_sweep.py
+    PYTHONPATH=. python3 bench/device_serving_sweep.py
 
 Writes bench/results/device_serving_sweep_results.json. --quick = short window;
 --batches "1,4,16" overrides the sweep; --window N overrides the per-loop seconds.

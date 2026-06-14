@@ -18,7 +18,7 @@ Non-obvious conventions:
        KernelChannel gives full coverage (C=5/KC=5).
 
 Run:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=the reverse-engineering corpus \
+    PYTHONPATH=the reverse-engineering corpus \
         python3 -m aneforge._bridges.lrn_fused
 """
 

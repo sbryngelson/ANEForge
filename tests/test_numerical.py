@@ -25,7 +25,7 @@ feasibility tags are kept in a side table keyed by case name and printed by our
 own runner, so we don't touch _corpus.py.
 
 Run:
-    KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 tests/test_numerical.py
+    PYTHONPATH=. python3 tests/test_numerical.py
 """
 from __future__ import annotations
 

@@ -10,7 +10,7 @@ real silicon; this is compile-level validation.)
 These tests reproduce the measured op-floor ladder through aneforge's own dylib:
 relu needs H13+ (the MIL hard floor); native sin/cos need A15+.
 
-Run: KMP_DUPLICATE_LIB_OK=TRUE PYTHONPATH=. python3 -m pytest tests/test_cross_compile.py -q
+Run: PYTHONPATH=. python3 -m pytest tests/test_cross_compile.py -q
 """
 import pytest
 import aneforge as af
