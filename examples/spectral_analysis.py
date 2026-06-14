@@ -100,14 +100,14 @@ def main():
     print(f"DFT-as-matmul compiled: {prog.n_ops} ANE ops (2 twiddle GEMMs + |.| map), "
           f"N={N}, fs={fs:.0f} Hz")
 
-    # ---- magnitude spectrum on the ANE ----
+    # magnitude spectrum on the ANE
     mag_ane = prog(sig.reshape(1, N).astype(np.float16))[0]
     mag_ref = ref_mag(sig, N)                                # numpy exact reference
 
     relerr = float(np.linalg.norm(mag_ane - mag_ref) / np.linalg.norm(mag_ref))
     print(f"  magnitude spectrum relerr vs numpy.fft: {relerr:.3e}  (fp16-clean)")
 
-    # ---- recover the planted tone frequencies from ANE spectrum peaks ----
+    # recover the planted tone frequencies from ANE spectrum peaks
     half = N // 2
     freqs = np.arange(half) * fs / N
     spec = mag_ane[:half].copy()

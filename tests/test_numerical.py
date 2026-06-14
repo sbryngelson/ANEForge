@@ -1,16 +1,16 @@
-"""Numerical-computing corpus for aneforge — the "arbitrary sequences of ops" probe.
+"""Numerical-computing corpus for aneforge - the "arbitrary sequences of ops" probe.
 
 Two halves:
 
-1. KERNELS — iterative / composed numerical kernels (power iteration, a CG step,
+1. KERNELS - iterative / composed numerical kernels (power iteration, a CG step,
    Horner polynomial eval, a PDE stencil, n-body normals, a Monte-Carlo reduction,
    a Gram/SYRK product). Each is built as an aneforge graph, compiled + run on the
    ANE, and validated against a numpy fp32 golden at an fp16-appropriate tolerance.
-   Tolerances are LOOSER where iteration compounds rounding — and where they are
+   Tolerances are LOOSER where iteration compounds rounding - and where they are
    loosened, the case docstring SAYS so and distinguishes "fp16 compounding" from
    "wrong" (a wrong kernel blows past any sane tol; compounding stays O(few %)).
 
-2. LAPACK FEASIBILITY PROBES — honest corner probes (QR/Cholesky-style
+2. LAPACK FEASIBILITY PROBES - honest corner probes (QR/Cholesky-style
    orthonormalization, triangular back-substitution, a small linear solve). These
    ask "what classical linear algebra actually fits the ANE's fp16 feed-forward
    dataflow?" They are tagged works / arch-limited / fp16-unstable with evidence
@@ -73,7 +73,7 @@ def _power_iteration():
     normalize, and the reference does the *same* iteration in numpy fp32, so the two
     diverge slightly per step (the fp16 iterate and the fp32 iterate are genuinely
     different points). With K=4 and a well-separated spectrum the iterate direction
-    is stable, so we use tol=0.05 (5%) — generous vs the synthetic 2%, justified by
+    is stable, so we use tol=0.05 (5%) - generous vs the synthetic 2%, justified by
     compounding, NOT to hide a bug. A wrong gemv would give ~O(1) direction error.
     """
     N, K = 16, 4
@@ -160,7 +160,7 @@ def _horner():
     Horner recurrence becomes ONE fused e5rt program, no graph cut).
 
     cost: FLOOR / FUSION (tiny tensors, many dependent fused ops; dispatch-floor
-    bound, not compute/bandwidth bound — the point is fusing a deep dependency
+    bound, not compute/bandwidth bound - the point is fusing a deep dependency
     chain into a single program).
     feasibility: WORKS.
 
@@ -179,7 +179,7 @@ def _horner():
 
     def build(xt, ct):
         # ct is [1, D+1]; slice each coeff as a [1,1] broadcastable constant via mean
-        # over a 1-wide window is overkill — use dynamic_slice-free indexing by
+        # over a 1-wide window is overkill - use dynamic_slice-free indexing by
         # building per-coeff [1,1] tensors through reshape of single columns.
         # Simpler: feed coeffs already split is not possible (one input array), so we
         # use reduce over a one-hot... too heavy. We instead express Horner with the
@@ -227,7 +227,7 @@ def _stencil_laplacian():
 
     A single explicit-Euler diffusion step u <- u + dt*Laplacian(u) implemented as
     conv with the [[0,1,0],[1,-4,1],[0,1,0]] stencil (+ identity*dt folded into the
-    kernel). tol=0.02 — it's one conv, the wide accumulator handles the small
+    kernel). tol=0.02 - it's one conv, the wide accumulator handles the small
     integer-weight sum cleanly.
     """
     dt = 0.1
@@ -260,7 +260,7 @@ def _nbody_normals():
     """Surface normal from two edge vectors via the cracked cross_product bridge:
     n = cross(e1, e2), then L2-normalize on the host side of the reference.
 
-    cost: MIXED (the cross_product is a native ANE sub-program — a graph CUT — so
+    cost: MIXED (the cross_product is a native ANE sub-program - a graph CUT - so
     this is a bridge op surrounded by nothing; "mixed" flags the cut).
     feasibility: WORKS (cross_product is RE-recovered and runtime-proven).
 
@@ -319,7 +319,7 @@ def _lrn_local():
     """Cross-channel local response normalization (classic AlexNet LRN), the native
     ANE LocalResponseNormalization layer (a graph CUT, like cross_product).
 
-    cost: MIXED (cut) — one native sub-program, no surrounding fusion.
+    cost: MIXED (cut) - one native sub-program, no surrounding fusion.
     feasibility: WORKS.
 
     THE BUG THIS GUARDS (found by the fuzzer): af.lrn was DOCUMENTED as a
@@ -386,7 +386,7 @@ def _gram_syrk():
                   "compute", "works")
 
 
-# LAPACK FEASIBILITY PROBES — classify honestly, do not fake a pass.
+# LAPACK FEASIBILITY PROBES - classify honestly, do not fake a pass.
 #
 # Background (from the reverse-engineering corpus RE of the MatrixDecomposition layer):
 #   * aneforge's __all__ exposes NO decomposition op. The hardware
@@ -398,8 +398,8 @@ def _gram_syrk():
 #     composite evidence is absent"). So a *usable factorization* (extract Q/R/L)
 #     is NOT reachable from the public frontend or the cracked bridge today.
 #
-# We therefore probe what IS reachable — building factorizations out of the
-# available feed-forward ops — and tag each corner with evidence.
+# We therefore probe what IS reachable - building factorizations out of the
+# available feed-forward ops - and tag each corner with evidence.
 
 def _qr_givens_probe():
     """QR via explicit Givens rotations on a small fixed matrix.
@@ -455,7 +455,7 @@ def _cholesky_probe():
     every later entry depends on earlier-computed L entries (a forward data
     dependence whose length == matrix dimension). On a feed-forward dataflow engine
     with no in-graph scalar feedback, the only way to express it is to fully unroll
-    the recurrence for a FIXED size — which we attempt here for N=3 (the smallest
+    the recurrence for a FIXED size - which we attempt here for N=3 (the smallest
     non-trivial case) to see whether the unrolled chain compiles and is numerically
     usable.
 
@@ -464,11 +464,11 @@ def _cholesky_probe():
 
     VERDICT (confirmed by the run + a condition-number sweep, see module note):
     the unrolled 3x3 chain compiles and passes at relerr < 1e-3, and is
-    SURPRISINGLY fp16-robust — a sweep to cond~1e4 keeps relerr < 1% (the wide
+    SURPRISINGLY fp16-robust - a sweep to cond~1e4 keeps relerr < 1% (the wide
     ANE accumulator absorbs the sqrt/div re-rounding). So fp16 is NOT the wall.
     The class verdict is ARCH-LIMITED: Cholesky does NOT generalize to a
     data-sized solver because the recurrence is strictly sequential and the engine
-    has no in-graph loop or scalar feedback — every size N needs a fresh per-N
+    has no in-graph loop or scalar feedback - every size N needs a fresh per-N
     static unroll, and the native MatrixDecomposition composite is
     not_currently_callable. tol=0.06.
     """
@@ -554,7 +554,7 @@ def _linear_solve_probe():
     """Small dense linear solve A x = b via the explicit 2x2 closed form.
 
     For a feed-forward engine, a *general* LU solve needs pivoting + a serial
-    elimination loop (data-dependent control flow + sequential dependence) — not
+    elimination loop (data-dependent control flow + sequential dependence) - not
     expressible. The only solves that fit are the FIXED closed forms (Cramer /
     adjugate) for tiny N. We probe the 2x2 closed form:
         x = (1/det) [[ d, -b], [-c, a]] @ rhs,  det = a d - b c.
@@ -563,7 +563,7 @@ def _linear_solve_probe():
     arithmetic), but a general N solve is arch-limited (needs pivoting + a serial
     elimination loop the engine cannot express). A near-singularity sweep (cond up
     to ~1.3e3) stayed fp16-clean here because det cancels between numerator and
-    denominator, so even 1/det is robust in practice — the ceiling is "tiny
+    denominator, so even 1/det is robust in practice - the ceiling is "tiny
     closed-form only," set by the missing loop, not by fp16. tol=0.05.
     """
     A2 = (rng.standard_normal((2, 2)).astype(np.float32) * 0.5)
@@ -619,7 +619,7 @@ def run_numerical(cases, verbose: bool = True):
     and a LAPACK-probe verdict block. Returns (results, exit_code).
 
     Gate: PASS and XFAIL are green; FAIL, ERROR, XPASS are red. The feasibility
-    tag is reported alongside but does NOT change the gate — a probe tagged
+    tag is reported alongside but does NOT change the gate - a probe tagged
     arch-limited still "passes" if its tiny fixed-N instance is numerically correct;
     the tag carries the *generalization* verdict.
     """
@@ -688,7 +688,7 @@ def run_numerical(cases, verbose: bool = True):
     print("      and the frontend exposes no decomposition/solve op at all.")
     print("    fp16 is NOT the wall: the unrolled tiny-N factorizations pass at")
     print("      relerr < 1e-3, and condition-number sweeps (Cholesky to cond~1e4,")
-    print("      2x2 solve to cond~1.3e3) stay < 1% — the wide accumulator absorbs the")
+    print("      2x2 solve to cond~1.3e3) stay < 1% - the wide accumulator absorbs the")
     print("      sequential sqrt/div re-rounding. The ceiling is ARCHITECTURAL (the")
     print("      missing loop), not numerical. (Only true det->0 singularity would")
     print("      break it, and that breaks fp32 too.)")

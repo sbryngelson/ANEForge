@@ -1,4 +1,4 @@
-"""Adversarial / corner cases for the aneforge corpus — the part an optimizer is
+"""Adversarial / corner cases for the aneforge corpus - the part an optimizer is
 most likely to break:
 
   - extreme-but-legal shapes (axis sizes near 1 and large, within [1, 65536]),
@@ -102,7 +102,7 @@ def _deep_chain():
     # 32 ops fused into ONE program. The sin/cos/tanh cycle (interleaved with a
     # *1.4 rescale) is magnitude-PRESERVING: values stay O(1) so relerr stays a
     # meaningful metric. (A contractive chain would collapse into the fp16
-    # denormal floor and make relative error explode — that is a test-design
+    # denormal floor and make relative error explode - that is a test-design
     # trap, not an aneforge bug.)
     x = f16(4, 16, scale=1.0)
     n = 32

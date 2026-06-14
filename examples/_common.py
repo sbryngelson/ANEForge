@@ -8,6 +8,7 @@ self-contained, copy-pasteable example.
 """
 import os
 import sys
+import warnings
 from pathlib import Path
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -16,6 +17,51 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # repo root -> im
 import numpy as np
 
 f16 = np.float16
+
+# Section headers print in green - the conventional INFO colour every logging
+# colouriser (colorlog, coloredlogs, rich) uses for ordinary output. tty-guarded
+# and NO_COLOR-aware, so piped output or redirected files stay plain text.
+_COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+_GREEN, _YELLOW, _BOLD, _DIM, _RESET = "\033[32m", "\033[33m", "\033[1m", "\033[2m", "\033[0m"
+
+
+def head(msg=""):
+    """Print a section header in bold green (use instead of a `'=' * N` rule)."""
+    print(f"{_BOLD}{_GREEN}{msg}{_RESET}" if _COLOR and msg else msg)
+
+
+def aside(msg=""):
+    """Print an explanatory aside, dimmed so it recedes behind the results.
+    (Re-dims each line so the colour survives line breaks in any terminal.)"""
+    if _COLOR and msg:
+        print("\n".join(f"{_DIM}{ln}{_RESET}" for ln in str(msg).split("\n")))
+    else:
+        print(msg)
+
+
+# Colour warnings yellow - the conventional WARNING level colour, paired with the
+# green INFO headers above - and show each distinct warning ONCE per run. The
+# examples compile at many call sites, so aneforge's DispatchFloorWarning would
+# otherwise repeat its whole paragraph per site; we collapse identical (category,
+# text) repeats here at the render step, leaving the library's filters untouched.
+_warned: set = set()
+
+
+def _colour_showwarning(message, category, filename, lineno, file=None, line=None):
+    key = (category, str(message))
+    if key in _warned:
+        return
+    _warned.add(key)
+    stream = file if file is not None else sys.stderr
+    text = warnings.formatwarning(message, category, filename, lineno, line)
+    try:
+        tty = stream.isatty()
+    except (AttributeError, ValueError):
+        tty = False
+    stream.write(f"{_YELLOW}{text}{_RESET}" if tty and not os.environ.get("NO_COLOR") else text)
+
+
+warnings.showwarning = _colour_showwarning
 
 
 def relerr(a, b):

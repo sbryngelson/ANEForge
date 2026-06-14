@@ -1,8 +1,8 @@
-"""aneforge — a clean graph→compile→run frontend for the Apple Neural Engine.
+"""aneforge - a clean graph->compile->run frontend for the Apple Neural Engine.
 
 Build a small tensor graph, `compile` it into ONE fused e5rt program, and run it
 on the ANE. Fusing is the point: the ANE penalises many tiny dispatches, so a whole
-subgraph becomes a single program. Weights pack automatically into one BLOBFILE —
+subgraph becomes a single program. Weights pack automatically into one BLOBFILE -
 fp16, or per-channel int8 *streamed* (dequantised during the tile DMA) when
 `int8=True`.
 
@@ -30,7 +30,7 @@ Op surface:
   - nn helpers: mha, cross_attention, geglu
 
 Two op routes. Most ops are FUSED e5rt-MIL: they lower to MIL and fuse into ONE
-program (no graph cut). A second family are NETPLIST-BRIDGE ops — native Path-A
+program (no graph cut). A second family are NETPLIST-BRIDGE ops - native Path-A
 hardware layers Apple's MIL frontend never emits (sdpa, argmax/topk/sort,
 cross_product/cross_correlation/cost_volume, fps/radius_search, minmax_norm/lrn,
 the space/channel/batch rearranges, flatten/input_view/dynamic_slice/
@@ -43,12 +43,12 @@ port and dequantises it on the engine (`cast -> scale -> bias`), so raw camera /
 decoded-video bytes feed the model directly (host skips the float-convert/repack);
 `scale`/`bias` are scalar or per-channel (length-C, broadcast over NCHW).
 
-Pretrained loaders: `af.load("…/all-MiniLM-L6-v2")` (sentence encoder),
+Pretrained loaders: `af.load(".../all-MiniLM-L6-v2")` (sentence encoder),
 `af.load_resnet18()` (ImageNet classifier).
 
 Design rules: compute is fp16 only (fp32/int32/bf16
 rejected); reductions/matmuls use a WIDE (fp32-class) accumulator fed by radix-4
-fp16-rounded input tiles — representable sums are near-exact (a sum/dot of 16384 ones is
+fp16-rounded input tiles - representable sums are near-exact (a sum/dot of 16384 ones is
 bit-exact, where naive fp16 would stall at ~2048), and a +1 survives next to a 16000
 partial that an fp16 running sum would swallow. The fp16 limit is at the products and the
 I/O cast, not the running sum, so cancellation-heavy reductions still lose precision;
@@ -58,7 +58,7 @@ chooses weight encoding: None (fp16, default), 'int8' (per-channel), 'int4'
 `compress_atol`), 'sparse' (unstructured bitmask, emitted when the weight is >=50%
 zeros, else fp16), or 'auto' (per-weight: sparse if sparse, else int4 if accurate,
 else int8, else fp16). `int8=True` is the alias for `compress='int8'`. Wraps the
-unentitled Espresso `e5rt` runtime only — no CoreML, no entitlement.
+unentitled Espresso `e5rt` runtime only - no CoreML, no entitlement.
 
 aneforge also has a tiny reverse-mode autograd (`autograd.py`): `af.parameter` /
 `af.backward` / `af.mse` / `af.SGD` / `af.Trainer` train a small model with the

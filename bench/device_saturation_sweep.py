@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Saturation (roofline) sweep — PEAK throughput + PEAK perf/watt per compute engine.
+"""Saturation (roofline) sweep - PEAK throughput + PEAK perf/watt per compute engine.
 
 The watt-complete device comparison (``device_compare_wattcomplete.py``) raced each
 device on *representative* workload shapes. But representative != saturating: a 512x512
@@ -10,24 +10,24 @@ UTILIZED. That is what this script does.
 
 We scale two primitives that actually saturate compute:
 
-  1. GEMM   — square NxN @ NxN, FLOPs = 2 N^3. Sweep N until each device plateaus.
-  2. conv   — 3x3 same-pad conv, channels C with batch sized to fill, FLOPs =
-              2 * B * Cout * Cin * 9 * H * W. The ANE's home turf — find its conv peak.
+  1. GEMM   - square NxN @ NxN, FLOPs = 2 N^3. Sweep N until each device plateaus.
+  2. conv   - 3x3 same-pad conv, channels C with batch sized to fill, FLOPs =
+              2 * B * Cout * Cin * 9 * H * W. The ANE's home turf - find its conv peak.
 
 For each (primitive, size, device in {CPU, GPU, ANE}):
   * THROUGHPUT  = GFLOP/s from the MIN latency over reps (device forced to sync:
                   mx.eval / the compiled aneforge net / numpy inline).
   * RELERR      vs an fp64 (GEMM) / fp32 (conv) reference, reported next to every
-                throughput number — the ANE's fp16 error grows at large N and that is
+                throughput number - the ANE's fp16 error grows at large N and that is
                 part of the story (a 30 TFLOP/s GPU number at 4e-4 != an ANE number
                 at 3e-2).
   * POWER       at the SATURATING sizes (the plateau region, where the loop is
-                naturally multi-second) — idle-subtracted ACTIVE package power
+                naturally multi-second) - idle-subtracted ACTIVE package power
                 (median + CV) via the REUSED harness in device_compare_wattcomplete
                 (measure_energy / sample_idle). perf/watt = GFLOP/s / active_W.
 
 DTYPE ASYMMETRY IS REAL AND LABELED. CPU is fp32 (numpy/Accelerate-AMX cannot do a fast
-fp16 GEMM — it upcasts), GPU and ANE are fp16. So the CPU peak is an fp32 number; it is
+fp16 GEMM - it upcasts), GPU and ANE are fp16. So the CPU peak is an fp32 number; it is
 NOT the same product as the fp16 peaks and is labeled as such everywhere.
 
 Run from repo root (energy needs passwordless sudo for powermetrics):
@@ -116,7 +116,7 @@ def _power_at(run_once, tag):
 # GEMM sweep
 def sweep_gemm(ns, do_power):
     print("\n" + "=" * 92)
-    print(" GEMM SATURATION SWEEP — square NxN @ NxN, FLOPs = 2 N^3")
+    print(" GEMM SATURATION SWEEP - square NxN @ NxN, FLOPs = 2 N^3")
     print("=" * 92)
     for N in ns:
         flops = 2.0 * N * N * N
@@ -132,7 +132,7 @@ def sweep_gemm(ns, do_power):
 
         # --- CPU (fp32, numpy/Accelerate-AMX) ---
         # IMPORTANT: feed CONTIGUOUS operands. A transposed view (W32.T) makes
-        # Accelerate fall off its fast fp32 GEMM path (~4x slower, ~fp64-rate) — the
+        # Accelerate fall off its fast fp32 GEMM path (~4x slower, ~fp64-rate) - the
         # honest AMX peak needs both operands C-contiguous.
         Wt = np.ascontiguousarray(W32.T)
         lat = _min_lat(lambda: x32 @ Wt)
@@ -171,7 +171,7 @@ def sweep_gemm(ns, do_power):
                 print(f"   ANE  fp16  {lat*1e3:9.3f} ms  {_gflops(flops,lat):9.1f} GFLOP/s  relerr {err:.2e}")
             except Exception as e:
                 row["devices"]["ANE"] = {"error": f"{type(e).__name__}: {e}"}
-                print(f"   ANE  fp16  CAP — {type(e).__name__}: {e}")
+                print(f"   ANE  fp16  CAP - {type(e).__name__}: {e}")
         RESULTS["gemm"].append(row)
     if do_power:
         _power_phase_gemm(ns)
@@ -181,7 +181,7 @@ def _power_phase_gemm(ns):
     """Measure active package power for EVERY swept GEMM size (so the power-vs-size
     curve shows the climb toward the plateau), per device."""
     print("\n" + "-" * 92)
-    print(" GEMM power-vs-size (idle-subtracted active package W) — utilization evidence")
+    print(" GEMM power-vs-size (idle-subtracted active package W) - utilization evidence")
     print("-" * 92)
     by_n = {r["N"]: r for r in RESULTS["gemm"]}
     for N in ns:
@@ -206,7 +206,7 @@ def _power_phase_gemm(ns):
 # conv sweep
 def sweep_conv(configs, do_power):
     print("\n" + "=" * 92)
-    print(f" CONV SATURATION SWEEP — 3x3 same-pad, {CONV_SPATIAL}x{CONV_SPATIAL}, "
+    print(f" CONV SATURATION SWEEP - 3x3 same-pad, {CONV_SPATIAL}x{CONV_SPATIAL}, "
           f"FLOPs = 2*B*Cout*Cin*9*H*W")
     print("=" * 92)
     H = W = CONV_SPATIAL
@@ -263,7 +263,7 @@ def sweep_conv(configs, do_power):
                 print(f"   ANE  fp16  {lat*1e3:9.3f} ms  {_gflops(flops,lat):9.1f} GFLOP/s  relerr {err:.2e}")
             except Exception as e:
                 row["devices"]["ANE"] = {"error": f"{type(e).__name__}: {e}"}
-                print(f"   ANE  fp16  CAP — {type(e).__name__}: {e}")
+                print(f"   ANE  fp16  CAP - {type(e).__name__}: {e}")
         RESULTS["conv"].append(row)
     if do_power:
         _power_phase_conv(configs)
@@ -271,7 +271,7 @@ def sweep_conv(configs, do_power):
 
 def _power_phase_conv(configs):
     print("\n" + "-" * 92)
-    print(" CONV power-vs-size (idle-subtracted active package W) — utilization evidence")
+    print(" CONV power-vs-size (idle-subtracted active package W) - utilization evidence")
     print("-" * 92)
     H = W = CONV_SPATIAL
     k = 3
@@ -323,7 +323,7 @@ def _attach_power(dev_row, run_once, tag, flops, device):
         rec["perf_per_W"] = (thr / 1e9) / apw  # GFLOP/s/W
     # plausibility flag: ANE work that reads ~0 on the ANE rail is a sampling miss
     if device == "ANE" and e.get("ane_active_mW", 0.0) < 5.0 and not rec["flags"]:
-        rec["flags"].append("ANE rail ~0 mW during ANE work — likely a 100ms sampling miss")
+        rec["flags"].append("ANE rail ~0 mW during ANE work - likely a 100ms sampling miss")
     dev_row["power"] = rec
     pw = rec.get("perf_per_W")
     print(f"   [pwr {device:<3}] active pkg {apw:6.2f} W (CV {rec['active_pkg_cv_pct']:.0f}%, "
@@ -359,8 +359,8 @@ def _peaks(prim):
 
 def print_report():
     print("\n" + "=" * 92)
-    print(" SATURATION / ROOFLINE — PEAK TABLE")
-    print(" dtype labeled: CPU=fp32 (Accelerate/AMX, upcasts — NOT same product as fp16), "
+    print(" SATURATION / ROOFLINE - PEAK TABLE")
+    print(" dtype labeled: CPU=fp32 (Accelerate/AMX, upcasts - NOT same product as fp16), "
           "GPU/ANE=fp16")
     print("=" * 92)
     for prim in ("gemm", "conv"):
@@ -394,10 +394,10 @@ def main():
     do_power = HAVE_SUDO and not args.no_power
 
     print("=" * 92)
-    print(" device_saturation_sweep — PEAK throughput + PEAK perf/watt (roofline)")
+    print(" device_saturation_sweep - PEAK throughput + PEAK perf/watt (roofline)")
     print("=" * 92)
     print(f" backends: ANE={'yes' if HAVE_ANE else 'NO'}  MLX={'yes' if HAVE_MLX else 'NO'}  "
-          f"powermetrics(sudo)={'yes' if HAVE_SUDO else 'NO — power skipped'}")
+          f"powermetrics(sudo)={'yes' if HAVE_SUDO else 'NO - power skipped'}")
     print(f" GEMM N = {gemm_ns}")
     print(f" conv (C,B) = {conv_cfg} @ {CONV_SPATIAL}x{CONV_SPATIAL} 3x3")
     print(f" power window = {POWER_WINDOW}s  reps = {REPS}")

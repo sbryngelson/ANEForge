@@ -2,7 +2,7 @@
 
 The optimizer's coverage guarantee is: *every surfaced capability is either ROUTE-
 SELECTABLE (the autotuner picks its cheapest equivalent lowering by measured cost) or
-EXPLICITLY SINGLE-ROUTE.* This test proves the SELECTABLE half is honest — every route
+EXPLICITLY SINGLE-ROUTE.* This test proves the SELECTABLE half is honest - every route
 the optimizer is willing to flip a bridge node to is mathematically equivalent on real
 ANE silicon, the same proof class as the metamorphic ``mha_vs_sdpa`` /
 ``reduce_sum_vs_matmul`` transforms.
@@ -62,8 +62,8 @@ def test_route_tables_reconcile():
     decomposers = set(_BRIDGE_DECOMPOSERS)
     assert selectable == decomposers, (
         f"route registry `selectable` {sorted(selectable)} != "
-        f"_rewrite._BRIDGE_DECOMPOSERS {sorted(decomposers)} — keep them in sync.")
-    # every bridge op is classified (selectable XOR single) — closed over NETPLIST_OPS.
+        f"_rewrite._BRIDGE_DECOMPOSERS {sorted(decomposers)} - keep them in sync.")
+    # every bridge op is classified (selectable XOR single) - closed over NETPLIST_OPS.
     classified = selectable | {e["name"] for e in reg["single_route"]}
     assert classified == set(_compile.NETPLIST_OPS), (
         f"unclassified bridge ops: {set(_compile.NETPLIST_OPS) - classified}")
@@ -149,7 +149,7 @@ def test_rejected_candidate_stays_single_route():
     """Honesty check on a REJECTED candidate: space_to_channel is marked single-route
     because its reshape+transpose decomposition needs a rank-6 intermediate that
     ANECCompile rejects. Confirm the registry records it single-route (we do NOT
-    re-run the failing compile here — an ANECCompile abort can take down the
+    re-run the failing compile here - an ANECCompile abort can take down the
     in-process runtime; the rejection evidence is in the route_reason)."""
     reg = cap.route_registry()
     single = {e["name"]: e for e in reg["single_route"]}
@@ -169,4 +169,4 @@ if __name__ == "__main__":
     test_flatten_route_equivalent()
     test_lrn_route_equivalent()
     test_rejected_candidate_stays_single_route()
-    print("\nALL ROUTES VALIDATED — every selectable route is equivalent on silicon.")
+    print("\nALL ROUTES VALIDATED - every selectable route is equivalent on silicon.")

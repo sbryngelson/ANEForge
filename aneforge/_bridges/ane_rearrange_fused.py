@@ -226,7 +226,7 @@ def ref_pixel_unshuffle(x: np.ndarray, r: int) -> np.ndarray:
 
 
 def ref_depth_to_space_tf(x: np.ndarray, r: int) -> np.ndarray:
-    """TensorFlow depth_to_space (block-major) — reference for ChannelToSpace."""
+    """TensorFlow depth_to_space (block-major) - reference for ChannelToSpace."""
     N, C2, H, W = x.shape
     C = C2 // (r * r)
     out = np.zeros((N, C, H * r, W * r), dtype=x.dtype)
@@ -238,7 +238,7 @@ def ref_depth_to_space_tf(x: np.ndarray, r: int) -> np.ndarray:
 
 
 def ref_space_to_depth_tf(x: np.ndarray, r: int) -> np.ndarray:
-    """TensorFlow space_to_depth (block-major) — reference for SpaceToChannel."""
+    """TensorFlow space_to_depth (block-major) - reference for SpaceToChannel."""
     N, C, H, W = x.shape
     out = np.zeros((N, C * r * r, H // r, W // r), dtype=x.dtype)
     for c in range(C):
@@ -312,4 +312,4 @@ if __name__ == "__main__":
     for name, shape, err in results:
         print(f"{name:<16}{str(tuple(shape)):<18}{err:>12.6g}")
     assert all(e == 0.0 for _, _, e in results), "numerics mismatch!"
-    print("\nALL SIX CRACKED — exact bit-parity with numpy reference.")
+    print("\nALL SIX CRACKED - exact bit-parity with numpy reference.")

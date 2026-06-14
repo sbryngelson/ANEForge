@@ -14,7 +14,7 @@ Non-obvious conventions:
        alpha, pass  Alpha = fp16_bits(desired_alpha * KernelChannel).
     3. Only the first KernelChannel output channels are normalized; the rest
        are identity-copied.  Use KernelChannel = C for full-tensor LRN; C must
-       exceed KernelChannel-as-window only spatially — empirically C ==
+       exceed KernelChannel-as-window only spatially - empirically C ==
        KernelChannel gives full coverage (C=5/KC=5).
 
 Run:

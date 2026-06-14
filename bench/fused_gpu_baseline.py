@@ -9,16 +9,16 @@ fusion-sensitive workloads with the GPU ALSO fused via mx.compile (MLX graph
 capture/kernel fusion), and put default-MLX, fused-MLX, and the ANE side by side.
 
 Workloads (same shapes the paper uses, pulled from device_compare_wattcomplete.py):
-  * layer_norm  (197, 768)         — the canonical multi-pass op MLX runs unfused
-  * gelu        (197, 768)         — transcendental elementwise
-  * attention   (197, 768, 12)     — ViT self-attention block (qkv->softmax->out)
-  * conv stack  (64->256, 32x32, k3, depth 16)  — resnet-ish 3x3 stack
+  * layer_norm  (197, 768)         - the canonical multi-pass op MLX runs unfused
+  * gelu        (197, 768)         - transcendental elementwise
+  * attention   (197, 768, 12)     - ViT self-attention block (qkv->softmax->out)
+  * conv stack  (64->256, 32x32, k3, depth 16)  - resnet-ish 3x3 stack
 
 For each: default-MLX vs mx.compile-fused-MLX vs ANE (aneforge), reporting
 latency (min over reps), idle-subtracted total-package active power + CV%, and
 GFLOP/s-or-items/s perf/W. Power harness imported from device_compare_wattcomplete.
 
-THE QUESTION: does fusing the GPU materially change any device-map verdict — does
+THE QUESTION: does fusing the GPU materially change any device-map verdict - does
 the GPU close the perf/watt gap, or flip any ANE win? We report it plainly either way.
 
 Run from repo root (energy needs passwordless sudo):
@@ -104,7 +104,7 @@ def _record(wl, variant, *, lat_s, out, ref, flops=None, items=None,
     print(f"  {variant:<18} {lat_s*1e3:8.3f} ms{extra}{re_s}")
 
 
-# layer_norm (197,768) — the multi-pass op
+# layer_norm (197,768) - the multi-pass op
 def wl_layer_norm(shape=(197, 768), window=6.0):
     wl = f"layer_norm {shape}"
     print(f"\n=== {wl} ===", flush=True)
@@ -270,7 +270,7 @@ def wl_conv_stack(Cin=64, Cout=256, H=32, W=32, k=3, depth=16, window=6.0):
         _record(wl, "ANE (aneforge)", lat_s=lat, out=np.asarray(out), ref=ref, flops=flops, energy=e)
 
 
-# 5-point stencil, 32 chained steps (256x256) — the largest perf/W gap (49x)   #
+# 5-point stencil, 32 chained steps (256x256) - the largest perf/W gap (49x)   #
 # in the device map, and exactly the asymmetric-fusion case: default MLX runs   #
 # 32 separate conv kernels, the ANE fuses all 32 into one program. Re-test the  #
 # GPU with mx.compile fusing the whole 32-step chain so the comparison is fair. #
@@ -371,7 +371,7 @@ def main() -> int:
     window = 2.0 if args.quick else args.window
 
     print("=" * 90)
-    print(" fused_gpu_baseline — default-MLX vs mx.compile-fused-MLX vs ANE")
+    print(" fused_gpu_baseline - default-MLX vs mx.compile-fused-MLX vs ANE")
     print("=" * 90)
     print(f" backends: ANE={'yes' if HAVE_ANE else 'NO'}  MLX={'yes' if HAVE_MLX else 'NO'}  "
           f"sudo={'yes' if HAVE_SUDO else 'NO (no power)'}  window={window}s")

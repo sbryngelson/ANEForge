@@ -50,7 +50,6 @@ def main():
     print("LLaMA block (rms_norm -> mha -> residual -> rms_norm -> SwiGLU -> residual); "
           "forward + backward on the ANE, RMSNorm gains + SiLU trained end-to-end")
     print(f"\n{'step':>6} | {'loss':>10}")
-    print("-" * 21)
     l0 = tr.loss()
     for it in range(STEPS):
         tr.step()

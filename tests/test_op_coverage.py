@@ -63,7 +63,7 @@ CASES = [
     ("round", [S], lambda x: x.round(), np.round, False),
     ("sign", [S], lambda x: x.sign(), np.sign, False),
     ("relu6", [S], lambda x: x.relu6(), lambda v: np.clip(v, 0, 6), False),
-    # sin/cos are native A15+; on M1 they route via special.py — still must run
+    # sin/cos are native A15+; on M1 they route via special.py - still must run
     ("sin", [S], lambda x: x.sin(), np.sin, False),
     ("cos", [S], lambda x: x.cos(), np.cos, False),
     ("atan", [S], lambda x: x.atan(), np.arctan, False),
@@ -134,7 +134,7 @@ CASES = [
 ]
 
 # ops the catalog says are walled/bridge on M1 -> allow them to xfail rather than hard-fail
-_MAYBE_WALLED_M1 = {"sin", "cos", "atan"}  # native F4/A15+; on M1 must route via special — verify it still runs
+_MAYBE_WALLED_M1 = {"sin", "cos", "atan"}  # native F4/A15+; on M1 must route via special - verify it still runs
 
 
 @requires_ane

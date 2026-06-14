@@ -1,4 +1,4 @@
-"""Per-chip ANE target capabilities — the host-independent core of aneforge's
+"""Per-chip ANE target capabilities - the host-independent core of aneforge's
 cross-chip support.
 
 Apple's ANE compiler (ANECompiler 9.509) is byte-identical across chips; everything
@@ -9,8 +9,8 @@ target family, whether each op is native / must be decomposed / is unreachable, 
 numeric limits a graph must respect.
 
 The compiler enumerates 28 HAL targets in 5 capability families. A17 (H17*) and A18
-(H18) targets exist but add no op capabilities over A16 — they scale NE-core count only
-(suffix decoder: base=4, g=8, s=16, c=32, d=64) — so the A16 tier is the capability
+(H18) targets exist but add no op capabilities over A16 - they scale NE-core count only
+(suffix decoder: base=4, g=8, s=16, c=32, d=64) - so the A16 tier is the capability
 ceiling:
 
     family 1  older   H11, H12, M9, T0                       A11 / A12  (no MIL path)
@@ -22,7 +22,7 @@ ceiling:
                       H18                                    A18
 
 (U1/U2/U3 are compiler-internal reference targets, not silicon; M11 is a 1-core
-efficiency ANE with A16 features but A13-sized dims — capability-wise the A15 tier.)
+efficiency ANE with A16 features but A13-sized dims - capability-wise the A15 tier.)
 
 Physically measured anchors, both via the compiled bundle's directory name: M1 == H13
 (`H13C.bundle`) and M5 == H17s (`H17S.bundle`). M-series == H(generation+12) follows
@@ -47,7 +47,7 @@ __all__ = ["Family", "MIN_FAMILY", "supports_mil", "family_of_arch", "arch_for_f
 
 
 class Family(IntEnum):
-    OLDER = 1   # A11/A12/M9/T0 — below the MIL floor; cannot run aneforge at all
+    OLDER = 1   # A11/A12/M9/T0 - below the MIL floor; cannot run aneforge at all
     A13 = 2     # M1
     A14 = 3
     A15 = 4
@@ -55,7 +55,7 @@ class Family(IntEnum):
 
 
 # The e5rt/MIL path aneforge dispatches through carries the hard assert
-# "MIL is only supported for H13+ ANE architectures" — family >= 2 required
+# "MIL is only supported for H13+ ANE architectures" - family >= 2 required
 # regardless of any per-op floor.
 MIN_FAMILY = int(Family.A13)
 
@@ -110,14 +110,14 @@ def arch_for_family(family: int) -> str:
 # A13-on). Silicon-measured endpoints: A13/M1 = int4-LUT (2.37x) AND sparse (~1.6x); A14/M2
 # = int4 + int8 + sparse all stream, blockwise folds (measured 0.985x, no win); A16/M5 = the
 # broad set streams. (The earlier "A14 streams all four" was an inferred HAL guess, refuted
-# by M2 silicon — blockwise never gets a native stream.) papers M2_SILICON_FINDINGS.md +
+# by M2 silicon - blockwise never gets a native stream.) papers M2_SILICON_FINDINGS.md +
 # per-family compressed-weight streaming.
 #
 # Sparse on A13/M1 is a round-9 correction: compress="sparse" lowers to MIL
 # `constexpr_sparse_to_dense` (a 1-bit mask + packed-fp16 DMA that decompresses on-chip),
 # a different path from the HAL kernel-format sparse gate (the +0x520-0x539 cluster that is
 # 0 on h13). On genuinely-sparse weights (>=50% zeros) it streams: live-measured ~1.55-1.64x
-# (0.43x dense bytes, cos=1.0) on a conv1x1 — the native-stream fingerprint. The old "no win"
+# (0.43x dense bytes, cos=1.0) on a conv1x1 - the native-stream fingerprint. The old "no win"
 # reading came from running sparse mode on dense-random weights (all-ones mask, 0 bytes saved).
 # See the reverse-engineering corpus
 _ALL_FORMATS = frozenset({"int4", "int8", "sparse", "blockwise"})
@@ -130,7 +130,7 @@ _NATIVE_STREAMS = {
 def native_streams(family: int) -> frozenset:
     """The compressed-weight encodings that stream natively (a bandwidth win) on
     `family`. Encodings outside the set still compile and stay correct, but the on-device
-    compiler folds them to dense fp16 — an accuracy cost for zero win."""
+    compiler folds them to dense fp16 - an accuracy cost for zero win."""
     return _NATIVE_STREAMS.get(int(family), _ALL_FORMATS)
 
 
@@ -144,14 +144,14 @@ def native_streams(family: int) -> frozenset:
 # stays a trap (MacBookPro17,1 is an M1, Mac17,8 an M5), so we match the M-generation off
 # the clean CPU brand string ("Apple M5 Pro"); the Pro/Max/Ultra ('g') variant changes core
 # count, not capability family. Chips beyond this map (a future M6+) fall back to MIN_FAMILY
-# — a family-2 program runs on every H13+ chip (higher families are strict op/shape/fp16
+# - a family-2 program runs on every H13+ chip (higher families are strict op/shape/fp16
 # supersets), so under-claiming stays correct.
 _BRAND_FAMILY = {
-    1: Family.A13,   # M1  — measured H13
-    2: Family.A14,   # M2  — verified H14 (M-series ladder)
-    3: Family.A15,   # M3  — verified H15 (M-series ladder)
-    4: Family.A16,   # M4  — verified H16 (M-series ladder; H16 == A16 tier)
-    5: Family.A16,   # M5  — measured H17s (A16-equivalent capability tier)
+    1: Family.A13,   # M1  - measured H13
+    2: Family.A14,   # M2  - verified H14 (M-series ladder)
+    3: Family.A15,   # M3  - verified H15 (M-series ladder)
+    4: Family.A16,   # M4  - verified H16 (M-series ladder; H16 == A16 tier)
+    5: Family.A16,   # M5  - measured H17s (A16-equivalent capability tier)
 }
 
 
@@ -179,7 +179,7 @@ def _family_from_brand(brand: str) -> int:
 def detect_family() -> int:
     """Best-effort target family for the host ANE. Resolution order:
 
-    1. `ANEFORGE_TARGET` env var (an arch string, e.g. 'h13') — explicit override.
+    1. `ANEFORGE_TARGET` env var (an arch string, e.g. 'h13') - explicit override.
     2. the CPU brand string, for the measured anchors (M1, M5).
     3. MIN_FAMILY (the safe floor) for any unmeasured chip, with a one-time warning.
     """
@@ -201,18 +201,18 @@ def detect_family() -> int:
 # --- op floors -------------------------------------------------------------------------
 # Minimum native family per op. Anything not listed defaults to family 2 (the F0/F2
 # vocabulary: conv/matmul/pooling/elementwise/activations/softmax/norms/reductions/
-# sqrt/rsqrt/erf/exp2/log2/SDPA/resize/tile/space<->channel/atan — all native on M1+).
+# sqrt/rsqrt/erf/exp2/log2/SDPA/resize/tile/space<->channel/atan - all native on M1+).
 _OP_FLOOR = {
-    # F4 trig (A15+) — the one genuinely family-gated trig pair in this MIL vocabulary.
+    # F4 trig (A15+) - the one genuinely family-gated trig pair in this MIL vocabulary.
     "sin": Family.A15, "cos": Family.A15,
-    # texture-engine ops (A14+, HAL 0x81d) — no HW path before A14.
+    # texture-engine ops (A14+, HAL 0x81d) - no HW path before A14.
     "crop_resize": Family.A14, "resample": Family.A14, "affine": Family.A14,
     "gather_hw": Family.A14,
-    # square-after-reduce (0x494) — A14+.
+    # square-after-reduce (0x494) - A14+.
     "sq_after_reduce": Family.A14,
-    # Dropout / Random (0x4a9) — A15+; unsupported on M1 AND A14.
+    # Dropout / Random (0x4a9) - A15+; unsupported on M1 AND A14.
     "dropout": Family.A15, "random": Family.A15,
-    # GlobalArgMinMax (0x4f2) — A15+ (carries a floor-vs-flag conflict; verify on silicon).
+    # GlobalArgMinMax (0x4f2) - A15+ (carries a floor-vs-flag conflict; verify on silicon).
     "global_argmax": Family.A15, "global_argmin": Family.A15,
     # bridge/native ops that PASS validation but REJECT at codegen on M1 (family 2).
     "topk": Family.A14, "sort": Family.A14, "dynamic_slice": Family.A14,
@@ -282,7 +282,7 @@ def limit(name: str, family: int) -> int:
 # --- cross-chip fp16 divergence predictor (Direction B) --------------------------------
 # The MAC accumulator width and the compiler __TEXT are uniform across chips, so cross-chip
 # fp16 VALUE divergence can only come from HAL-data-selected codegen routes that reorder (or
-# saturate) fp16 ops — predictable by comparing a small set of per-family HAL fields. Each
+# saturate) fp16 ops - predictable by comparing a small set of per-family HAL fields. Each
 # field below is keyed by the lowest family at which it takes its value; _field_for()
 # resolves the value for a queried family (highest threshold <= family). Source: ANEForge
 # reverse-engineering (field offsets cited per row).
@@ -326,18 +326,18 @@ def predict_fp16_divergence(kind: str, shape, target_a: int, target_b: int,
     """Statically predict whether an op's fp16 VALUE can diverge between two target ANE
     families, from the HAL fields that select its codegen route. Returns one verdict:
 
-      `"saturation"` — a slice with a nonzero last-axis/width begin-offset, where one
+      `"saturation"` - a slice with a nonzero last-axis/width begin-offset, where one
           target is A13 (family 2): A13 routes the offset through a Q.4 x16 crop-DMA that
           clamps any |value| > 4094 (=fp16max/16) to +/-inf, while A14+ takes a clean
           route. Magnitude-gated: flagged only when values can exceed 4094 (`max_abs`
           None = unknown, treated as possible; a finite `max_abs` <= 4094 downgrades it).
-      `"round1"` — a reduce immediately followed by a square/mul (variance, L2-norm,
+      `"round1"` - a reduce immediately followed by a square/mul (variance, L2-norm,
           RMSNorm) where the 0x494 reduce->square fusion bit differs. Currently never
           returned: A13/A14/A16 silicon all compute fp16(sum)^2 (the field is uniform, a
           measured no-op given the fp16 reduce output); kept for completeness.
-      `"ulp1"` — a reduction / softmax / norm whose 0x3f0 route threshold differs (192
+      `"ulp1"` - a reduction / softmax / norm whose 0x3f0 route threshold differs (192
           A13/A14 vs 384 A15+) for the reduced extent: a partial-sum reorder, <=1 ULP.
-      `"none"` — no HAL field selects a differing route for this op/shape pair.
+      `"none"` - no HAL field selects a differing route for this op/shape pair.
 
     `kind` is an op-kind string (the node `op`, or a coarse class like 'slice' /
     'reduce' / 'reduce_square'); `shape` is the op's output shape; `begin` is the slice
@@ -413,7 +413,7 @@ def _internal_axis_oversize(t, max_dim: int) -> bool:
 def preflight(out, family: int) -> Preflight:
     """Walk the graph feeding `out` and report, for the given target family, which ops
     are native / need decomposition / are unreachable, plus any tensor whose dimensions
-    (or known internal-reshape extents) exceed the family's limits. Pure static analysis —
+    (or known internal-reshape extents) exceed the family's limits. Pure static analysis -
     no compile, no hardware. `out` is an aneforge `Tensor` (anything with
     `.op`/`.shape`/`.srcs`)."""
     rep = Preflight(family=int(family))
@@ -463,7 +463,7 @@ def preflight(out, family: int) -> Preflight:
             over = any(int(d) > max_dim for d in t.shape)
         over = over or _internal_axis_oversize(t, max_dim)
         # conv kernel width is a per-family cap (A13<=13, A16<=15) below the build-time
-        # ceiling guard (kW>15) — catch the family-specific case statically. conv_transpose
+        # ceiling guard (kW>15) - catch the family-specific case statically. conv_transpose
         # shares the cap; its weight is [Cin,Cout,kH,kW], so kW is the last axis for both
         # layouts.
         if t.op in ("conv", "conv_transpose") and "weight" in getattr(t, "attrs", {}):

@@ -4,15 +4,15 @@ numpy fp32 reference at fp16-appropriate tolerance.
 
 The point of this corpus is twofold:
 
-  1. CORRECTNESS — confirm that the classic dense-linear-algebra kernels lower to
+  1. CORRECTNESS - confirm that the classic dense-linear-algebra kernels lower to
      the ANE and match numpy within fp16 round-off.
-  2. COST-MODEL DATA — every case carries a ``cost character`` tag in its
+  2. COST-MODEL DATA - every case carries a ``cost character`` tag in its
      ``category`` field, one of:
 
-       floor      — tiny problem, dominated by per-dispatch fixed cost
-       bandwidth  — memory-bound (BLAS-1: O(n) flops over O(n) bytes, AI~1)
-       compute    — arithmetic-bound (BLAS-3 GEMM: O(n^3) over O(n^2) bytes)
-       reduction  — a sum/contraction collapse (dot/asum/nrm2/Gram diagonal);
+       floor      - tiny problem, dominated by per-dispatch fixed cost
+       bandwidth  - memory-bound (BLAS-1: O(n) flops over O(n) bytes, AI~1)
+       compute    - arithmetic-bound (BLAS-3 GEMM: O(n^3) over O(n^2) bytes)
+       reduction  - a sum/contraction collapse (dot/asum/nrm2/Gram diagonal);
                     accuracy-sensitive because the accumulation length grows
 
      so the corpus doubles as labelled validation data for a cost model.
@@ -278,7 +278,7 @@ CASES = [
 ]
 
 
-# runner — mirrors _corpus.run_corpus but adds cost-character + N/M summaries
+# runner - mirrors _corpus.run_corpus but adds cost-character + N/M summaries
 
 def run_blas(cases, verbose: bool = True):
     all_results = []

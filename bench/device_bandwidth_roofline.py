@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Memory-bandwidth roofline — ANE (aneforge fp16) vs GPU (MLX) vs CPU.
+"""Memory-bandwidth roofline - ANE (aneforge fp16) vs GPU (MLX) vs CPU.
 
 The compute-bound primitives (GEMM, conv) are covered by the saturation sweep
 (``device_saturation_sweep.py``). But those are the MINORITY of aneforge's op set.
-The large majority — elementwise activations, binaries, reductions, softmax, the
-norm family, data-movement (reshape/transpose/concat/upsample/pixel_shuffle) — are
+The large majority - elementwise activations, binaries, reductions, softmax, the
+norm family, data-movement (reshape/transpose/concat/upsample/pixel_shuffle) - are
 **memory-bandwidth-bound at size**, not compute-bound. For those, GFLOP/s is the
 wrong metric: the meaningful number is **achieved memory bandwidth (GB/s)** and
 **GB/s per watt**, and they all collapse onto one roofline. This script measures
 that roofline.
 
-KEY METHODOLOGY (a crude probe gave low/noisy numbers — done right here):
+KEY METHODOLOGY (a crude probe gave low/noisy numbers - done right here):
 
   * SIZE TO SATURATION. At small N the ~70 us ANE / dispatch floor dominates and
     HIDES bandwidth (you measure dispatch, not memory). We scale N until the
-    achieved GB/s CLIMBS and PLATEAUS — that plateau is the bandwidth ceiling. We
+    achieved GB/s CLIMBS and PLATEAUS - that plateau is the bandwidth ceiling. We
     report the plateau AND the full climb curve as the evidence. If a device stays
     dispatch-bound at all feasible sizes for an archetype, we say so.
 
@@ -27,7 +27,7 @@ KEY METHODOLOGY (a crude probe gave low/noisy numbers — done right here):
          logical passes are fused, so 2N is the honest external traffic)
       - layer_norm (last axis):        read N, write N    = 2*N*dtbytes
     dtbytes = 2 (fp16) for GPU/ANE, 4 (fp32) for CPU. The CPU bandwidth proxy uses
-    a genuinely memory-bound op (a*2.0 / a.sum), NOT a transcendental — a tanh-heavy
+    a genuinely memory-bound op (a*2.0 / a.sum), NOT a transcendental - a tanh-heavy
     gelu is COMPUTE-bound in numpy and would understate CPU bandwidth.
 
   * POWER at the saturating size. Reuses the rigorous energy harness from
@@ -66,7 +66,7 @@ if str(REPO) not in sys.path:
 
 import numpy as np
 
-# Reuse the rigorous harnesses — do NOT reinvent the power methodology.
+# Reuse the rigorous harnesses - do NOT reinvent the power methodology.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare as dc            # noqa: E402
 import device_compare_wattcomplete as wc  # noqa: E402  (energy harness + idle sampling)
@@ -152,7 +152,7 @@ def run_archetype(name, byte_factor, build_ane, build_mlx, build_cpu,
             except Exception as e:
                 row["ane_err"] = f"{type(e).__name__}: {e}"
 
-        # CPU (fp32) — genuinely memory-bound proxy
+        # CPU (fp32) - genuinely memory-bound proxy
         if build_cpu is not None:
             try:
                 fn, _ = build_cpu(x32, R, D)
@@ -184,7 +184,7 @@ def build_archetypes():
     """Return the archetype spec list. Each entry drives run_archetype."""
     specs = []
 
-    # 1. PURE STREAMING — relu (read+write, ~zero arithmetic). Cleanest BW probe.
+    # 1. PURE STREAMING - relu (read+write, ~zero arithmetic). Cleanest BW probe.
     #    bytes = 2*N*dt
     def ane_relu(x, R, D):
         net = af.compile(af.input((R, D)).relu())
@@ -202,7 +202,7 @@ def build_archetypes():
     specs.append(("streaming (relu / x*2)", 2, ane_relu, mlx_relu, cpu_stream,
                   (lambda x: np.maximum(x, 0)), True))
 
-    # 2. LIGHT-COMPUTE ELEMENTWISE — gelu (a few flops/elem; still BW-bound at size)
+    # 2. LIGHT-COMPUTE ELEMENTWISE - gelu (a few flops/elem; still BW-bound at size)
     def ane_gelu(x, R, D):
         net = af.compile(af.input((R, D)).gelu())
         return net, x.astype(np.float16)
@@ -214,7 +214,7 @@ def build_archetypes():
             mx.eval(gel(xg))
         return fn, (lambda: np.array(gel(xg), copy=False))
     def cpu_gelu_bw(x, R, D):
-        # CPU proxy stays memory-bound (copy), NOT the transcendental gelu — see header.
+        # CPU proxy stays memory-bound (copy), NOT the transcendental gelu - see header.
         def fn():
             _ = x.copy()
         return fn, None
@@ -227,7 +227,7 @@ def build_archetypes():
     specs.append(("gelu (light compute)", 2, ane_gelu, mlx_gelu, cpu_gelu_bw,
                   ref_gelu_np, True))
 
-    # 3. REDUCTION — sum over last axis (read N, write R). bytes ~ 1*N*dt
+    # 3. REDUCTION - sum over last axis (read N, write R). bytes ~ 1*N*dt
     def ane_sum(x, R, D):
         net = af.compile(af.input((R, D)).sum(-1))
         return net, x.astype(np.float16)
@@ -307,7 +307,7 @@ def measure_peak_power(specs, sizes):
     """For each archetype, re-run the SATURATING (largest) size under the energy
     harness and attach GB/s/W per device."""
     if not HAVE_SUDO:
-        print("\n[power] no passwordless sudo — GB/s/W skipped.")
+        print("\n[power] no passwordless sudo - GB/s/W skipped.")
         return
     nelem = sizes[-1]
     R, D = _shape_for(nelem)
@@ -364,7 +364,7 @@ def measure_peak_power(specs, sizes):
               f"CPU {cp[0]:6.2f} ({cp[1]:.1f}W,{cp[2]:.0f}%)", flush=True)
 
 
-# PART 2 — op -> roofline-class coverage (driven off live _EMIT / NETPLIST_OPS)
+# PART 2 - op -> roofline-class coverage (driven off live _EMIT / NETPLIST_OPS)
 # class -> set of op names. We classify by op semantics. Driven against the LIVE
 # dicts below so a missing op raises, not silently drops.
 COMPUTE_BOUND = {
@@ -390,7 +390,7 @@ BANDWIDTH_BOUND = {
     "pixel_shuffle", "pixel_unshuffle",
 }
 # dispatch/latency-bound: scalar / tiny ops where the dispatch floor dominates
-# (covered by the floor finding — CPU wins tiny).
+# (covered by the floor finding - CPU wins tiny).
 DISPATCH_BOUND = {
     "adds", "muls",  # scalar-broadcast ops, trivially tiny arithmetic
 }
@@ -402,7 +402,7 @@ WORKER_OPS = {"sdpa", "argmax", "topk"}   # the persistent-worker op set
 # Map a bridge op to its measurement story.
 BRIDGE_CLASS = {
     # has a persistent worker -> can benchmark silicon time
-    "sdpa": "bridge:worker (raceable — covered as attention class)",
+    "sdpa": "bridge:worker (raceable - covered as attention class)",
     "argmax": "bridge:worker (raceable silicon via persistent worker)",
     "topk": "bridge:worker (raceable silicon via persistent worker)",
 }
@@ -412,7 +412,7 @@ BRIDGE_CLASS = {
 def build_coverage():
     """Classify every live _EMIT and NETPLIST op; verify total coverage."""
     if not HAVE_ANE:
-        print("\n[coverage] aneforge unavailable — coverage table skipped.")
+        print("\n[coverage] aneforge unavailable - coverage table skipped.")
         return
     emit = sorted(C._EMIT.keys())
     netp = sorted(C.NETPLIST_OPS.keys() if isinstance(C.NETPLIST_OPS, dict)
@@ -442,7 +442,7 @@ def build_coverage():
     for op in netp:
         if op in WORKER_OPS:
             cls = "bridge:worker-raceable"
-            where = BRIDGE_CLASS.get(op, "persistent worker — silicon raceable")
+            where = BRIDGE_CLASS.get(op, "persistent worker - silicon raceable")
             counts["bridge:worker-raceable"] += 1
         else:
             cls = "bridge:subprocess-not-raceable"
@@ -479,10 +479,10 @@ def main() -> int:
     sizes = QUICK_SIZES if args.quick else SIZES
 
     print("=" * 100)
-    print(" device_bandwidth_roofline — memory-bound regime: achieved GB/s + GB/s/W")
+    print(" device_bandwidth_roofline - memory-bound regime: achieved GB/s + GB/s/W")
     print("=" * 100)
     print(f" backends: ANE={'yes' if HAVE_ANE else 'NO'}  MLX={'yes' if HAVE_MLX else 'NO'}  "
-          f"sudo={'yes' if HAVE_SUDO else 'NO — power skipped'}  window={wc.WINDOW}s")
+          f"sudo={'yes' if HAVE_SUDO else 'NO - power skipped'}  window={wc.WINDOW}s")
 
     if HAVE_SUDO:
         print("\n sampling idle baseline (no workload)...", flush=True)

@@ -1,4 +1,4 @@
-"""af.dynamic_conv — native conv with a runtime-tensor (dynamic) weight, lowering to the
+"""af.dynamic_conv - native conv with a runtime-tensor (dynamic) weight, lowering to the
 ANE's dynamic-kernel path. Batch-1 only (B>=2 is unsupported, guarded at build)."""
 from __future__ import annotations
 import numpy as np
@@ -37,7 +37,7 @@ def test_dynamic_conv_b2_guard_and_dtype():
     # batch>=2 is unsupported -> rejected at build time
     with pytest.raises(ValueError, match="batch N=1"):
         af.dynamic_conv(af.input((2, 1, 8, 8)), af.input((8, 1, 3, 3)))
-    # a constant (numpy) weight is the wrong call — use af.conv
+    # a constant (numpy) weight is the wrong call - use af.conv
     with pytest.raises(TypeError, match="must be a Tensor"):
         af.dynamic_conv(af.input((1, 1, 8, 8)), np.ones((8, 1, 3, 3), np.float32))
     # builds at B=1 with the right output shape

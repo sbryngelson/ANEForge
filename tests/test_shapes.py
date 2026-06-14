@@ -1,4 +1,4 @@
-"""Broad shape / numerical-edge corpus — fp32-golden cases that sweep the
+"""Broad shape / numerical-edge corpus - fp32-golden cases that sweep the
 shape-sensitive, numerically-risky ops across a wide range (including large and
 edge shapes), so shape-dependent and fp16-cancellation bugs surface in the gate.
 

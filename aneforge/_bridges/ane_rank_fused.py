@@ -1,7 +1,7 @@
 """Native ANE rank-family layers via hand-authored ANECIR netplists.
 
-Four hardware-native fp16 rank layers — `Sort`, `TopK`, `ArgMinMax` and
-`GlobalArgMinMax` — running on the ANE via Path A.
+Four hardware-native fp16 rank layers - `Sort`, `TopK`, `ArgMinMax` and
+`GlobalArgMinMax` - running on the ANE via Path A.
 
 Per-layer `Params` schemas:
 
@@ -185,8 +185,8 @@ def argminmax(x: np.ndarray, mode: str, **kw):
     """ArgMinMax over x ([channels, height, width]).
 
     mode in {SpatialArgMax, SpatialArgMin, ChannelArgMax, ChannelArgMin}.
-    Spatial* → one flattened-(H*W) index per channel.
-    Channel* → one channel index per (h,w) spatial position."""
+    Spatial* -> one flattened-(H*W) index per channel.
+    Channel* -> one channel index per (h,w) spatial position."""
     x = np.asarray(x, np.float16)
     if x.ndim == 2:
         x = x[:, None, :]   # [C, 1, W]

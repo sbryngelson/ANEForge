@@ -73,7 +73,6 @@ def main():
     print(f"char-LM: {NLAYERS} causal LLaMA-style layers, D={D}, vocab={V}, "
           f"{len(params)} parameter tensors; forward + backward + optimizer on the ANE")
     print(f"\n{'step':>6} | {'cross-entropy':>13}")
-    print("-" * 24)
     l0 = tr.loss()
     for it in range(STEPS):
         tr.step()

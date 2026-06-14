@@ -1,10 +1,10 @@
-"""aneforge.fft — a real FFT for the Apple Neural Engine, built as Cooley-Tukey
+"""aneforge.fft - a real FFT for the Apple Neural Engine, built as Cooley-Tukey
 factored into MATMUL STAGES.
 
 The ANE has NO complex dtype (compute is fp16 real only) and no in-graph loop or
 gather, but it is a *matmul machine*. A previous probe (tests/test_spectral_sci.py,
 examples/spectral_analysis.py) showed the DFT-as-a-twiddle-matrix-matmul is fp16-CLEAN to
-N=2048 because the matmul accumulator is wide (>=fp32) — but that is the naive O(N^2)
+N=2048 because the matmul accumulator is wide (>=fp32) - but that is the naive O(N^2)
 DFT (one dense [N,N] twiddle matrix). This module keeps the "every stage is a matmul"
 property while cutting the op count to ~O(N*(N1+N2+...)) via the Cooley-Tukey
 factorization.
@@ -25,7 +25,7 @@ N = g0*g1*g2, and the signal is reshaped ONCE to a 4-D tensor [1, g0, g1, g2] th
 stays fully split for the whole computation. Each group is one dense-DFT matmul stage
 along its own axis (a single transpose to bring the axis last, the complex matmul, a
 single transpose back), with cross-twiddle multiplies between stages and ONE final
-axis-reversal transpose. Cost = N*(g0+g1+g2) MACs vs the dense DFT's N^2 — sub-quadratic,
+axis-reversal transpose. Cost = N*(g0+g1+g2) MACs vs the dense DFT's N^2 - sub-quadratic,
 e.g. 32x fewer at N=1024, 51x at N=2048; every stage is a matmul (ANE-native).
 
 TWO HARD ANE WALLS shape this (both found empirically on M5, see _factor / _axis_dft):
@@ -35,14 +35,14 @@ TWO HARD ANE WALLS shape this (both found empirically on M5, see _factor / _axis
   - Chaining the recursive transpose->reshape->transpose COLLAPSE mis-fuses on this ANE
     (correct VALUES, permuted ORDER). Keeping the tensor fully split with ONE isolated
     transpose per stage sidesteps it. (A single transpose, or a transpose separated by a
-    matmul, is reliable — verified.)
+    matmul, is reliable - verified.)
 
 COMPLEX AS REAL PAIRS. Every value is a (re, im) Tensor pair. A complex matmul
 C = A @ B is four real matmuls:
     Cre = Are@Bre - Aim@Bim
     Cim = Are@Bim + Aim@Bre
 (Straight 4-matmul form, not Karatsuba: on the ANE matmul is cheap and the wide
-accumulator keeps the straight form cleanest — Karatsuba's (a+b)(c+d) sums lose a bit
+accumulator keeps the straight form cleanest - Karatsuba's (a+b)(c+d) sums lose a bit
 of fp16 headroom for no real op savings here.) The twiddle matrices are small fp16
 CONSTANTS folded into the graph (matmul against a numpy array is a streamed weight,
 see graph.Tensor.__matmul__).
@@ -100,7 +100,7 @@ def _cmatmul_const(re: Tensor, im: Tensor, Wr: np.ndarray, Wi: np.ndarray):
 # note on cross twiddles. They are data-shaped [N1,restlen] constants. The public
 # frontend has no free constant-tensor op (only matmul/conv weights fold into the blob;
 # elementwise add/mul require two graph Tensors). So the cross twiddles ride in as graph
-# INPUTS — an input IS a graph Tensor — and the Plan threads the constant arrays in
+# INPUTS - an input IS a graph Tensor - and the Plan threads the constant arrays in
 # automatically on every call (see _Builder._cross / Plan.__call__). They are fed in
 # creation order, exactly the order aneforge.compile assigns input slots.
 
@@ -135,7 +135,7 @@ def _idft_matrix(M: int):
 # fails ANECCompile). A fully-split FFT tensor is [1, g0, g1, ..., g_{m-1}], so the
 # split is limited to AT MOST 3 factor-groups (-> [1, g0, g1, g2], 4D). So factor N
 # into <=3 balanced GROUPS; each group is one (possibly composite) dense-DFT matmul
-# stage. This is a 3-stage Cooley-Tukey — still ~O(N*(g0+g1+g2)) << O(N^2).
+# stage. This is a 3-stage Cooley-Tukey - still ~O(N*(g0+g1+g2)) << O(N^2).
 _MAX_GROUPS = 3
 
 
@@ -191,7 +191,7 @@ class _Builder:
         """Cross twiddle T[k1, n2] = exp(sign*2pi i k1 n2 / Ntot) where k1 in [0,N1),
         n2 in [0,restlen). Registered as a pair of graph INPUTS (the frontend has no
         free constant op; only matmul/conv weights fold, while elementwise mul needs
-        two graph Tensors — an input IS a graph Tensor). Returned reshaped to `bshape`
+        two graph Tensors - an input IS a graph Tensor). Returned reshaped to `bshape`
         so it broadcasts against the trailing split axes of the running tensor.
 
         The plan threads the constant arrays in automatically at call time (recorded in
@@ -210,7 +210,7 @@ class _Builder:
 
         IMPORTANT (ANE compiler workaround): each stage uses at most a SINGLE transpose
         on each side of the matmul. Chaining transpose->reshape->transpose (the natural
-        recursive collapse/re-split) is mis-fused by this ANE's graph compiler — it
+        recursive collapse/re-split) is mis-fused by this ANE's graph compiler - it
         returns the correct VALUES in a permuted ORDER. Keeping the tensor fully split
         (never collapsing to 1-D between stages) with one isolated transpose per move
         sidesteps the bug entirely (verified on-device)."""
@@ -259,7 +259,7 @@ class _Builder:
         Multi-stage mixed-radix Cooley-Tukey on a FULLY-SPLIT tensor. With
         N = r0*r1*...*r_{m-1}, the input is reshaped ONCE to [1, r0, r1, ..., r_{m-1}]
         and stays multi-axis for the whole computation (NO collapse-to-1-D between
-        stages — that triggers the ANE transpose-chain mis-fusion). Each level does an
+        stages - that triggers the ANE transpose-chain mis-fusion). Each level does an
         `r`-point DFT along one axis as a (4-real-matmul) complex matmul, then a
         cross-twiddle multiply. A SINGLE final axis-reversal transpose puts the output
         in natural order, and one reshape collapses back to [1, N].
@@ -340,19 +340,19 @@ class Plan:
 
 
 class Plan2:
-    """A compiled 2-D FFT program for [M,N] complex fields — ONE fused e5rt program.
+    """A compiled 2-D FFT program for [M,N] complex fields - ONE fused e5rt program.
 
     The 2-D DFT is separable:  X_hat = F_M @ X @ F_N^T.  Applied to a whole matrix,
     each axis transform is a single complex matmul (a DFT of every row at once), NOT a
     per-row loop: rows transform as one matmul against the [N,N] twiddle, columns as
     transpose -> matmul against the [M,M] twiddle -> transpose back. Eight real GEMMs
-    total, fused into one program — vs M+N dispatches for host-looping the 1-D plan.
+    total, fused into one program - vs M+N dispatches for host-looping the 1-D plan.
 
     The DENSE per-axis form, O(M*N*(M+N)) MACs (not the staged sub-quadratic 1-D build):
     at PDE-scale fields the ANE eats the GEMMs and dispatch dominates, and a per-axis
     staged split of a 2-D field would exceed the rank-4 transpose+matmul cap. Each
     transpose sits between matmuls (the safe pattern; only transpose->reshape CHAINS
-    mis-fuse — see _axis_dft)."""
+    mis-fuse - see _axis_dft)."""
 
     def __init__(self, M: int, N: int, inverse: bool):
         self.M, self.N, self.inverse = M, N, inverse
@@ -361,7 +361,7 @@ class Plan2:
         WrM, WiM = mk(M)                                          # column twiddle
         if inverse:
             # Fold the 1/(M*N) normalization INTO the twiddles, 1/N on the row pass and
-            # 1/M on the column pass — NOT one scale at the end. A real spectrum is large
+            # 1/M on the column pass - NOT one scale at the end. A real spectrum is large
             # (O(M*N) at the dominant modes), so an unscaled first-axis transform would
             # push intermediates past fp16 max (65504) and shred precision.
             WrN, WiN = WrN * (1.0 / N), WiN * (1.0 / N)
@@ -492,7 +492,7 @@ def _relerr(a, b):
 
 def _naive_dft_relerr(N: int, xr: np.ndarray, xi: np.ndarray):
     """Reference: the single dense [N,N] DFT-matmul in fp16 (the previous approach),
-    computed in numpy with fp16-rounded inputs/twiddles and a wide accumulator — i.e.
+    computed in numpy with fp16-rounded inputs/twiddles and a wide accumulator - i.e.
     what the ANE's naive DFT-matmul produces. Lets us compare staged vs naive fp16."""
     n = np.arange(N); k = n.reshape(-1, 1)
     W = np.exp(-2j * np.pi * k * n / N)
@@ -507,7 +507,7 @@ def _naive_dft_relerr(N: int, xr: np.ndarray, xi: np.ndarray):
 
 def _selftest():
     rng = np.random.default_rng(20260530)
-    print("aneforge.fft — staged Cooley-Tukey FFT on the ANE (complex as real pairs)\n")
+    print("aneforge.fft - staged Cooley-Tukey FFT on the ANE (complex as real pairs)\n")
 
     Ns = [64, 256, 1024, 2048, 1536, 1280]
     print(f"{'N':>6} {'factors':>16} {'stages':>7} {'n_ops':>6} "
@@ -563,7 +563,7 @@ def _selftest():
 
     # ---- complexity / accuracy verdict ----
     print("\n" + "=" * 110)
-    print("VERDICT — staged matmul-FFT on the ANE")
+    print("VERDICT - staged matmul-FFT on the ANE")
     print("-" * 110)
     print("  * Every stage is a matmul (4 real matmuls per complex DFT block) + an")
     print("    elementwise cross-twiddle multiply: ANE-native, fused into ONE e5rt program.")
@@ -573,16 +573,16 @@ def _selftest():
     print("  * WHY exactly 3 stages: the ANE caps transpose+matmul at rank-4 tensors, so the")
     print("    fully-split FFT tensor [1,g0,g1,g2] can carry at most 3 factor groups. (A finer")
     print("    log-depth radix-2 split would be rank > 4 and fails ANECCompile; and stacking")
-    print("    the recursive transpose->reshape collapses mis-fuses on this ANE — so we keep")
+    print("    the recursive transpose->reshape collapses mis-fuses on this ANE - so we keep")
     print("    the tensor fully-split with ONE isolated transpose per stage. Both are real")
     print("    architectural walls, not numerics.)")
     print("  * fp16 accuracy: staged ~5e-4..8e-4, FLAT in N (wide accumulator => the per-stage")
-    print("    sums don't compound). That is ~3x the naive single-DFT floor (~2.5e-4) — the")
-    print("    extra cross-twiddle multiplies add a little fp16 rounding — but still fp16-clean")
+    print("    sums don't compound). That is ~3x the naive single-DFT floor (~2.5e-4) - the")
+    print("    extra cross-twiddle multiplies add a little fp16 rounding - but still fp16-clean")
     print("    to N=2048+. So staged is NOT more accurate than the dense DFT, but it IS far")
     print("    cheaper (sub-quadratic) at the same precision class. Max usable N is bounded by")
     print("    fp16 dynamic range (normalize by 1/sqrt(N) for power spectra), not by stage error.")
-    print(f"\n{'PASS' if all_ok else 'FAIL'} — staged Cooley-Tukey FFT validates vs numpy.fft on the ANE")
+    print(f"\n{'PASS' if all_ok else 'FAIL'} - staged Cooley-Tukey FFT validates vs numpy.fft on the ANE")
     return 0 if all_ok else 1
 
 

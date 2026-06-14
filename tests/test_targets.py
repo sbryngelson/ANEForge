@@ -3,7 +3,7 @@
 Host-independent: every fact here is the measured per-family capability data from the
 M1/M5 reverse-engineering (MinimumFamily op floors + the ZinIrHalParameters numeric limits +
 the "MIL is only supported for H13+ ANE architectures" hard floor). No hardware needed
-to run these — family is passed explicitly. Detection + cross-compile are separate.
+to run these - family is passed explicitly. Detection + cross-compile are separate.
 """
 import pytest
 
@@ -35,7 +35,7 @@ def test_m1_and_m5_anchors():
 
 # --- op gating: native / decompose / reject, per family ---
 def test_core_ops_native_on_every_supported_chip():
-    # F0/F2 ops are native on M1 (family 2) and up — aneforge core nets have no gap here
+    # F0/F2 ops are native on M1 (family 2) and up - aneforge core nets have no gap here
     for op in ("conv", "matmul", "softmax", "layer_norm", "sdpa", "erf", "rsqrt", "atan"):
         assert T.op_status(op, 2) == "native"
         assert T.op_status(op, 5) == "native"
@@ -117,14 +117,14 @@ def test_preflight_catches_group_norm_internal_oversize():
     import aneforge as af
     C, H, W, G = 32, 130, 130, 1
     g = af.input((1, C, H, W)).group_norm(np.ones(C, np.float16), np.zeros(C, np.float16), G)
-    assert not T.preflight(g, 2).ok       # M1 / A13 — rejects (16384 cap, H*W=16900)
-    assert not T.preflight(g, 4).ok       # A15 — still 16384
-    assert T.preflight(g, 5).ok           # M5 / A16 — fits 65536
+    assert not T.preflight(g, 2).ok       # M1 / A13 - rejects (16384 cap, H*W=16900)
+    assert not T.preflight(g, 4).ok       # A15 - still 16384
+    assert T.preflight(g, 5).ok           # M5 / A16 - fits 65536
 
 
 def test_preflight_group_norm_tiled_fits_small_axes():
     # SD-1.5 640ch@64/G32: flat (C/G)*H*W=81920 overflowed, but tiled axes are
-    # D=20, H*W=4096 — both under even the A13 16384 cap, so it fits everywhere.
+    # D=20, H*W=4096 - both under even the A13 16384 cap, so it fits everywhere.
     import numpy as np
 
     import aneforge as af
@@ -170,7 +170,7 @@ def test_detect_family_env_override(monkeypatch):
 
 
 @pytest.mark.skipif(T.detect_family() != 5,
-                    reason="host-intrinsic: asserts THIS box detects as family 5 (M5) — "
+                    reason="host-intrinsic: asserts THIS box detects as family 5 (M5) - "
                            "skip on other hosts (e.g. the M1/family-2 dev box)")
 def test_detect_family_on_this_m5_host(monkeypatch):
     monkeypatch.delenv("ANEFORGE_TARGET", raising=False)

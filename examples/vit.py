@@ -52,12 +52,10 @@ def load_vit_weights():
     return m, sd
 
 
-# --------------------------------------------------------------------------- #
 # ViT graph (aneforge public ops). Inputs (in creation order):                  #
 #   x   [1,3,224,224]  image                                                   #
 #   cls [1,768]        CLS-token constant                                      #
 #   pos [197,768]      positional-embedding constant                           #
-# --------------------------------------------------------------------------- #
 def build_vit(sd, n_layers):
     """aneforge graph for ViT-B/16 forward -> logits [1,1000].
 
@@ -117,9 +115,7 @@ def _row0(h):
     return h.transpose([1, 0]).linear(sel).transpose([1, 0])   # [D,1] -> [1,D]
 
 
-# --------------------------------------------------------------------------- #
 # torch reference (optionally truncated to K encoder layers, same weights)     #
-# --------------------------------------------------------------------------- #
 def torch_ref(m, img, n_layers):
     import torch
     with torch.no_grad():
@@ -133,9 +129,7 @@ def torch_ref(m, img, n_layers):
         return m.heads(x).numpy()[0]
 
 
-# --------------------------------------------------------------------------- #
 # optimizer tie-in: one real ViT attention layer via af.sdpa (route rewrite)   #
-# --------------------------------------------------------------------------- #
 def attn_layer_graph(sd, layer=0):
     """ViT layer-`layer` self-attention as q/k/v proj -> af.sdpa -> out-proj, with
     the REAL pretrained weights. Input is the [SEQ,DIM] post-ln_1 activation. Built
@@ -169,11 +163,9 @@ def maxdiff(a, b):
     return float(np.abs(a - b).max() / (np.abs(b).max() + 1e-6))
 
 
-# --------------------------------------------------------------------------- #
 # main                                                                        #
-# --------------------------------------------------------------------------- #
 def main():
-    print("ViT-B/16 on the Apple Neural Engine (aneforge)\n" + "=" * 70)
+    _common.head("ViT-B/16 on the Apple Neural Engine (aneforge)")
     m, sd = load_vit_weights()
     print("config: torchvision vit_b_16 IMAGENET1K_V1 | "
           f"{N_LAYERS} layers x {DIM} dim x {HEADS} heads | patch {PATCH} | "
@@ -184,7 +176,7 @@ def main():
     cls_const = sd["class_token"].reshape(1, DIM).astype(np.float32)
     pos_const = sd["encoder.pos_embedding"].reshape(SEQ, DIM).astype(np.float32)
 
-    # --- try the full 12-layer model as ONE program; fall back to fewer layers ---
+    # try the full 12-layer model as ONE program; fall back to fewer layers
     n_layers, net, why = N_LAYERS, None, ""
     for k in (N_LAYERS, 8, 6, 4, 2, 1):
         try:
@@ -205,7 +197,7 @@ def main():
     print(f"forward: {net.n_ops} ops fused into 1 ANE program"
           + (f" (+{net.n_sdpa} native-SDPA sub-programs)" if getattr(net, "n_sdpa", 0) else ""))
 
-    # --- validate logits vs torch reference (same n_layers) ---
+    # validate logits vs torch reference (same n_layers)
     ane = net(img, cls_const, pos_const)[0]
     ref = torch_ref(m, img, n_layers)
     cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref)))
@@ -220,7 +212,7 @@ def main():
     print(f"  top-1 match  = {top1} | top-5 overlap = {top5_overlap}/5")
     forward_ok = cos > 0.99 and top1
 
-    # --- optimizer demo: SDPA route rewrite on a real ViT attention layer ---
+    # optimizer demo: SDPA route rewrite on a real ViT attention layer
     print("\nOPTIMIZER (af.tune SDPA route rewrite on ViT layer-0 attention):")
     xin = rng.standard_normal((SEQ, DIM)).astype(np.float32)
     from aneforge._compile import compile as _compile
@@ -246,8 +238,7 @@ def main():
     print(f"  maxdiff(tune, opt=0) = {diff:.6f}  (lossless route -> ~0)")
     tune_ok = diff <= 1e-2          # lossless route must be faithful to baseline
 
-    # --- verdict ---
-    print("\n" + "=" * 70)
+    # verdict
     print(f"forward validates (cos>0.99 & top-1): {forward_ok}")
     print(f"tune correct (maxdiff ~0, lossless):  {tune_ok}  | measured {speedup:.2f}x")
     ok = forward_ok and tune_ok

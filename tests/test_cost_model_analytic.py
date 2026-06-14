@@ -88,13 +88,13 @@ def test_m1_classifies_deep_narrow_as_slower():
 
 # --- the M5 loop closure: per-chip measured {BW, floor, peak} anchors ------------------
 # The M1-anchored model over-predicted M5 ~2x (mean |err| 99%, max 211%): it scaled BW by
-# CLOCK (9.0 -> 14.9 GB/s) but M5's measured effective BW is 57 GB/s — BW tracks CORE
+# CLOCK (9.0 -> 14.9 GB/s) but M5's measured effective BW is 57 GB/s - BW tracks CORE
 # COUNT (16/4), not clock (m5_weight_stream.py / m5_bw_floor.py).
 # Fix: silicon-measured anchors per chip {h13: 9.0 GB/s/220us/3.25T, h17s: 57 GB/s/
 # 110us/8.9T}; unmeasured chips scale BW by core ratio and floor by clock from their
 # family's anchor (fam 5 -> h17s, else h13).
 _M5_CONVS = [
-    # (workload, kH, kW, Cin, Cout, spatial, M5 measured ms) — m5_roofline_validate.py
+    # (workload, kH, kW, Cin, Cout, spatial, M5 measured ms) - m5_roofline_validate.py
     ("3x3 C256@28",  3, 3, 256,  256,  28, 0.216),
     ("1x1 C512@32",  1, 1, 512,  512,  32, 0.178),
     ("3x3 C512@14",  3, 3, 512,  512,  14, 0.192),
@@ -139,7 +139,7 @@ def test_unmeasured_chip_bw_core_scaled():
     c5, cd = _cost._analytic_constants("h17s"), _cost._analytic_constants("h17d")
     assert abs(cd["bw_bytes_per_us"] / c5["bw_bytes_per_us"] - 4.0) < 0.01     # 64/16
     # h14 (M2 Pro / A14) is now its OWN silicon-measured anchor (~48 GB/s), distinct from
-    # h13's ~9 GB/s — not scaled off h13 anymore.
+    # h13's ~9 GB/s - not scaled off h13 anymore.
     c1, c4 = _cost._analytic_constants("h13"), _cost._analytic_constants("h14")
     assert abs(c4["bw_bytes_per_us"] - 48.0e3) < 1.0           # 48 GB/s = 48e3 B/us
     assert c4["bw_bytes_per_us"] > 5 * c1["bw_bytes_per_us"]   # ~48 vs ~9 GB/s

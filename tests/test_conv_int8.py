@@ -1,4 +1,4 @@
-"""Conv per-channel int8 weights — round-9 fix.
+"""Conv per-channel int8 weights - round-9 fix.
 
 Round-8 found that ``af.conv`` emitted its weight with ``allow_int8=False``, so
 ``compile(int8=True)`` / ``compress='int8'`` on a conv graph was a SILENT no-op

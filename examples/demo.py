@@ -19,7 +19,7 @@ import numpy as np
 import aneforge as af
 from aneforge import autograd as agrad
 
-# ---- a little colour (truecolor; brand teal + rust) ------------------------
+# a little colour (truecolor; brand teal + rust)
 TEAL = "\033[38;2;72;187;170m"
 RUST = "\033[38;2;235;130;70m"
 DIM = "\033[2m"
@@ -44,7 +44,7 @@ def spinner(stop, label):
         time.sleep(0.08)
 
 
-# ---- the model -------------------------------------------------------------
+# the model
 TEXT = "the apple neural engine trains a language model on itself. " * 2
 D, HEADS, dh, FF, NLAYERS, STEPS, LR = 48, 4, 12, 96, 1, 80, 0.01
 
