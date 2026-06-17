@@ -3,6 +3,7 @@
 [![CI](https://github.com/sbryngelson/ANEForge/actions/workflows/ci.yml/badge.svg)](https://github.com/sbryngelson/ANEForge/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/aneforge?color=2e6b69)](https://pypi.org/project/aneforge/)
 [![Docs](https://readthedocs.org/projects/aneforge/badge/?version=latest)](https://aneforge.readthedocs.io)
+[![arXiv](https://img.shields.io/badge/arXiv-2606.17090-b31b1b.svg)](https://arxiv.org/abs/2606.17090)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20672609.svg)](https://doi.org/10.5281/zenodo.20672609)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e6b69.svg)](LICENSE)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-macOS%2014%2B-b84310.svg)](#install)
@@ -174,9 +175,8 @@ PYTHONPATH=. python3 -m pytest tests/ -q
 
 ## Documentation
 
-The manual lives in [`docs/`](docs/) (MkDocs; `pip install -r docs/requirements.txt`,
-then `mkdocs serve`), starting at [`docs/index.md`](docs/index.md). The API is
-documented in the module docstrings, and runnable usage in [`examples/`](examples/).
+The manual is hosted at [aneforge.readthedocs.io](https://aneforge.readthedocs.io). The
+API is documented in the module docstrings, and runnable usage in [`examples/`](examples/).
 
 ## Contributing
 

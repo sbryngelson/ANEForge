@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
+message: "If you use ANEForge, please cite the paper below."
 title: "ANEForge: Python for direct computation on the Apple Neural Engine"
 type: software
 authors:
@@ -11,3 +11,15 @@ doi: 10.5281/zenodo.20672609
 license: MIT
 version: "0.1.1"
 date-released: "2026-06-14"
+preferred-citation:
+  type: article
+  title: "ANEForge: Python for direct computation on the Apple Neural Engine"
+  authors:
+    - family-names: Bryngelson
+      given-names: "Spencer H."
+      affiliation: "Georgia Institute of Technology"
+  year: 2026
+  month: 6
+  doi: 10.48550/arXiv.2606.17090
+  url: "https://arxiv.org/abs/2606.17090"
+  notes: "arXiv:2606.17090"
