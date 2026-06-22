@@ -340,6 +340,20 @@ class Tensor:
             raise ValueError(f"layer_norm expects 2D [M,D] with gamma/beta [D]; got {self.shape}, {gamma.shape}")
         return Tensor(self.shape, "layer_norm", [self], {"gamma": gamma, "beta": beta, "eps": float(eps)})
 
+    def channel_layer_norm(self, gamma, beta, eps: float = 1e-5) -> "Tensor":
+        """LayerNorm over the CHANNEL axis of a channels-first [N, C, 1, S] tensor -
+        the ANE-native transformer layout. Each [N, :, 1, s] vector is normalized over
+        C; `gamma`/`beta` are [C]. Same result as `layer_norm` on the [N*S, C] view, but
+        with no transpose into and out of [seq, d], which is what makes the attention/MLP
+        stack cheap on the ANE (projections stay 1x1 convs over [N, C, 1, S])."""
+        gamma = np.asarray(gamma); beta = np.asarray(beta)
+        _check_dtype(gamma, "channel_layer_norm gamma"); _check_dtype(beta, "channel_layer_norm beta")
+        if (len(self.shape) != 4 or self.shape[2] != 1
+                or gamma.shape != (self.shape[1],) or beta.shape != (self.shape[1],)):
+            raise ValueError(f"channel_layer_norm expects [N,C,1,S] with gamma/beta [C]; "
+                             f"got {self.shape}, {gamma.shape}")
+        return Tensor(self.shape, "channel_layer_norm", [self], {"gamma": gamma, "beta": beta, "eps": float(eps)})
+
     def group_norm(self, gamma, beta, num_groups: int, eps: float = 1e-5) -> "Tensor":
         """GroupNorm over [1,C,H,W]. `gamma`/`beta`: [C] arrays for a fixed
         (baked) affine, or broadcastable parameter `Tensor`s ([1, C, 1, 1]) for a

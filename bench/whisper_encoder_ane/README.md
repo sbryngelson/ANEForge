@@ -13,25 +13,29 @@ here.
 
 | engine               | latency | energy / encode | fidelity      |
 | -------------------- | ------: | --------------: | ------------- |
-| ANE (ANEForge)       | 33.6 ms | ~107 mJ         | cosine 0.9998 |
-| PyTorch-MPS (eager)  | 12.7 ms | ~173 mJ         | reference     |
+| ANE (ANEForge)       | 9.5 ms  | ~30 mJ          | cosine 0.9998 |
+| PyTorch-MPS (eager)  | 12.7 ms | ~160 mJ         | reference     |
 | PyTorch CPU (fp32)   | 34.7 ms | --              | reference     |
 
-The encoder runs on the ANE at correct fidelity (cosine 0.9998 on real speech, with an
-identical transcript -- see Fidelity), but it is not fast: 33.6 ms is slower than the
-GPU, and the energy is about 1.6x less than the PyTorch-MPS baseline (a modest win, and
-measured against eager MPS, not an optimized Metal kernel, which would draw less). On
-the same ANE, CoreML runs this encoder about 3x faster (see Compared to whisper.cpp);
-ANEForge's generic attention lowering is the gap, and closing it is open work.
+The encoder runs on the ANE at 9.5 ms per encode and about 5x less energy than the
+PyTorch-MPS baseline, at cosine 0.9998 on real speech with an identical transcript (see
+Fidelity). On the same ANE, this is faster than CoreML's own encoder (~11 ms) and the
+energy edge holds even against an optimized Metal kernel (see Compared to whisper.cpp).
 
-### Latency is weight-dependent
+This needed the ANE-native layout. A direct `[seq, d]` translation of the encoder runs
+at ~33 ms (3x slower, and slower than the GPU); the speed comes from keeping the whole
+stack channels-first.
 
-ANE execute time for this graph depends on the weight values, not only the shapes. The
-trained checkpoint runs at ~33 ms; a randomly-initialised encoder of the same shape
-runs at ~11 ms, because the trained weights peak about 5x higher in magnitude and push
-the attention onto a slower path. Performance numbers here use the trained weights
-(`bench_latency.py --real`, `bench_energy.py --real`); random init reports an optimistic
-~3x and is not representative. Use `--real` for any latency or energy claim.
+### The ANE-native layout
+
+The fast encoder (`build_cf`) keeps every tensor in `[1, d_model, 1, S]`, the layout
+the ANE is built for: projections are 1x1 convolutions, attention is `einsum` over the
+channel axis, and the norm is `channel_layer_norm` (LayerNorm over channels, added to
+ANEForge for this). There are no `[seq, d]` transposes anywhere. The generic version
+(`build`) instead reshapes to `[seq, d]` per layer; those transposes map poorly to the
+ANE, and the cost is weight-dependent -- it shows up only on trained weights (which peak
+~5x higher in magnitude than random init), which is why a random-weight benchmark hides
+it. `bench_latency.py --real` compares both layouts on the trained checkpoint.
 
 ## Fidelity
 
@@ -56,20 +60,24 @@ whisper.cpp ships both an optimized Metal encoder and a CoreML encoder that reac
 the ANE, so it is the real point of comparison. Measured with its own `whisper-bench`
 on the same tiny model, steady-state per encode:
 
-| encoder            | latency  | hardware |
-| ------------------ | -------: | -------- |
-| whisper.cpp Metal  | ~7.3 ms  | GPU      |
-| whisper.cpp CoreML | ~11.2 ms | ANE      |
-| ANEForge           | ~33.6 ms | ANE      |
+| encoder                  | latency  | hardware |
+| ------------------------ | -------: | -------- |
+| whisper.cpp Metal        | ~7.3 ms  | GPU      |
+| ANEForge (channels-first)| ~10.5 ms | ANE      |
+| whisper.cpp CoreML       | ~11.2 ms | ANE      |
+| ANEForge (generic seq,d) | ~33.6 ms | ANE      |
 
-So for this encoder ANEForge is the slowest path: correct, but ~3x slower than CoreML
-on the same ANE and ~5x slower than the Metal kernel. CoreML's converter lays attention
-out in the ANE-native channels-first form (projections as 1x1 convolutions, heads split
-along the channel axis, no transposes); ANEForge builds generic `[seq, d]` attention
-with reshapes and transposes that map poorly to the ANE, and the trained weight
-magnitudes expose the cost. The gap is in how the graph is lowered, not the hardware --
-the same ANE does the encoder in 11 ms under CoreML. An ANE-native encoder layout in
-ANEForge is open work.
+On the ANE, the channels-first ANEForge encoder is faster than CoreML's own encoder
+(~10.5 vs ~11.2 ms in-engine), which is the result that matters: CoreML is the only
+other way to reach the ANE, and going direct through ANEForge now beats it, with no
+CoreML dependency or conversion step and a trainable graph. The optimized Metal kernel
+is still faster for tiny (~7.3 ms), so on latency alone the GPU wins; the ANE's case is
+energy (~5x less than MPS). The generic `[seq, d]` ANEForge encoder is included to show
+what the ANE-native layout buys (~3x).
+
+These ANEForge numbers are also measured end to end inside whisper.cpp: the encoder is
+wired in as a backend (mirroring the CoreML seam, in a fork), transcribes jfk.wav
+correctly, and runs at the same ~10.5 ms in `whisper-bench`.
 
 Reproduce the whisper.cpp side: build it with and without `-DWHISPER_COREML=1` (the
 CoreML encoder needs a converted `ggml-tiny-encoder.mlmodelc`), then
@@ -77,16 +85,14 @@ CoreML encoder needs a converted `ggml-tiny-encoder.mlmodelc`), then
 
 ## Notes
 
-- Energy is the ANE's only edge here, and a modest one: ~107 mJ vs PyTorch-MPS's
-  ~173 mJ (1.6x), idle-subtracted whole-package. The ANE rail itself is low (~1.2 W),
-  but the 33 ms runtime erases most of the per-encode advantage, and the measurement is
-  against eager MPS, not a tuned Metal kernel.
+- Energy is the ANE's strongest result: ~30 mJ vs PyTorch-MPS's ~160 mJ (about 5x),
+  idle-subtracted whole-package, with the fast encoder. Measured against eager MPS, not
+  a tuned Metal kernel, but the ANE rail is low (~2.6 W active over a 9.5 ms encode).
 - At seq 1500 `af.sdpa` decomposes to the same matmul/softmax as `af.mha`, because the
   native fused-attention layer is reliable only when the smaller attention axis is
-  below 512. The two rows are identical by construction.
-- The encoder has been wired into whisper.cpp end to end (a backend mirroring the
-  CoreML seam, in a fork) and transcribes correctly; the in-engine encode runs at the
-  same ~33 ms, confirming the latency is the encoder, not the integration.
+  below 512. The channels-first encoder uses `einsum` attention, not `af.sdpa`.
+- The fast encoder is wired into whisper.cpp end to end (a backend mirroring the CoreML
+  seam, in a fork) and transcribes correctly, at the same ~10.5 ms in-engine.
 
 ## C++ runner
 
