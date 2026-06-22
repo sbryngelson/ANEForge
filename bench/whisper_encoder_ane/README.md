@@ -11,29 +11,35 @@ here.
 
 ## Result (whisper-tiny encoder, M-series)
 
-| engine          | latency | energy / encode | fidelity     |
-| --------------- | ------: | --------------: | ------------ |
-| ANE             | 11.4 ms | ~32 mJ          | cosine 0.998 |
-| Metal GPU (MPS) | 13.0 ms | ~126 mJ         | reference    |
-| CPU (fp32)      | 36.1 ms | --              | reference    |
+| engine          | latency | energy / encode | fidelity      |
+| --------------- | ------: | --------------: | ------------- |
+| ANE             | 11.4 ms | ~32 mJ          | cosine 0.9998 |
+| Metal GPU (MPS) | 13.0 ms | ~126 mJ         | reference     |
+| CPU (fp32)      | 36.1 ms | --              | reference     |
 
 The ANE matches the GPU on latency and uses about 3.8x less energy per encode, at
-cosine 0.9977 against the PyTorch reference on the trained checkpoint (see Fidelity
-below). The latency and the energy ratio are stable across runs; absolute milliJoules
-move with background system load.
+cosine 0.9998 on real speech against the PyTorch reference, with an identical
+transcript (see Fidelity below). For reference, whisper.cpp's own Metal encoder runs
+the same tiny model at about 14.3 ms on this machine, so the ANE encoder is faster
+than the engine it would replace, not only the PyTorch baseline. The latency and the
+energy ratio are stable across runs; absolute milliJoules move with background system
+load.
 
 ## Fidelity
 
-A randomly-initialised encoder reads cosine 0.999987, but the trained checkpoint on
-real audio reads cosine 0.9977 (6.8% relative error). The gap is the ANE's gelu LUT
-and fp16 losing more on the sharp, high-dynamic-range activations a trained encoder
-produces on real log-mel; it needs both real weights and real input to appear, so a
-synthetic check alone reports the optimistic number. `validate_real.py` measures the
-trained checkpoint; `fidelity.py` measures the random-init case.
+A randomly-initialised encoder reads cosine 0.999987. The trained checkpoint reads
+cosine 0.9998 on real speech (jfk.wav) and 0.9977 on the harder synthetic signal in
+`validate_real.py` (6.8% relative error). The gap is the ANE's gelu LUT and fp16
+losing more on the sharp, high-dynamic-range activations a trained encoder produces;
+it needs both real weights and real input to appear, so a synthetic check alone reads
+the optimistic number. `fidelity.py` measures the random-init case; `validate_real.py`
+the trained checkpoint.
 
-Whether 6.8% feature error costs transcription accuracy is a decoder-level (WER)
-question, not settled here. Latency and energy are weight-independent and unchanged by
-which weights run.
+The feature error does not change the transcript. Decoding the ANE encoder output with
+the HF Whisper decoder transcribes jfk.wav identically to the reference encoder
+(`wer_proxy.py`). That is one clip, not a dataset-wide WER, but it shows the decoder
+absorbs the gap on real speech. Latency and energy are weight-independent and unchanged
+by which weights run.
 
 ## Notes
 
@@ -42,10 +48,12 @@ which weights run.
 - At seq 1500 `af.sdpa` decomposes to the same matmul/softmax as `af.mha`, because the
   native fused-attention layer is reliable only when the smaller attention axis is
   below 512. The two rows are identical by construction.
-- The baseline is PyTorch-eager MPS, not whisper.cpp's Metal kernel or its CoreML path
-  (which can already reach the ANE for the encoder). A direct comparison needs a
-  whisper.cpp fork; this measures ANEForge against the same PyTorch GPU baseline the
-  top-level benchmarks use.
+- The main table's GPU baseline is PyTorch-eager MPS, the same baseline the top-level
+  benchmarks use. whisper.cpp's own Metal encoder, measured separately on the same
+  tiny model and clip, runs at about 14.3 ms, also slower than the ANE here. The
+  comparison still missing is whisper.cpp's CoreML path, which can already reach the
+  ANE for the encoder; measuring against it, and a real in-engine integration, need a
+  whisper.cpp fork.
 
 ## C++ runner
 
@@ -67,6 +75,7 @@ entry point, so ANEForge is unchanged.
 | `encoder.py`          | the whisper-tiny encoder built two ways (HF reference + ANEForge)  |
 | `fidelity.py`         | cosine and relative error vs the reference (random-init encoder)    |
 | `validate_real.py`    | the same, on the trained whisper-tiny checkpoint and a real log-mel |
+| `wer_proxy.py`        | ANE-encoder transcript vs reference transcript on real speech       |
 | `bench_latency.py`    | ANE (mha, sdpa) vs CPU vs MPS latency                              |
 | `bench_energy.py`     | ANE vs MPS energy via powermetrics (idle-subtracted, whole-package)|
 | `export_bundle.py`    | compile and persist the program, dump fp16 vectors and a manifest  |
@@ -80,6 +89,7 @@ From the repo root:
 ```sh
 PYTHONPATH=. python3 bench/whisper_encoder_ane/fidelity.py
 PYTHONPATH=. python3 bench/whisper_encoder_ane/validate_real.py   # downloads whisper-tiny
+PYTHONPATH=. python3 bench/whisper_encoder_ane/wer_proxy.py       # downloads whisper-tiny + jfk.wav
 PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_latency.py
 PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_energy.py    # needs passwordless sudo
 sh bench/whisper_encoder_ane/run_cpp.sh
