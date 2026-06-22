@@ -58,16 +58,19 @@ def pkg(means):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--window", type=float, default=8.0, help="seconds per workload sample")
+    ap.add_argument("--real", action="store_true",
+                    help="trained whisper-tiny weights (downloads; the representative number)")
     args = ap.parse_args()
 
     if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0:
         sys.exit("powermetrics needs sudo: run `sudo -v` first (passwordless sudo).")
 
-    enc, sd = E.make_encoder()
+    enc, sd = E.real_encoder() if args.real else E.make_encoder()
+    print(f"weights: {'trained whisper-tiny' if args.real else 'random init'}")
     mel = E.mel_input()
-    net = E.build(sd, attn="mha")
+    net = E.build_cf(sd)                              # the channels-first (fast) encoder
     mel4 = mel[:, :, None, :].astype("float16")
-    pos = sd["embed_positions.weight"].astype("float16")
+    pos = sd["embed_positions.weight"].T.reshape(1, E.D, 1, E.CTX).astype("float16")
     ane_call = lambda: net(mel4, pos)
 
     enc_mps = enc.to("mps").half()

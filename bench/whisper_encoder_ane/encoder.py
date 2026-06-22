@@ -41,6 +41,16 @@ def make_encoder(seed: int = 0):
     return enc, sd
 
 
+def real_encoder():
+    """The trained whisper-tiny encoder and its numpy state dict (downloads the
+    checkpoint). Use this for performance numbers: ANE latency is weight-dependent,
+    and the trained weights run materially slower than random init."""
+    from transformers import WhisperForConditionalGeneration
+    enc = WhisperForConditionalGeneration.from_pretrained("openai/whisper-tiny").eval().model.encoder
+    sd = {k: v.detach().numpy().astype(np.float32) for k, v in enc.state_dict().items()}
+    return enc, sd
+
+
 def torch_reference(enc, mel: np.ndarray) -> np.ndarray:
     """The HF encoder output for `mel` ([1, 80, 3000] fp32); returns [1500, 384]."""
     import torch
@@ -101,10 +111,61 @@ def build(sd, attn: str = "mha", build_dir: str | None = None):
     return af.compile(h, build_dir=build_dir)
 
 
+def _conv1x1(x, W, b):
+    """A Linear [out, in] as a 1x1 conv over channels-first [N, in, 1, S]."""
+    return af.conv(x, W.reshape(W.shape[0], W.shape[1], 1, 1), bias=b)
+
+
+def build_cf(sd, build_dir: str | None = None):
+    """The whisper-tiny encoder in the ANE-native channels-first layout: the whole
+    transformer stack stays [1, d_model, 1, S], projections are 1x1 convolutions, the
+    norm is `channel_layer_norm`, and attention is einsum, so there are no [seq, d]
+    transposes. About 3x faster than `build` on the trained checkpoint (it avoids the
+    layout the ANE handles poorly), at the same fidelity.
+
+    Inputs are (mel [1, 80, 1, 3000], positional-embedding [1, 384, 1, 1500]); feed with
+    `run_cf`. Output is [1500, 384] to match the reference and whisper.cpp's decoder.
+    """
+    mel = af.input((1, MELS, 1, FRAMES))
+    pos = af.input((1, D, 1, CTX))                    # positional embedding, channels-first
+    h = _pad_time(mel, 1)
+    h = af.conv(h, sd["conv1.weight"].reshape(D, MELS, 1, 3), stride=1, pad=0, bias=sd["conv1.bias"]).gelu()
+    h = _pad_time(h, 1)
+    h = af.conv(h, sd["conv2.weight"].reshape(D, D, 1, 3), stride=2, pad=0, bias=sd["conv2.bias"]).gelu()
+    h = h + pos                                       # already [1, 384, 1, 1500], no transpose
+    scale = (D // HEADS) ** -0.5
+    for i in range(LAYERS):
+        p = f"layers.{i}."
+        xn = h.channel_layer_norm(sd[p + "self_attn_layer_norm.weight"], sd[p + "self_attn_layer_norm.bias"])
+        q = _conv1x1(xn, sd[p + "self_attn.q_proj.weight"], sd[p + "self_attn.q_proj.bias"])
+        k = _conv1x1(xn, sd[p + "self_attn.k_proj.weight"], None)
+        v = _conv1x1(xn, sd[p + "self_attn.v_proj.weight"], sd[p + "self_attn.v_proj.bias"])
+        qh, kh, vh = af.split(q, HEADS, 1), af.split(k, HEADS, 1), af.split(v, HEADS, 1)
+        heads = []
+        for j in range(HEADS):
+            w = (af.einsum("bchq,bchk->bkhq", qh[j], kh[j]) * scale).softmax(1)
+            heads.append(af.einsum("bkhq,bchk->bchq", w, vh[j]))
+        a = _conv1x1(af.concat(heads, axis=1), sd[p + "self_attn.out_proj.weight"], sd[p + "self_attn.out_proj.bias"])
+        h = h + a
+        fn = h.channel_layer_norm(sd[p + "final_layer_norm.weight"], sd[p + "final_layer_norm.bias"])
+        f = _conv1x1(_conv1x1(fn, sd[p + "fc1.weight"], sd[p + "fc1.bias"]).gelu(),
+                     sd[p + "fc2.weight"], sd[p + "fc2.bias"])
+        h = h + f
+    h = h.channel_layer_norm(sd["layer_norm.weight"], sd["layer_norm.bias"])
+    return af.compile(h.reshape(D, CTX).transpose([1, 0]), build_dir=build_dir)
+
+
 def run(net, sd, mel: np.ndarray) -> np.ndarray:
     """Feed (mel, positional-embedding) in creation order; returns fp32 [1500, 384]."""
     mel4 = mel[:, :, None, :].astype(np.float16)
     pos = sd["embed_positions.weight"].astype(np.float16)
+    return net(mel4, pos)
+
+
+def run_cf(net, sd, mel: np.ndarray) -> np.ndarray:
+    """Feed the channels-first encoder (mel, positional-embedding transposed)."""
+    mel4 = mel[:, :, None, :].astype(np.float16)
+    pos = sd["embed_positions.weight"].T.reshape(1, D, 1, CTX).astype(np.float16)
     return net(mel4, pos)
 
 

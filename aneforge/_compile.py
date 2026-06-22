@@ -739,6 +739,31 @@ def _e_layer_norm(em, t, n, s):
     em.line(f'{em.ty(t.shape)} {n} = reshape(shape={n}_ro, x={n}_bb)[name=string("{n}")];')
 
 
+@op("channel_layer_norm")
+def _e_channel_layer_norm(em, t, n, s):
+    # LayerNorm over the channel axis (axis 1) of a channels-first [N,C,1,S] tensor.
+    # Same reduction as layer_norm but with no reshape in/out: the ANE keeps the data in
+    # its native [N,C,1,S] layout, so the surrounding 1x1-conv projections stay efficient.
+    N, C, _, S = t.shape
+    ty = em.ty(t.shape)
+    rty = f"tensor<fp16,[{N},1,1,{S}]>"
+    g4 = em.weight(f"{n}_g", t.attrs["gamma"].reshape(1, C, 1, 1), allow_int8=False)
+    b4 = em.weight(f"{n}_b", t.attrs["beta"].reshape(1, C, 1, 1), allow_int8=False)
+    eps = float(np.float16(t.attrs["eps"])).hex()
+    em.line(f'tensor<int32,[1]> {n}_ax = const()[name=string("{n}_ax"), val=tensor<int32,[1]>([1])];')
+    em.line(f'bool {n}_kd = const()[name=string("{n}_kd"), val=bool(true)];')
+    em.line(f'{rty} {n}_mu = reduce_mean(axes={n}_ax, keep_dims={n}_kd, x={s[0]})[name=string("{n}_mu")];')
+    em.line(f'{ty} {n}_xc = sub(x={s[0]}, y={n}_mu)[name=string("{n}_xc")];')
+    em.line(f'{ty} {n}_sq = mul(x={n}_xc, y={n}_xc)[name=string("{n}_sq")];')
+    em.line(f'{rty} {n}_var = reduce_mean(axes={n}_ax, keep_dims={n}_kd, x={n}_sq)[name=string("{n}_var")];')
+    em.line(f'fp16 {n}_ep = const()[name=string("{n}_ep"), val=fp16({eps})];')
+    em.line(f'{rty} {n}_ve = add(x={n}_var, y={n}_ep)[name=string("{n}_ve")];')
+    em.line(f'{rty} {n}_rr = rsqrt(epsilon=fp16(0.0), x={n}_ve)[name=string("{n}_rr")];')
+    em.line(f'{ty} {n}_xn = mul(x={n}_xc, y={n}_rr)[name=string("{n}_xn")];')
+    em.line(f'{ty} {n}_gg = mul(x={n}_xn, y={g4})[name=string("{n}_gg")];')
+    em.line(f'{ty} {n} = add(x={n}_gg, y={b4})[name=string("{n}")];')
+
+
 @op("group_norm")
 def _e_group_norm(em, t, n, s):
     # Rank-4 tiling: reshape to [1,G,C/G,H*W] and reduce over the trailing two axes

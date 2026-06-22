@@ -38,17 +38,22 @@ def time_call(call, reps):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--reps", type=int, default=30)
+    ap.add_argument("--real", action="store_true",
+                    help="trained whisper-tiny weights (downloads; the representative number)")
     args = ap.parse_args()
 
-    enc, sd = E.make_encoder()
+    enc, sd = E.real_encoder() if args.real else E.make_encoder()
+    print(f"weights: {'trained whisper-tiny' if args.real else 'random init'}")
     mel = E.mel_input()
     ref = E.torch_reference(enc, mel)
 
-    print(f"{'engine':18s} {'ms/call':>8} {'cosine':>9}")
-    for tag in ("mha", "sdpa"):
-        net = E.build(sd, attn=tag)
-        ms, out = time_call(lambda: E.run(net, sd, mel), args.reps)
-        print(f"ANE [{tag:4s}]        {ms:8.2f} {E.cosine(out, ref):9.6f}")
+    print(f"{'engine':22s} {'ms/call':>8} {'cosine':>9}")
+    net_cf = E.build_cf(sd)
+    ms, out = time_call(lambda: E.run_cf(net_cf, sd, mel), args.reps)
+    print(f"{'ANE channels-first':22s} {ms:8.2f} {E.cosine(out, ref):9.6f}")
+    net_sd = E.build(sd, attn="mha")
+    ms, out = time_call(lambda: E.run(net_sd, sd, mel), args.reps)
+    print(f"{'ANE [seq,d] (old)':22s} {ms:8.2f} {E.cosine(out, ref):9.6f}")
 
     mt = torch.from_numpy(mel)
 
