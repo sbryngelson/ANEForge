@@ -11,7 +11,7 @@ power methodology a reviewer will attack first done right:
     matters; reporting raw loaded power double-counts the ~0.6 W the CPU burns at rest.
 
   * HEADLINE = TOTAL-PACKAGE ACTIVE POWER (sum of ane+gpu+cpu rails, idle-subtracted).
-    This is the honest number: an ANE workload still burns CPU on dispatch and an MLX
+    This is the actual number: an ANE workload still burns CPU on dispatch and an MLX
     workload burns CPU too, so attributing only the "device" rail would flatter both.
     We ALSO report the per-rail breakdown so the attribution is visible
     (e.g. "ANE 1.2 W + CPU 0.8 W dispatch").
@@ -40,7 +40,7 @@ SCOPE = workload classes where the ANE-vs-GPU choice is REAL:
   5. scientific kernels: matmul-DFT, a 2D 5-point stencil step, a fixed-iter Jacobi solve
   6. real models: ResNet-18, MiniLM encoder, full ViT-B/16 forward
 
-EXCLUSIONS (stated honestly): the netplist *bridge* ops (sdpa-bridge / argmax / fps /
+EXCLUSIONS: the netplist *bridge* ops (sdpa-bridge / argmax / fps /
 cost_volume / radius_search / sort via the subprocess dispatch path) are NOT raced
 here. They run 25 ms - 2.5 s in the current subprocess path due to a DISPATCH artifact, not
 silicon speed; racing them against MLX would misrepresent the hardware. They are an

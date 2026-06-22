@@ -60,7 +60,7 @@ API
     magnitude(X_re, X_im)     -> |X|                 sqrt(re^2 + im^2)
     power(X_re, X_im)         -> |X|^2
 
-Each returns numpy arrays; under the hood it builds an aneforge graph, compiles it to
+Each returns numpy arrays; internally it builds an aneforge graph, compiles it to
 ONE fused e5rt program, and runs it on the ANE. A `Plan` object (fft_plan / rfft_plan)
 compiles once and runs many times.
 

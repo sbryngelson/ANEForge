@@ -19,7 +19,7 @@ We analyze a synthetic signal - a sum of pure sinusoids plus a linear chirp - an
      "wide accumulator" finding: the length-N twiddle sum is accumulated in >=fp32,
      so fp16 rounding does NOT compound with N and the spectrum stays fp16-CLEAN.
 
-HONESTY: this is the NAIVE O(N^2) DFT (a dense twiddle matmul), not an O(N log N)
+CAVEAT: this is the NAIVE O(N^2) DFT (a dense twiddle matmul), not an O(N log N)
 FFT - the cost is the quadratic twiddle-matrix size/bandwidth, NOT precision. The
 relerr stays ~3e-4..1e-3 FLAT in N (it does not grow), so fp16 is not the wall for
 the transform. The reference is numpy's exact fft over the same fp16-rounded signal.
@@ -54,7 +54,7 @@ def dft_program(N):
     This is not cosmetic: without it the peak |X_k| grows ~amplitude*N/2, so at
     N=2048 the SQUARED intermediate Xr^2+Xi^2 (~1.2e5) OVERFLOWS fp16's 65504 max
     and the spectrum becomes inf. The unitary normalization keeps the magnitude AND
-    its square comfortably in fp16 range at every N - an honest fp16 dynamic-range
+    its square comfortably in fp16 range at every N - a real fp16 dynamic-range
     note (the wall here is fp16's max value, not its precision)."""
     n = np.arange(N)
     k = n.reshape(-1, 1)

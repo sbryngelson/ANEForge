@@ -17,7 +17,7 @@ ANE program (the engine has no complex dtype, so values ride as real/imag pairs)
 The two transform programs are compiled ONCE and reused for every step. A high-order
 spectral filter (hyperviscosity) holds the enstrophy cascade at the grid scale.
 
-HONESTY (fp16). The ANE computes in fp16. The dense DFT is unnormalized, so spectral
+CAVEAT (fp16). The ANE computes in fp16. The dense DFT is unnormalized, so spectral
 coefficients at this 256-grid exceed fp16's range; the transforms are scaled by
 linearity (exact) to fit, see FWD/INV below. Advection is chaotic, so an fp16
 trajectory is its own slightly-perturbed flow. The point here is that it stays

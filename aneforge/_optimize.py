@@ -801,7 +801,7 @@ def tune_precision(out, target_error: float | None = None, cost_budget_us: float
     frontier, not just the winner. Unlike speed-tune(), a variant here can be chosen for
     IMPROVING accuracy over the fp16 baseline.
 
-    HONEST SCOPE: automatic hotspot detection covers the reduce_sum->matmul case
+    SCOPE: automatic hotspot detection covers the reduce_sum->matmul case
     (structurally detectable). The CFG-style paired-fp16 fix is opt-in (use
     `precision_rewrite` / pass a marked region) because near-equal cancellation is
     data-dependent and cannot be confirmed at graph-build time.

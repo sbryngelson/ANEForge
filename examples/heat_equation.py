@@ -15,7 +15,7 @@ the next input. We evolve a hot-spot initial condition for many steps on a 64x64
 grid (Dirichlet u=0 boundary, enforced host-side after each conv), then validate
 the FINAL field against the SAME scheme run in fp32 numpy.
 
-HONESTY: fp16 rounding COMPOUNDS over the timesteps - the ANE trajectory and the
+CAVEAT: fp16 rounding COMPOUNDS over the timesteps - the ANE trajectory and the
 fp32 numpy trajectory are genuinely different sequences, so they drift a little per
 step. We report the relerr-vs-steps curve (it grows ~linearly: ~9e-3 at 50 steps,
 ~1.9e-2 at 100) and confirm the scheme stays STABLE: the field stays BOUNDED (no
@@ -123,7 +123,7 @@ def main():
     print(f"  field stayed bounded (no blow-up): {bounded}")
     print(f"  final-field relerr vs fp32-exact scheme: {relerr:.3e}")
 
-    # relerr-vs-steps curve (honest fp16 compounding profile)
+    # relerr-vs-steps curve (fp16 compounding profile)
     print("  fp16 compounding (relerr vs #steps, same hot-spot):")
     for S in (25, 50, 75, 100):
         ua, _, _ = evolve_ane(step, u0, S)

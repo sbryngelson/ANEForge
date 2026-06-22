@@ -201,7 +201,7 @@ def build_ane(cfg: Cfg, W, B, int8=False):
 
     aneforge has no constant-tensor leaf node, and a bmm (activation@activation) needs
     Tensor operands - so the per-layer KV cache is supplied as GRAPH INPUTS (fed each
-    call). That's the only honest way to express a cache here; the cache bytes are
+    call). That's the only correct way to express a cache here; the cache bytes are
     constant data the caller passes in, exactly like a real decode loop reads its cache
     from memory. Returns (Model, list-of-cache-arrays) so the runner feeds x + caches.
 

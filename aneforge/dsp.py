@@ -452,7 +452,7 @@ def iir_filter(x, b, a, n_taps: int = 256):
     The ANE is feed-forward: no in-graph loop, no scalar feedback, no scan/cumsum.
     There is NO streaming IIR on this hardware.
 
-    The ONLY honest realization is to TRUNCATE the IIR's infinite impulse response to
+    The ONLY realization is to TRUNCATE the IIR's infinite impulse response to
     `n_taps` and run it as an FIR (via fir_filter / fft_convolve). Exact only up to
     the truncation tail, with the tap count fixed at build time - it does NOT scale
     to arbitrary streaming IIR. Use it for stable filters whose impulse response has
@@ -605,7 +605,7 @@ def _selftest():
     # ---- IIR: arch-limited fixed-unroll (truncated impulse response FIR) ------ #
     if have_scipy:
         # a resonant (high-Q) bandpass: long, slowly-decaying impulse response, so
-        # truncation length n_taps visibly governs the error = the honest unroll cost.
+        # truncation length n_taps visibly governs the error = the unroll cost.
         bb_iir, aa_iir = ss.iirpeak(0.2, Q=30.0)
         xi = rng.standard_normal(512).astype(np.float32)
         ref_iir = ss.lfilter(bb_iir, aa_iir, xi)
@@ -637,12 +637,12 @@ def _selftest():
     print("      ONLY a FIXED-LENGTH FIR UNROLL: truncate the IIR impulse response to n_taps and")
     print("      run it as an FIR. Exact up to the truncation tail; tap count fixed at build")
     print("      time; does NOT scale to arbitrary streaming IIR. (relerr above shrinks as")
-    print("      n_taps grows = the impulse response decays - the honest cost of the unroll.)")
+    print("      n_taps grows = the impulse response decays - the actual cost of the unroll.)")
 
     # gate: good routines must be fp16-clean; IIR is reported, not gated on a fixed tol.
     ok = worst_good < 5e-3
     print(f"\n{'PASS' if ok else 'FAIL'} - FIR/FFT-DSP validate vs scipy/numpy on the ANE "
-          f"(worst GOOD relerr {worst_good:.2e}); IIR honestly tagged arch-limited (fixed unroll)")
+          f"(worst GOOD relerr {worst_good:.2e}); IIR tagged arch-limited (fixed unroll)")
     return 0 if ok else 1
 
 

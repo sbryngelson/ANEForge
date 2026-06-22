@@ -160,7 +160,7 @@ def sweep_gemv(K, N, *, reps, warmup, measure_pw):
             out_h["o"] = x32 @ Wt
         lat = min_latency(run, reps=max(10, reps // 2), warmup=warmup)
         out = out_h["o"]
-        # CPU fp32 moves 4 B/elem for the weight; report its own effective BW honestly
+        # CPU fp32 moves 4 B/elem for the weight; report its own effective BW
         cpu_bytes = K * N * 4 + K * 4 + N * 4
         d = {"dtype": "fp32", "lat_ms": lat * 1e3,
              "eff_GBps": cpu_bytes / lat / 1e9, "GFLOPs": gflops(K, N, lat),

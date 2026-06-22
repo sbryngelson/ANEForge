@@ -133,7 +133,7 @@ def sweep_gemm(ns, do_power):
         # --- CPU (fp32, numpy/Accelerate-AMX) ---
         # IMPORTANT: feed CONTIGUOUS operands. A transposed view (W32.T) makes
         # Accelerate fall off its fast fp32 GEMM path (~4x slower, ~fp64-rate) - the
-        # honest AMX peak needs both operands C-contiguous.
+        # the AMX peak needs both operands C-contiguous.
         Wt = np.ascontiguousarray(W32.T)
         lat = _min_lat(lambda: x32 @ Wt)
         out = x32 @ Wt

@@ -10,7 +10,7 @@ Two halves:
    loosened, the case docstring SAYS so and distinguishes "fp16 compounding" from
    "wrong" (a wrong kernel blows past any sane tol; compounding stays O(few %)).
 
-2. LAPACK FEASIBILITY PROBES - honest corner probes (QR/Cholesky-style
+2. LAPACK FEASIBILITY PROBES - corner probes (QR/Cholesky-style
    orthonormalization, triangular back-substitution, a small linear solve). These
    ask "what classical linear algebra actually fits the ANE's fp16 feed-forward
    dataflow?" They are tagged works / arch-limited / fp16-unstable with evidence
@@ -369,7 +369,7 @@ def _gram_syrk():
                   "compute", "works")
 
 
-# LAPACK FEASIBILITY PROBES - classify honestly, do not fake a pass.
+# LAPACK FEASIBILITY PROBES - classify correctly, do not fake a pass.
 #
 # Background (from the reverse-engineering corpus RE of the MatrixDecomposition layer):
 #   * aneforge's __all__ exposes NO decomposition op. The hardware
@@ -390,7 +390,7 @@ def _qr_givens_probe():
     APPROACH that fits a feed-forward engine: QR by a *fixed, precomputed*
     sequence of Givens rotations is data-dependent (each rotation angle depends on
     the current entries), so it cannot be unrolled into a static graph for an
-    arbitrary input. To probe the dataflow honestly we instead test the one
+    arbitrary input. To probe the dataflow we instead test the one
     orthogonalization step that IS expressible: a single Householder/Gram-Schmidt
     projection of column 2 against a normalized column 1, all from gemv + dot +
     l2_norm + axpy. That is the atomic step a QR is built from.

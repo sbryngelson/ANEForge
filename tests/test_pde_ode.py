@@ -26,7 +26,7 @@ is ARCH-LIMITED and tagged as such, with a note on exactly what control flow is
 missing. The fixed-iteration version of the same method WORKS; the adaptive/
 convergent version does not. That split IS the capability map.
 
-Honesty on error. The iterative kernels COMPOUND fp16 rounding: the ANE iterate and
+On error: the iterative kernels COMPOUND fp16 rounding: the ANE iterate and
 the numpy-fp32 reference iterate are genuinely different trajectories, so they drift
 a little per step. Where a tol is loosened, the docstring says so and distinguishes
 *compounding* (O(few %), grows ~linearly in step count, stays bounded) from a *bug*
@@ -627,7 +627,7 @@ def _log_series():
 # real solver needs (run-to-convergence / adaptive). We cannot express the
 # data-dependent stop, so we encode the boundary as an xfail with the reason - the
 # corpus records WHY, not a silent omission. The xfail keeps the gate green while
-# making the architectural limit a first-class, visible result.
+# making the architectural limit a visible result.
 
 def _newton_to_convergence_archlimited():
     """Newton run-TO-CONVERGENCE (stop when |f(x)| < tol) - the form a real root
@@ -638,7 +638,7 @@ def _newton_to_convergence_archlimited():
     executes and we can see it numerically converge), but the case is tagged
     arch-limited and xfail: the POINT is that the convergent form's stopping rule is
     inexpressible, not that the arithmetic is wrong. A fixed unroll that matched the
-    reference would XPASS rather than XFAIL, so to keep the semantics honest we set the
+    reference would XPASS rather than XFAIL, so to keep the semantics correct we set the
     reference to the run-to-tol numpy result with a DIFFERENT (data-dependent) iteration
     count: the fixed-K ANE graph and the variable-count reference then legitimately
     differ at tight tol, demonstrating that you cannot match an adaptive method with a

@@ -29,7 +29,7 @@ Devices
 
 Timing: warmup, then MIN over reps (the clean signal - min rejects scheduler
 noise). Each device's number includes its own host/dispatch overhead, which is
-called out honestly: the ANE/MLX numbers are end-to-end Python-call latency
+called out: the ANE/MLX numbers are end-to-end Python-call latency
 (compile-once, run-many), NOT pure silicon time. At small shapes that overhead
 dominates and the comparison is a dispatch-cost comparison, not a FLOP one.
 

@@ -712,7 +712,7 @@ extern "C" int ane_e5rt_program_share_buffer(ane_e5rt_program_t *prog,
 // The functions below are a directly-callable C research surface for multi-op
 // streams and async completion. The 9 production functions above are the only
 // ones the ctypes layer wires up; everything from here down is exercised by
-// hand from native test harnesses. Kept building (and honest with the docs)
+// hand from native test harnesses. Kept building (and in sync with the docs)
 // even though it is not part of the supported Python API.
 // =============================================================================
 

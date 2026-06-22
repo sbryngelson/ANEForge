@@ -15,7 +15,7 @@ The whole force computation (broadcast diff, squared distance, rsqrt^3, masked s
 is compiled into ONE fused e5rt program. We validate the resulting accelerations AND
 the advanced positions against the SAME computation in fp32 numpy.
 
-HONESTY: 1/r^3 is fp16-sensitive when two bodies get close (the denominator is a
+CAVEAT: 1/r^3 is fp16-sensitive when two bodies get close (the denominator is a
 small number raised to the 3/2 power), so we seed well-separated bodies and use a
 softening eps (standard in collisionless N-body) to keep r in fp16 range. With that,
 the accelerations match numpy to ~1e-2. The intermediate [N,N,3] grows O(N^2), so

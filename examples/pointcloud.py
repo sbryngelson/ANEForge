@@ -12,7 +12,7 @@ These layers aren't in the aneforge frontend yet, so the demo calls the in-packa
 ``aneforge._bridges`` modules directly. Each stage is validated against a numpy reference (exact for
 the integer-discretised FPS/RadiusSearch, fp16-tolerance for the cross product).
 
-Conventions worth stating honestly:
+Conventions worth stating:
     * FPS is L2-only on this arch - the ``DistanceMetric`` netplist param is
       ignored, so the reference uses Euclidean distance regardless. Seed = point 0.
     * RadiusSearch returns a [points x centroids] uint8 membership matrix
