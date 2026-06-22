@@ -10,30 +10,29 @@ What runs where:
   - TEXT (host, torch): CLIP tokenize + text_encoder -> cond/uncond [1,77,768].
     (CLIP-on-ANE is out of scope; one-time host cost.)
   - UNET (ANE): the full UNet2DConditionModel forward built from real weights with
-    aneforge ops. The whole UNet does NOT compile as one e5rt program (Espresso
-    rejects the program size), so it is SPLIT into ~25 per-RESNET e5rt programs
-    (conv_in / each down resnet+attn / each downsampler / mid / each up0-2
-    resnet+attn / each upsampler) chained host-side by passing intermediate tensors
-    + the skip stack as numpy. The final CrossAttnUpBlock (up3) and conv_out run at
-    64x64 with >=640 channels, where group_norm hits an Espresso "Not implemented"
-    limit, so they run on HOST torch. Re-run twice per step (cond + uncond).
+    aneforge ops. The whole UNet compiles as ONE fused e5rt program (1349 ops);
+    group_norm runs at every UNet size now that it lowers with rank-4 tiling, so no
+    block falls back to host. A per-RESNET split (conv_in / each resnet+attn /
+    samplers, chained host-side via numpy) remains as a fallback if the single
+    program ever fails to compile. Run twice per step (cond + uncond).
   - SCHEDULER (host): the pipeline's own scheduler.step + CFG combine.
-  - VAE (ANE, partial): the AutoencoderKL decoder. group_norm compiles only up to
-    64x64 / 512ch on this ANE (512ch@128 and >=256x256 -> Espresso "Not
-    implemented"), so the VAE runs on the ANE through up0 (post_quant -> conv_in ->
-    mid -> up0, ending 512ch@128x128) and the last three up blocks + conv_out run on
-    host torch. A real hardware limit (group_norm feature-map size).
+  - VAE (ANE, partial): the AutoencoderKL decoder runs on the ANE through the
+    512ch@128x128 block; only the final 128ch@512x512 up block + conv_out exceed the
+    ANE per-axis cap (max(C/groups, H*W) > 65536) and run on host torch. VAE decode
+    is once per image, so the host tail is minor.
 
 This is the heaviest aneforge demo. PER-COMPONENT validates on real weights (UNet
-one-step ~1.5% relerr, VAE decode ~4.4%, both <5%). The END-TO-END image, however,
-is fp16-degraded - and the cause is NOT gradual step-compounding but CATASTROPHIC
-CANCELLATION in classifier-free guidance: cond-uncond is only a ~0.5% difference of
-two large near-identical UNet outputs, so the ~1.5% per-output fp16 error swamps the
-guidance signal (then x7.5 guidance amplifies it). The saved PNG is a coherent-but-
-abstract blob, not a recognizable scene. The script reports the real
-per-component + end-to-end relerr, the CFG-cancellation diagnostic, what compiled
-(split + counts) and what fell back to host, and saves the actual image produced - no faked clean generation. The documented fix is mixed/higher precision on the
-guidance subtraction.
+one-step ~2.9% relerr, VAE decode ~4.4%, both <5%). The END-TO-END image, however,
+is fp16-degraded - the cause is CATASTROPHIC CANCELLATION in classifier-free
+guidance: cond-uncond is only a ~0.4% difference of two near-identical UNet outputs,
+so the per-output fp16 error (which does NOT cancel, because cond and uncond take
+different rounding paths through the deep net) swamps the guidance signal, then x7.5
+amplifies it. The saved PNG is a coherent-but-abstract blob, not a recognizable
+scene. Computing cond-uncond in-graph (before the fp16 export) does NOT help -
+measured zero improvement, since the error is from divergent internal rounding, not
+the export. The script reports the real per-component + end-to-end relerr and the
+CFG-cancellation diagnostic, and saves the actual image produced - no faked clean
+generation. There is no known fp16-safe form of this sampling loop on the ANE.
 
     python3 examples/sd15.py
 """
@@ -307,7 +306,8 @@ def main():
 
     def run_unet(lat_np, t, ctx_np):
         if one_program:
-            return unet_net(lat_np, temb_of(t), ctx_np)
+            # inputs were created as (ce, te, xx) = (context, temb, latent); match that order
+            return unet_net(ctx_np, temb_of(t), lat_np)
         te = temb_of(t)
         P = progs
         h = P["conv_in"](lat_np)
