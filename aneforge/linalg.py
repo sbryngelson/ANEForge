@@ -254,7 +254,7 @@ def gauss_seidel(A, b, iters: int = 60, x0=None):
     host work O(n^2)) still runs on the ANE.
 
     ANE: A@x (the bulk FLOPs).   HOST: the sequential triangular sweep + loop.
-    The honest division: Gauss-Seidel's serial sweep is the arch-limited part; only
+    The division: Gauss-Seidel's serial sweep is the arch-limited part; only
     the dense GEMV stays on-device.
     """
     A16 = np.asarray(A, f16); b16 = np.asarray(b, f16).reshape(-1)
@@ -992,7 +992,7 @@ def main():
         print(f"{cond:>8.0e} | {_relerr(x_ls, x_ref):>18.3e} | {0.0:>16.3e}")
     print("  reading: forming A^T A SQUARES cond(A): cond(A)=1e1 -> 1e2 solves fine (4e-3); cond(A)=1e2")
     print("  -> 1e4 is past the fp16 CG ceiling and breaks down (relerr ~1, guarded finite). This is")
-    print("  the honest cost of the normal equations in fp16 - a QR-lstsq would avoid the squaring but")
+    print("  the actual cost of the normal equations in fp16 - a QR-lstsq would avoid the squaring but")
     print("  QR is arch-limited on the ANE, so CG-normal is the iterative alternative, valid only while")
     print("  cond(A)^2 stays inside the envelope (cond(A) <~ a few x10).")
     print()

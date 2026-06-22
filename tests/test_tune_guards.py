@@ -105,7 +105,7 @@ def test_tune_unchanged_when_lossless_baseline_exists(monkeypatch):
     assert built["cfg"].get("int8") is True            # 50us * 1.10 <= 100us -> int8 wins
 
 
-# 2. tune_precision(): reference fallback and honesty
+# 2. tune_precision(): reference fallback and correctness
 def test_tune_precision_falls_back_to_fp16_baseline_reference(monkeypatch):
     out = _tanh_graph()
     base = np.full((1, 8), 2.0, np.float32)

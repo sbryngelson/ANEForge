@@ -2,7 +2,7 @@
 
 The optimizer's coverage guarantee is: *every surfaced capability is either ROUTE-
 SELECTABLE (the autotuner picks its cheapest equivalent lowering by measured cost) or
-EXPLICITLY SINGLE-ROUTE.* This test proves the SELECTABLE half is honest - every route
+EXPLICITLY SINGLE-ROUTE.* This test proves the SELECTABLE half is accurate - every route
 the optimizer is willing to flip a bridge node to is mathematically equivalent on real
 ANE silicon, the same proof class as the metamorphic ``mha_vs_sdpa`` /
 ``reduce_sum_vs_matmul`` transforms.
@@ -146,7 +146,7 @@ def test_lrn_route_equivalent():
 
 
 def test_rejected_candidate_stays_single_route():
-    """Honesty check on a REJECTED candidate: space_to_channel is marked single-route
+    """Check on a REJECTED candidate: space_to_channel is marked single-route
     because its reshape+transpose decomposition needs a rank-6 intermediate that
     ANECCompile rejects. Confirm the registry records it single-route (we do NOT
     re-run the failing compile here - an ANECCompile abort can take down the

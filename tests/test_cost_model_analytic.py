@@ -28,7 +28,7 @@ def test_project_peak_m5_about_5x():
     # Doc's back-of-envelope is ~5.5x/10 TFLOP/s using eff=0.84 (the LOW-freq end of the
     # curve). project_peak reads efficiency at the actual operating clock (0.8*fmax),
     # where M5's eff interpolates to ~0.746 -> a more conservative, physically-consistent
-    # ~4.9x / ~8.9 TFLOP/s. Same ballpark, honest basis.
+    # ~4.9x / ~8.9 TFLOP/s. Same ballpark, consistent basis.
     p = _cost.project_peak("h17s")              # M5 == H17s
     assert 4.5 < p["rel_m1"] < 6.2
     assert 8.0 < p["tflops"] < 11.5

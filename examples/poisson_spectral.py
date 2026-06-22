@@ -15,7 +15,7 @@ We use a MANUFACTURED solution: pick a smooth u_true (a sum of a few sinusoids),
 form f = lap(u_true) ANALYTICALLY, solve, and compare the recovered (zero-mean) u to
 the (zero-mean) u_true. We also verify the spectral Laplacian round-trip lap(u) ~ f.
 
-HONESTY (fp16): the spectral method is exact in infinite precision, so the reported
+CAVEAT (fp16): the spectral method is exact in infinite precision, so the reported
 relerr is the fp16 transform/divide floor (a few x1e-3 at this grid), NOT a
 discretization error.
 
@@ -88,7 +88,7 @@ def main():
     print(f"    solve + verification wall time (4 transforms + compiles): {dt*1e3:.0f} ms")
     # Headline accuracy is u vs u_true. The lap(u)~f check chains TWO EXTRA transforms
     # on top of the already-fp16-recovered u, so its fp16 floor is looser (compounded
-    # transform rounding) - we hold it to <1e-1, honestly.
+    # transform rounding) - we hold it to <1e-1.
     ok = err < 5e-2 and lap_err < 1e-1
     print(f"    -> {'PASS' if ok else 'FAIL'}  (fp16 transform/divide floor; the method is "
           f"exact in exact arithmetic)")

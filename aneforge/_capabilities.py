@@ -15,7 +15,7 @@ arch-gated negatives, the predicted-but-unbuilt frontier). The result is a close
 classification of every ANE capability aneforge knows about. `tests/
 test_routes.py` fails CI if the live runtime drifts from this registry either way.
 
-Honesty discipline (this is a publication artifact): every entry is one of
+Discipline (this is a publication artifact): every entry is one of
   - `fused`                - in `_EMIT`; lowers to e5rt-MIL, fuses into one program.
   - `bridge`               - in `NETPLIST_OPS`; runs as a native Path-A sub-program (a graph cut).
   - `cracked`              - reverse-engineered native layer PROVEN on silicon in
@@ -571,7 +571,7 @@ _NOT_AUTHORABLE_OPS: frozenset[str] = frozenset({
 })
 
 # sweep ops that are the same capability as an op already surfaced under a different
-# name (a `reachable` entry pointing at its canonical surfaced sibling - honest
+# name (a `reachable` entry pointing at its canonical surfaced sibling -
 # aliasing, no double-count of the capability as a distinct frontend primitive).
 _SWEEP_CAPABILITY_ALIAS: dict[str, str] = {
     "scaled_dot_product_attention": "sdpa (bridge) - same fused-attention capability",
@@ -724,7 +724,7 @@ _BRIDGE_ROUTES: dict[str, dict[str, Any]] = {
                     "/KernelChannel == fused size=C with alpha pre-scaled by C; ~1250x cut "
                     "removal on conv->lrn->relu; fused has no C<16 cap)",
     },
-    # --- single-route: candidate validated and rejected (honest negative) ---
+    # --- single-route: candidate validated and rejected (confirmed negative) ---
     "space_to_channel": {
         "single_route": True,
         "reason": "the reshape+transpose decomposition needs a rank-6 intermediate "

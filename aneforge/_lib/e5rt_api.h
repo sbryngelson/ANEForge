@@ -11,7 +11,7 @@
 //
 // All entry points return int64_t e5rt_error_code_t. Convention: code==0 success;
 // nonzero codes carry a string via e5rt_error_code_get_string (but that stub
-// returns a C++ std::string under the hood, not const char* - do not call from
+// returns a C++ std::string internally, not const char* - do not call from
 // pure C). Inspect failure mode via stderr Espresso log.
 //
 // ABI: arm64 AAPCS. All "create" entry points return the new object via the

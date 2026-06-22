@@ -22,7 +22,7 @@ WHY THESE: they add value beyond the native unaries (`exp/log/erf/...`) which
 either (a) do not exist (gamma, lgamma, erfc, expm1, log1p, Bessel) or (b)
 degrade / cancel in fp16 over a wide range (erfc = 1-erf cancels to 0 past x~2;
 exp loses a digit past |x|~8). See the `__main__` self-test for measured
-relerr vs scipy and the honest fp16 verdict per function.
+relerr vs scipy and the fp16 verdict per function.
 
 THE TWO CONSTRAINTS that shape the implementations:
   * fp16 compute. The ANE computes in fp16 (~3-4 significant digits). A poly
@@ -208,7 +208,7 @@ def gamma(x: Tensor) -> Tensor:
     """Gamma function on x in [1, 2] via a deg-6 minimax in the centered variable
     (x-1.5).
 
-    SCOPE / HONESTY: gamma grows super-exponentially and overflows fp16 (>65504)
+    SCOPE: gamma grows super-exponentially and overflows fp16 (>65504)
     past x~8.3, so it is fundamentally fp16-narrow. Extending [1,2] to a wider
     window needs the recurrence Gamma(x+1)=x*Gamma(x) applied a data-dependent
     number of times - not expressible in one static graph. For a wider but
@@ -274,7 +274,7 @@ def exp_wide(x: Tensor, splits: int = 1) -> Tensor:
     `exp(x) = (exp(x / 2^splits)) ^ (2^splits)` by repeated squaring (the inner
     `exp` runs on a smaller argument).
 
-    HONEST FINDING (measured on this M5 ANE): this does NOT reliably beat the
+    FINDING (measured on this M5 ANE): this does NOT reliably beat the
     native `x.exp()`. The native fp16 exp is already accurate (median per-point
     relerr ~1.4e-3 over [-10,10]); the squaring re-rounding usually costs MORE
     than the small-argument benefit gains, so per-point accuracy is the same or
@@ -293,7 +293,7 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
     Repeated square roots pull a large argument toward 1, where log is most
     accurate, then scale back.
 
-    HONEST FINDING: native fp16 log is already good (~1e-3 over [1e-2, 1e4]) and
+    FINDING: native fp16 log is already good (~1e-3 over [1e-2, 1e4]) and
     this matches rather than clearly beats it - the sqrt chain re-rounds. Useful
     mainly as a documented range-reduction recipe; the native `x.log()` is the
     better default on this hardware."""

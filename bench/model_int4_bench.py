@@ -28,8 +28,8 @@ and reports, end-to-end (the WHOLE program, not a single matmul):
                output (accuracy retention of the end-to-end forward),
   * size     : on-disk `weights.bin` bytes + fraction of the fp16 baseline.
 
-HONESTY / WEIGHT SOURCE
------------------------
+WEIGHT SOURCE
+-------------
 This host has numpy + aneforge + the ANE dylib but NOT torch / torchvision /
 transformers, so the pretrained loaders (af.load_resnet18 / af.load / the ViT
 demo) cannot fetch real trained weights here. We therefore build each model's

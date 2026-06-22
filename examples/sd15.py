@@ -22,7 +22,7 @@ What runs where:
     64x64 / 512ch on this ANE (512ch@128 and >=256x256 -> Espresso "Not
     implemented"), so the VAE runs on the ANE through up0 (post_quant -> conv_in ->
     mid -> up0, ending 512ch@128x128) and the last three up blocks + conv_out run on
-    host torch. An honest hardware limit (group_norm feature-map size).
+    host torch. A real hardware limit (group_norm feature-map size).
 
 This is the heaviest aneforge demo. PER-COMPONENT validates on real weights (UNet
 one-step ~1.5% relerr, VAE decode ~4.4%, both <5%). The END-TO-END image, however,
@@ -30,7 +30,7 @@ is fp16-degraded - and the cause is NOT gradual step-compounding but CATASTROPHI
 CANCELLATION in classifier-free guidance: cond-uncond is only a ~0.5% difference of
 two large near-identical UNet outputs, so the ~1.5% per-output fp16 error swamps the
 guidance signal (then x7.5 guidance amplifies it). The saved PNG is a coherent-but-
-abstract blob, not a recognizable scene. The script is HONEST: it reports the real
+abstract blob, not a recognizable scene. The script reports the real
 per-component + end-to-end relerr, the CFG-cancellation diagnostic, what compiled
 (split + counts) and what fell back to host, and saves the actual image produced - no faked clean generation. The documented fix is mixed/higher precision on the
 guidance subtraction.
@@ -244,7 +244,7 @@ def main():
     # small e5rt program, chained host-side; the skip stack is carried as numpy.
     # up3 (final CrossAttnUpBlock at 64x64) and conv_out hit the group_norm
     # feature-map limit (>=640 ch @ 64x64 -> Espresso "Not implemented"), so they
-    # run on HOST torch - an honest hardware boundary, not a numerics choice.
+    # run on HOST torch - a real hardware boundary, not a numerics choice.
     if not one_program:
         g, has = ug, uhas
         progs = {}
@@ -478,7 +478,7 @@ def main():
     cpath = ("ONE fused program" if one_program else
              f"{len(progs)} per-resnet programs (conv_in / 8 down resnets+attn / 3 downsamplers / "
              f"mid / 9 up0-2 resnets+attn / 3 upsamplers); up3 + conv_out on host")
-    print("\nHONEST VERDICT:")
+    print("\nVERDICT:")
     print(f"  UNet compile path: {cpath}; {unet_ops} total ANE ops.")
     print(f"  VAE: ANE front (post_quant..up0, {vae_front_net.n_ops} ops, <=128x128); "
           f"up1/up2/up3/conv_out on HOST (group_norm 'Not implemented' at 512ch@128 and >=256x256).")

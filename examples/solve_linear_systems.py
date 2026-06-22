@@ -6,7 +6,7 @@ program (the matrix folds in as a constant, so the program size is iteration-bou
 not n-bound - the same solve runs unchanged at n=512). GMRES (general systems) and
 LSQR (least squares) follow the same pattern; see aneforge.linalg.
 
-Honest envelope (docs/api/math.md): fp16, clean to ~1e-3 at cond 1e2, then the
+Envelope (docs/api/math.md): fp16, clean to ~1e-3 at cond 1e2, then the
 fp16 iterates stall.
 
     python3 examples/solve_linear_systems.py

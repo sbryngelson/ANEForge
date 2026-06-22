@@ -21,7 +21,7 @@ Models:
   - Attention block     (q/k/v proj + af.sdpa + out-proj; exercises the route
                          rewrite: native SDPA cut vs decomposed-fused) at two sizes
 
-HONESTY: this prints the REAL measured speedups. The route rewrite is expected to
+CAVEAT: this prints the REAL measured speedups. The route rewrite is expected to
 move the attention block; weight-heavy models may show an int8 win under atol=0.1;
 a floor-bound / already-optimal model correctly returns ~1.0x (tune returns the
 baseline) - that is correct behavior, not a failure. We report exactly what the

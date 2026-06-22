@@ -24,7 +24,7 @@ KEY METHODOLOGY (a crude probe gave low/noisy numbers - done right here):
       - reduction (sum over all):      read N, write ~1  = 1*N*dtbytes
       - softmax (last axis):           read N, write N    = 2*N*dtbytes
         (max+exp/sum+div is read-once/write-once at the framework level; the two
-         logical passes are fused, so 2N is the honest external traffic)
+         logical passes are fused, so 2N is the actual external traffic)
       - layer_norm (last axis):        read N, write N    = 2*N*dtbytes
     dtbytes = 2 (fp16) for GPU/ANE, 4 (fp32) for CPU. The CPU bandwidth proxy uses
     a genuinely memory-bound op (a*2.0 / a.sum), NOT a transcendental - a tanh-heavy

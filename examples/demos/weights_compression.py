@@ -4,7 +4,7 @@ Reverse-engineering finding: weight compression is gated by the hardware Compres
 which only arrives at M4. On M1 (h13) only int4-LUT streams natively; int8 and sparse FOLD to
 dequant-at-the-engine - so int8 is a weight-SIZE / bandwidth lever (half the weight bytes,
 helps bandwidth-bound layers), NOT a guaranteed compute speedup, and can even be slower on a
-compute-bound layer because of the dequant overhead. This demo measures it honestly so you
+compute-bound layer because of the dequant overhead. This demo measures it directly so you
 see the nuance rather than assuming int8 is always faster.
 
 Run:  python3 examples/demos/weights_compression.py
