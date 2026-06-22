@@ -89,6 +89,7 @@ _FRONTEND_SPELLING: dict[str, str] = {
     "reduce_mean": "x.mean(axes)", "reduce_sum": "x.sum(axes)", "reduce_max": "x.amax(axes)",
     "reduce_min": "x.amin(axes)", "softmax": "x.softmax(axis)", "l2_norm": "x.l2_norm(axis,eps)",
     "rms_norm": "x.rms_norm(g,eps)", "layer_norm": "x.layer_norm(g,b,eps)",
+    "channel_layer_norm": "x.channel_layer_norm(g,b,eps)",
     "group_norm": "x.group_norm(g,b,groups,eps)", "batch_norm": "af.batch_norm(...)",
     # bridge ops
     "sdpa": "af.sdpa(q,k,v)", "argmax": "x.argmax(axis)", "topk": "af.topk(x,k)",
