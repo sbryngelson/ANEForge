@@ -123,3 +123,26 @@ def test_af_mha_query_tiled():
     a = np.exp(s - s.max(-1, keepdims=True)); a = a / a.sum(-1, keepdims=True)
     o = (a @ v).transpose(1, 0, 2).reshape(S, D)
     assert _cos(out, o @ Wo.astype(np.float32).T + bo.astype(np.float32)) > 0.99
+
+
+@requires_ane
+def test_af_cross_attention_query_tiled():
+    # cross_attention query-tiles when query and context are both long (S >= 768, T >= 512),
+    # materializing [tile, T] score blocks instead of the full [H, S, T]; verify exact
+    # against a numpy cross-attention reference. (Small-T stays single-shot; same result.)
+    S, T, D, H = 768, 512, 256, 8                   # S>=768 and T>=512 -> tiles the query
+    dh = D // H
+    w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)   # noqa: E731
+    Wq, Wk, Wv, Wo = w(D, D), w(D, D), w(D, D), w(D, D)
+    x = rng.standard_normal((S, D)).astype(np.float16)
+    ctx = rng.standard_normal((T, D)).astype(np.float16)
+    out = np.asarray(af.compile(af.cross_attention(af.input((S, D)), af.input((T, D)),
+                                                   Wq, Wk, Wv, Wo, H))(x, ctx))
+
+    def lin(t, W): return t.astype(np.float32) @ W.astype(np.float32).T
+    def hd(t, n): return t.reshape(n, H, dh).transpose(1, 0, 2)
+    q, k, v = hd(lin(x, Wq), S), hd(lin(ctx, Wk), T), hd(lin(ctx, Wv), T)
+    s = (q @ k.transpose(0, 2, 1)) * dh ** -0.5
+    a = np.exp(s - s.max(-1, keepdims=True)); a = a / a.sum(-1, keepdims=True)
+    o = (a @ v).transpose(1, 0, 2).reshape(S, D)
+    assert _cos(out, o @ Wo.astype(np.float32).T) > 0.99
