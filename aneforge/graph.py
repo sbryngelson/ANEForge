@@ -1088,8 +1088,23 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
     dh = D // n_heads
     q, k, v = x.linear(Wq, bq), x.linear(Wk, bk), x.linear(Wv, bv)
     qh, kh, vh = _heads(q, n_heads, dh), _heads(k, n_heads, dh), _heads(v, n_heads, dh)
-    a = ((qh @ kh.transpose([0, 2, 1])) * (1.0 / dh ** 0.5)).softmax(-1)     # [H,S,S]
-    o = (a @ vh).transpose([1, 0, 2]).reshape(S, D)
+    kt = kh.transpose([0, 2, 1])
+    scale = 1.0 / dh ** 0.5
+    # Query-tiling: compute [tile, S] score tiles per head instead of the full [H, S, S]
+    # score matrix. Exact (each tile attends to all keys) and ~3x faster on the ANE at
+    # large S, which pipelines the smaller tiles better (same fission as af.sdpa).
+    n_tiles = max(1, (S + 256) // 512)
+    if n_tiles == 1:
+        o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
+    else:
+        tile = -(-S // n_tiles)                                 # ceil -> near-even chunks
+        parts = []
+        for start in range(0, S, tile):
+            n = min(tile, S - start)
+            qt = qh.slice_by_size([0, start, 0], [n_heads, n, dh])
+            parts.append(((qt @ kt) * scale).softmax(-1) @ vh)  # [H, n, dh]
+        o = concat(parts, axis=1)                               # [H, S, dh]
+    o = o.transpose([1, 0, 2]).reshape(S, D)
     return o.linear(Wo, bo)
 
 

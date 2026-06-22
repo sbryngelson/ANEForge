@@ -102,3 +102,24 @@ def test_af_sdpa_query_tiled_decomposition():
     s = (Q.astype(np.float32) @ K.astype(np.float32).swapaxes(-1, -2)) * scale + M.astype(np.float32)
     s = np.exp(s - s.max(-1, keepdims=True)); s = s / s.sum(-1, keepdims=True)
     assert _cos(outm, s @ V.astype(np.float32)) > 0.99
+
+
+@requires_ane
+def test_af_mha_query_tiled():
+    # af.mha query-tiles its per-head score matrix at large S (the same fission as af.sdpa);
+    # verify the tiled path is exact against a numpy multi-head-attention reference.
+    S, D, H = 1500, 256, 8                          # S >= 512 -> tiles the query
+    dh = D // H
+    w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)   # noqa: E731
+    Wq, bq, Wk, Wv, bv, Wo, bo = w(D, D), w(D), w(D, D), w(D, D), w(D), w(D, D), w(D)
+    x = rng.standard_normal((S, D)).astype(np.float16)
+    out = np.asarray(af.compile(af.mha(af.input((S, D)), Wq, bq, Wk, None, Wv, bv, Wo, bo, H))(x))
+
+    xf = x.astype(np.float32)
+    def lin(W, b): return xf @ W.astype(np.float32).T + (0.0 if b is None else b.astype(np.float32))
+    def hd(t): return t.reshape(S, H, dh).transpose(1, 0, 2)
+    q, k, v = hd(lin(Wq, bq)), hd(lin(Wk, None)), hd(lin(Wv, bv))
+    s = (q @ k.transpose(0, 2, 1)) * dh ** -0.5
+    a = np.exp(s - s.max(-1, keepdims=True)); a = a / a.sum(-1, keepdims=True)
+    o = (a @ v).transpose(1, 0, 2).reshape(S, D)
+    assert _cos(out, o @ Wo.astype(np.float32).T + bo.astype(np.float32)) > 0.99
