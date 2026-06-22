@@ -1113,12 +1113,30 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
     """Cross-attention: queries from `x` [S, D], keys/values from `context`
     [T, Dctx]. Wq:[D,D]; Wk,Wv:[D,Dctx]; Wo:[D,D]. (SD UNet text conditioning.)"""
     S, D = x.shape
+    T = context.shape[0]
     dh = D // n_heads
     qh = _heads(x.linear(Wq, bq), n_heads, dh)                              # [H,S,dh]
     kh = _heads(context.linear(Wk, bk), n_heads, dh)                        # [H,T,dh]
     vh = _heads(context.linear(Wv, bv), n_heads, dh)
-    a = ((qh @ kh.transpose([0, 2, 1])) * (1.0 / dh ** 0.5)).softmax(-1)     # [H,S,T]
-    o = (a @ vh).transpose([1, 0, 2]).reshape(S, D)
+    kt = kh.transpose([0, 2, 1])                                            # [H,dh,T]
+    scale = 1.0 / dh ** 0.5
+    # Query-tiling: when query and context are both long the [H, S, T] score matrix hits
+    # the ANE's materialization wall (~2.4x slower past it). Tiling the query into
+    # [tile, T] score blocks avoids it, exact, the same fission as af.sdpa/af.mha. Gated
+    # on score area so small-T cross-attention (SD text conditioning, T=77) stays
+    # single-shot, where it is byte-identical and already fastest.
+    n_tiles = max(1, (S + 256) // 512) if (S >= 768 and T >= 512) else 1
+    if n_tiles == 1:
+        o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
+    else:
+        tile = -(-S // n_tiles)                                 # ceil -> near-even chunks
+        parts = []
+        for start in range(0, S, tile):
+            n = min(tile, S - start)
+            qt = qh.slice_by_size([0, start, 0], [n_heads, n, dh])
+            parts.append(((qt @ kt) * scale).softmax(-1) @ vh)  # [H, n, dh]
+        o = concat(parts, axis=1)                               # [H, S, dh]
+    o = o.transpose([1, 0, 2]).reshape(S, D)
     return o.linear(Wo, bo)
 
 
