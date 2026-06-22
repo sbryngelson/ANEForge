@@ -11,21 +11,32 @@ here.
 
 ## Result (whisper-tiny encoder, M-series)
 
-| engine          | latency | energy / encode | fidelity      |
-| --------------- | ------: | --------------: | ------------- |
-| ANE             | 11.4 ms | ~32 mJ          | cosine 0.9999 |
-| Metal GPU (MPS) | 13.0 ms | ~126 mJ         | reference     |
-| CPU (fp32)      | 36.1 ms | --              | reference     |
+| engine          | latency | energy / encode | fidelity     |
+| --------------- | ------: | --------------: | ------------ |
+| ANE             | 11.4 ms | ~32 mJ          | cosine 0.998 |
+| Metal GPU (MPS) | 13.0 ms | ~126 mJ         | reference    |
+| CPU (fp32)      | 36.1 ms | --              | reference    |
 
-At cosine 0.999987 against the PyTorch reference, the ANE matches the GPU on latency
-and uses about 3.8x less energy per encode. The latency and the energy ratio are
-stable across runs; absolute milliJoules move with background system load.
+The ANE matches the GPU on latency and uses about 3.8x less energy per encode, at
+cosine 0.9977 against the PyTorch reference on the trained checkpoint (see Fidelity
+below). The latency and the energy ratio are stable across runs; absolute milliJoules
+move with background system load.
+
+## Fidelity
+
+A randomly-initialised encoder reads cosine 0.999987, but the trained checkpoint on
+real audio reads cosine 0.9977 (6.8% relative error). The gap is the ANE's gelu LUT
+and fp16 losing more on the sharp, high-dynamic-range activations a trained encoder
+produces on real log-mel; it needs both real weights and real input to appear, so a
+synthetic check alone reports the optimistic number. `validate_real.py` measures the
+trained checkpoint; `fidelity.py` measures the random-init case.
+
+Whether 6.8% feature error costs transcription accuracy is a decoder-level (WER)
+question, not settled here. Latency and energy are weight-independent and unchanged by
+which weights run.
 
 ## Notes
 
-- Fidelity is cosine 0.999987 over the full stack, including the gelu LUT the ANE
-  uses, on a randomly-initialised encoder. Latency and energy are weight-independent,
-  so the numbers hold for the published checkpoint.
 - The advantage is energy, not latency. Latency is close; the ANE draws about 1.9 W
   on its own rail against the GPU's 8 W (idle-subtracted, whole package).
 - At seq 1500 `af.sdpa` decomposes to the same matmul/softmax as `af.mha`, because the
@@ -54,7 +65,8 @@ entry point, so ANEForge is unchanged.
 | file                  | what it does                                                        |
 | --------------------- | ------------------------------------------------------------------ |
 | `encoder.py`          | the whisper-tiny encoder built two ways (HF reference + ANEForge)  |
-| `fidelity.py`         | cosine and relative error vs the PyTorch reference                 |
+| `fidelity.py`         | cosine and relative error vs the reference (random-init encoder)    |
+| `validate_real.py`    | the same, on the trained whisper-tiny checkpoint and a real log-mel |
 | `bench_latency.py`    | ANE (mha, sdpa) vs CPU vs MPS latency                              |
 | `bench_energy.py`     | ANE vs MPS energy via powermetrics (idle-subtracted, whole-package)|
 | `export_bundle.py`    | compile and persist the program, dump fp16 vectors and a manifest  |
@@ -67,6 +79,7 @@ From the repo root:
 
 ```sh
 PYTHONPATH=. python3 bench/whisper_encoder_ane/fidelity.py
+PYTHONPATH=. python3 bench/whisper_encoder_ane/validate_real.py   # downloads whisper-tiny
 PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_latency.py
 PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_energy.py    # needs passwordless sudo
 sh bench/whisper_encoder_ane/run_cpp.sh
