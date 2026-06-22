@@ -1,7 +1,7 @@
 // Standalone Apple Neural Engine runner for the whisper-tiny encoder: loads the
 // program ANEForge produced (model.mil + weights.bin) and dispatches it on the ANE,
-// with no Python. This is the shape of the call a C inference engine (e.g. a
-// whisper.cpp backend) would make at model-load time.
+// with no Python, as a C inference engine (e.g. a whisper.cpp backend) would at
+// model load.
 //
 //   whisper_ane_run BUILD_DIR  IN0 N0 F0  IN1 N1 F1  OUT NOUT  REF.f32
 //

@@ -1,10 +1,10 @@
 """A whisper-tiny encoder built two ways from one state dict: the HuggingFace
 reference, and the equivalent ANEForge graph that runs on the Apple Neural Engine.
 
-The weights are randomly initialised (fixed seed) on purpose. Latency and energy
-are weight-independent, and fidelity only needs the two graphs to share weights, so
-nothing is downloaded. Pass real whisper-tiny weights (same key names) to reproduce
-against the published checkpoint.
+Weights are randomly initialised (fixed seed), so nothing is downloaded: latency and
+energy are weight-independent, and fidelity only needs the two graphs to share
+weights. Pass real whisper-tiny weights (same key names) to run the published
+checkpoint.
 
 Mapping notes:
   - The whole transformer stack runs as 2-D [seq, d_model] (batch 1), which is what
