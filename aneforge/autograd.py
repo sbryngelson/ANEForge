@@ -290,6 +290,20 @@ def _vjp_layer_norm(t, g):
     return [grad * rstd]
 
 
+@vjp("channel_layer_norm")
+def _vjp_channel_layer_norm(t, g):
+    x = t.srcs[0]; ax = (1,)                                     # LayerNorm over the channel axis
+    eps = float(t.attrs["eps"]); C = x.shape[1]
+    gamma = np.asarray(t.attrs["gamma"], np.float32)            # per-channel gamma as [1,C,1,1]
+    gt = graph.input((1, C, 1, 1)); gt.attrs["value"] = gamma.reshape(1, C, 1, 1)
+    gn = g * gt                                                  # g * gamma (beta drops out)
+    xc = x - x.mean(ax)                                          # x - channel mean
+    rstd = xc.square().mean(ax).adds(eps).rsqrt()              # 1/std  [N,1,1,S]
+    n = xc * rstd                                                # normalized
+    grad = gn - gn.mean(ax) - n * (gn * n).mean(ax)            # same LayerNorm backward, over C
+    return [grad * rstd]
+
+
 # --------------------------------------------------------------------------- #
 # unary math / activation vjps - surfaced by the gradient audit (each forward   #
 # op already runs natively; these make them trainable). Closed-form derivatives  #

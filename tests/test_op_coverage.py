@@ -106,6 +106,8 @@ CASES = [
     # norms
     ("layer_norm", [S], lambda x: x.layer_norm(np.ones(8, np.float32), np.zeros(8, np.float32)),
      lambda v: (v-v.mean(-1, keepdims=True))/np.sqrt(((v-v.mean(-1, keepdims=True))**2).mean(-1, keepdims=True)+1e-5), False),
+    ("channel_layer_norm", [(1, 8, 1, 4)], lambda x: x.channel_layer_norm(np.ones(8, np.float32), np.zeros(8, np.float32)),
+     lambda v: (v-v.mean(1, keepdims=True))/np.sqrt(((v-v.mean(1, keepdims=True))**2).mean(1, keepdims=True)+1e-5), False),
     ("rms_norm", [S], lambda x: x.rms_norm(np.ones(8, np.float32)),
      lambda v: v/np.sqrt((v**2).mean(-1, keepdims=True)+1e-5), False),
     ("softmax", [S], lambda x: x.softmax(1), lambda v: np.exp(v-v.max(1, keepdims=True))/np.exp(v-v.max(1, keepdims=True)).sum(1, keepdims=True), False),

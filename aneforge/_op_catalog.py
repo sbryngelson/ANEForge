@@ -9,8 +9,8 @@ Each device cell is one of: 'native' (runs on-engine), 'bridge' (needs a netplis
 or host/graph decomposition), 'walled' (no path - decompose on host).
 
 This is the NATIVE MIL op vocabulary the ANE emits. aneforge's higher-level ops
-(rms_norm, group_norm, mha, sdpa, einsum, the fft/linalg/special submodules) are
-COMPOSITES that lower to these - query their constituent ops here.
+(rms_norm, group_norm, channel_layer_norm, mha, sdpa, einsum, the fft/linalg/special
+submodules) are COMPOSITES that lower to these - query their constituent ops here.
 
 This dict is the single source of truth. The deeper per-op argument, shape, dtype,
 and per-chip capability write-ups live in the project's companion reference guide.

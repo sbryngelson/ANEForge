@@ -255,6 +255,21 @@ def test_layer_norm_grad():
     assert _cos(gx, ref) > 0.99, (_cos(gx, ref),)
 
 
+def test_channel_layer_norm_grad():
+    rng = np.random.default_rng(63); C = 16
+    xv = rng.standard_normal((1, C, 1, 4)).astype(np.float32)
+    wv = rng.standard_normal((1, C, 1, 4)).astype(np.float32)
+    gam = rng.standard_normal(C).astype(np.float32)
+    x = agrad.parameter(xv); w = agrad.parameter(wv)
+    loss = (x.channel_layer_norm(gam, np.zeros(C, np.float32)) * w).sum((0, 1, 2, 3))
+    (gx,) = _ane_grad_shaped(loss, [x])
+    def cln(z):
+        mu = z.mean(1, keepdims=True); v = ((z - mu)**2).mean(1, keepdims=True)
+        return (z - mu) / np.sqrt(v + 1e-5) * gam.reshape(1, C, 1, 1)
+    ref = _fd_grad(cln, xv, wv)
+    assert _cos(gx, ref) > 0.99, (_cos(gx, ref),)
+
+
 def test_conv_grad_wrt_input():
     # native conv node: grad wrt input = conv_transpose(g, W). stride=1, pad in {0,1}.
     rng = np.random.default_rng(54)
