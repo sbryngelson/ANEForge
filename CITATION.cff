@@ -9,8 +9,8 @@ authors:
 repository-code: "https://github.com/sbryngelson/ANEForge"
 doi: 10.5281/zenodo.20672609
 license: MIT
-version: "0.1.1"
-date-released: "2026-06-14"
+version: "0.1.2"
+date-released: "2026-06-22"
 preferred-citation:
   type: article
   title: "ANEForge: Python for direct computation on the Apple Neural Engine"
