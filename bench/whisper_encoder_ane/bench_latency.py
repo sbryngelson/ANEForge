@@ -38,9 +38,12 @@ def time_call(call, reps):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--reps", type=int, default=30)
+    ap.add_argument("--real", action="store_true",
+                    help="trained whisper-tiny weights (downloads; the representative number)")
     args = ap.parse_args()
 
-    enc, sd = E.make_encoder()
+    enc, sd = E.real_encoder() if args.real else E.make_encoder()
+    print(f"weights: {'trained whisper-tiny' if args.real else 'random init'}")
     mel = E.mel_input()
     ref = E.torch_reference(enc, mel)
 

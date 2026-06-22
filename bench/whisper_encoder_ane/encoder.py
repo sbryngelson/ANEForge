@@ -41,6 +41,16 @@ def make_encoder(seed: int = 0):
     return enc, sd
 
 
+def real_encoder():
+    """The trained whisper-tiny encoder and its numpy state dict (downloads the
+    checkpoint). Use this for performance numbers: ANE latency is weight-dependent,
+    and the trained weights run materially slower than random init."""
+    from transformers import WhisperForConditionalGeneration
+    enc = WhisperForConditionalGeneration.from_pretrained("openai/whisper-tiny").eval().model.encoder
+    sd = {k: v.detach().numpy().astype(np.float32) for k, v in enc.state_dict().items()}
+    return enc, sd
+
+
 def torch_reference(enc, mel: np.ndarray) -> np.ndarray:
     """The HF encoder output for `mel` ([1, 80, 3000] fp32); returns [1500, 384]."""
     import torch
