@@ -116,16 +116,42 @@ def _conv1x1(x, W, b):
     return af.conv(x, W.reshape(W.shape[0], W.shape[1], 1, 1), bias=b)
 
 
-def build_cf(sd, build_dir: str | None = None):
+def _attention_cf(xn, sd, p, scale, q_tiles):
+    """Channels-first multi-head attention with query-tiling (kernel fission). Each
+    head's query positions are split into `q_tiles` chunks, so the score matrix is
+    materialized as [S, S/q_tiles] tiles instead of the full [S, S]. This is exact
+    (each query tile attends to all keys), and the smaller score tiles pipeline far
+    better on the ANE - roughly 2x on attention at the seq=1500 of every whisper size.
+    The sweet spot is ~500 query positions per tile (q_tiles=3 for S=1500)."""
+    q = _conv1x1(xn, sd[p + "self_attn.q_proj.weight"], sd[p + "self_attn.q_proj.bias"])
+    k = _conv1x1(xn, sd[p + "self_attn.k_proj.weight"], None)
+    v = _conv1x1(xn, sd[p + "self_attn.v_proj.weight"], sd[p + "self_attn.v_proj.bias"])
+    qh, kh, vh = af.split(q, HEADS, 1), af.split(k, HEADS, 1), af.split(v, HEADS, 1)
+    heads = []
+    for j in range(HEADS):
+        if q_tiles > 1:
+            parts = [(af.einsum("bchq,bchk->bkhq", qt, kh[j]) * scale).softmax(1) for qt in af.split(qh[j], q_tiles, 3)]
+            heads.append(af.concat([af.einsum("bkhq,bchk->bchq", w, vh[j]) for w in parts], axis=3))
+        else:
+            w = (af.einsum("bchq,bchk->bkhq", qh[j], kh[j]) * scale).softmax(1)
+            heads.append(af.einsum("bkhq,bchk->bchq", w, vh[j]))
+    return _conv1x1(af.concat(heads, axis=1), sd[p + "self_attn.out_proj.weight"], sd[p + "self_attn.out_proj.bias"])
+
+
+def build_cf(sd, build_dir: str | None = None, q_tiles: int = 3, compress: str | None = None):
     """The whisper-tiny encoder in the ANE-native channels-first layout: the whole
     transformer stack stays [1, d_model, 1, S], projections are 1x1 convolutions, the
-    norm is `channel_layer_norm`, and attention is einsum, so there are no [seq, d]
-    transposes. About 3x faster than `build` on the trained checkpoint (it avoids the
-    layout the ANE handles poorly), at the same fidelity.
+    norm is `channel_layer_norm`, and attention is query-tiled einsum, so there are no
+    [seq, d] transposes and no full [S, S] score matrix. Faster than CoreML's own ANE
+    encoder (~2x) and the Metal GPU across whisper sizes, at the same fidelity.
 
-    Inputs are (mel [1, 80, 1, 3000], positional-embedding [1, 384, 1, 1500]); feed with
-    `run_cf`. Output is [1500, 384] to match the reference and whisper.cpp's decoder.
+    q_tiles splits the attention query axis (kernel fission; 3 is the sweet spot for
+    S=1500, used when it divides S evenly). compress="int4"/"int8" streams quantized
+    weights through the ANE dequant path - a latency win for the larger models, whose
+    MLP is weight-bandwidth-bound. Inputs are (mel [1, 80, 1, 3000], positional
+    embedding [1, D, 1, S]); feed with `run_cf`. Output is [1500, 384].
     """
+    qt = q_tiles if q_tiles > 1 and CTX % q_tiles == 0 else 1
     mel = af.input((1, MELS, 1, FRAMES))
     pos = af.input((1, D, 1, CTX))                    # positional embedding, channels-first
     h = _pad_time(mel, 1)
@@ -137,22 +163,14 @@ def build_cf(sd, build_dir: str | None = None):
     for i in range(LAYERS):
         p = f"layers.{i}."
         xn = h.channel_layer_norm(sd[p + "self_attn_layer_norm.weight"], sd[p + "self_attn_layer_norm.bias"])
-        q = _conv1x1(xn, sd[p + "self_attn.q_proj.weight"], sd[p + "self_attn.q_proj.bias"])
-        k = _conv1x1(xn, sd[p + "self_attn.k_proj.weight"], None)
-        v = _conv1x1(xn, sd[p + "self_attn.v_proj.weight"], sd[p + "self_attn.v_proj.bias"])
-        qh, kh, vh = af.split(q, HEADS, 1), af.split(k, HEADS, 1), af.split(v, HEADS, 1)
-        heads = []
-        for j in range(HEADS):
-            w = (af.einsum("bchq,bchk->bkhq", qh[j], kh[j]) * scale).softmax(1)
-            heads.append(af.einsum("bkhq,bchk->bchq", w, vh[j]))
-        a = _conv1x1(af.concat(heads, axis=1), sd[p + "self_attn.out_proj.weight"], sd[p + "self_attn.out_proj.bias"])
-        h = h + a
+        h = h + _attention_cf(xn, sd, p, scale, qt)
         fn = h.channel_layer_norm(sd[p + "final_layer_norm.weight"], sd[p + "final_layer_norm.bias"])
         f = _conv1x1(_conv1x1(fn, sd[p + "fc1.weight"], sd[p + "fc1.bias"]).gelu(),
                      sd[p + "fc2.weight"], sd[p + "fc2.bias"])
         h = h + f
     h = h.channel_layer_norm(sd["layer_norm.weight"], sd["layer_norm.bias"])
-    return af.compile(h.reshape(D, CTX).transpose([1, 0]), build_dir=build_dir)
+    out = h.reshape(D, CTX).transpose([1, 0])
+    return af.compile(out, build_dir=build_dir, **({"compress": compress} if compress else {}))
 
 
 def run(net, sd, mel: np.ndarray) -> np.ndarray:
