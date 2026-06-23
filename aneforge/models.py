@@ -27,7 +27,7 @@ def _l2_normalizer(D: int) -> Model:
     return net
 
 
-def load(name: str, int8: bool = False) -> "Encoder":
+def load(name: str, int8: bool = False, pooling: str = "mean") -> "Encoder":
     """Load a BERT-family sentence encoder from HF weights as an ANE embedder.
 
         embed = af.load("sentence-transformers/all-MiniLM-L6-v2")
@@ -35,9 +35,14 @@ def load(name: str, int8: bool = False) -> "Encoder":
 
     Tokenisation + embedding lookup run on the host (gather is not an ANE op); the
     transformer layers run on the ANE as fused programs (cached per sequence
-    length); mean-pooling + normalise run on the host.
+    length); pooling + normalise run on the host / ANE.
+
+    `pooling` selects how the per-token states reduce to one vector: "mean" (the
+    default, MiniLM / E5), "cls" (the first token, BGE / GTE), or "max". A model's
+    correct mode is in its sentence-transformers config; `aneforge.sentence_transformers`
+    reads it for you.
     """
-    return Encoder(name, int8=int8)
+    return Encoder(name, int8=int8, pooling=pooling)
 
 
 def load_resnet18(int8: bool = False, compress: str | None = None,
@@ -127,7 +132,12 @@ _BERT_KEYS = {
 
 
 class Encoder:
-    def __init__(self, name: str, int8: bool = False) -> None:
+    _POOL = ("mean", "cls", "max")
+
+    def __init__(self, name: str, int8: bool = False, pooling: str = "mean") -> None:
+        if pooling not in self._POOL:
+            raise ValueError(f"pooling must be one of {self._POOL}, got {pooling!r}")
+        self.pooling = pooling
         from transformers import AutoConfig, AutoModel, AutoTokenizer  # lazy
         cfg = AutoConfig.from_pretrained(name)
         self.tok = AutoTokenizer.from_pretrained(name)
@@ -166,7 +176,13 @@ class Encoder:
         for t in texts:
             ids = np.asarray(self.tok(t)["input_ids"], dtype=np.int64)
             net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
-            v = net(self._embed(ids)).mean(0)            # ANE encode -> host mean-pool
+            states = net(self._embed(ids))               # [S, D] per-token states on the ANE
+            if self.pooling == "cls":                    # first token (BERT [CLS])
+                v = states[0]
+            elif self.pooling == "max":
+                v = states.max(0)
+            else:
+                v = states.mean(0)                       # mean over all (unpadded) tokens
             if normalize:
                 # final L2-normalize runs on the ANE (fused reduce_l2_norm + real_div)
                 v = _l2_normalizer(self.D)(v.reshape(1, self.D))[0]
