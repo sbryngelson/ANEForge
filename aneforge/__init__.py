@@ -101,7 +101,7 @@ from .graph import (Tensor, affine, batch_norm, batch_to_space, channel_to_space
 from ._compile import (Model, SegmentedModel, compile, PrecisionWarning,
                        CrossChipFP16Warning, DispatchFloorWarning)
 from ._paired import Paired, paired
-from ._optimize import tune, tune_precision
+from ._optimize import tune, tune_precision, tune_attention, attention_tiles
 from ._cost import estimate, estimate_provenance, precision_risk, project_peak
 from ._circuit import CompileBackoffError, reset as reset_compile_breaker
 from ._rewrite import reduce_sum_to_matmul, paired_subtract
@@ -122,7 +122,7 @@ __all__ = [
     "stack", "split", "select", "where", "OP_CATALOG", "op_info", "device_status", "is_native", "ops_on", "min_native_family", "walled_everywhere", "categories", "gather", "instance_norm", "local_response_norm", "einsum_native",
     "space_to_depth", "depth_to_space", "crop", "resize_nearest_neighbor",
     "resize_bilinear", "upsample_bilinear", "affine",
-    "compile", "tune", "tune_precision", "estimate", "estimate_provenance",
+    "compile", "tune", "tune_precision", "tune_attention", "attention_tiles", "estimate", "estimate_provenance",
     "precision_risk", "project_peak",
     "CompileBackoffError", "reset_compile_breaker",
     "reduce_sum_to_matmul", "paired_subtract",

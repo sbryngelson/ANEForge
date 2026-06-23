@@ -1092,8 +1092,10 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
     scale = 1.0 / dh ** 0.5
     # Query-tiling: compute [tile, S] score tiles per head instead of the full [H, S, S]
     # score matrix. Exact (each tile attends to all keys) and ~3x faster on the ANE at
-    # large S, which pipelines the smaller tiles better (same fission as af.sdpa).
-    n_tiles = max(1, (S + 256) // 512)
+    # large S, which pipelines the smaller tiles better (same fission as af.sdpa). The
+    # count is the S-based heuristic unless a tuned value is cached (af.tune_attention).
+    from . import _optimize as _opt
+    n_tiles = _opt.attention_tiles(S, n_heads, dh)
     if n_tiles == 1:
         o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
     else:
@@ -1125,7 +1127,8 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
     # [tile, T] score blocks avoids it, exact, the same fission as af.sdpa/af.mha. Gated
     # on score area so small-T cross-attention (SD text conditioning, T=77) stays
     # single-shot, where it is byte-identical and already fastest.
-    n_tiles = max(1, (S + 256) // 512) if (S >= 768 and T >= 512) else 1
+    from . import _optimize as _opt
+    n_tiles = _opt.attention_tiles(S, n_heads, dh, T=T) if (S >= 768 and T >= 512) else 1
     if n_tiles == 1:
         o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
     else:
@@ -1228,7 +1231,8 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
         # smaller score tiles far better than one big matmul+softmax (~3x at Sq=1500, H=16).
         # Tiles target ~512 query rows; a small query (e.g. KV-cache decode) takes one shot.
         kt = k.transpose([0, 1, 3, 2])
-        n_tiles = max(1, (q.shape[2] + 256) // 512)
+        from . import _optimize as _opt
+        n_tiles = _opt.attention_tiles(q.shape[2], q.shape[1], q.shape[3], T=k.shape[2])
         if n_tiles == 1:
             scores = q @ kt * float(scale)
             if attn_mask is not None:
