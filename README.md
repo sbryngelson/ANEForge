@@ -76,7 +76,11 @@ Then browse [`examples/`](examples/), starting with
 [`examples/quickstart.py`](examples/quickstart.py). For retrieval,
 [`examples/rag_embeddings.py`](examples/rag_embeddings.py) is a LangChain
 `Embeddings` drop-in backed by the on-ANE encoder (4-5x faster than the GPU,
-cosine 1.0000).
+cosine 1.0000). For framework interop, [`aneforge.tinygrad`](aneforge/tinygrad.py)
+runs an unmodified [tinygrad](https://github.com/tinygrad/tinygrad) model on the engine
+(`trace(model, shape)` fuses the forward into one ANE program; tinygrad's ResNet-18/34/50
+and a ViT encoder trace to cosine 1.0000 at 8-10x vs its JIT'd METAL), see
+[`examples/tinygrad_bridge.py`](examples/tinygrad_bridge.py).
 
 ## How it compares
 

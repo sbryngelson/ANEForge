@@ -61,6 +61,11 @@ models = [
     "torchvision",
     "transformers",
 ]
+# Framework interop: run an unmodified tinygrad model on the ANE (aneforge.tinygrad).
+# Imported lazily; only install if you use the bridge.
+tinygrad = [
+    "tinygrad",
+]
 # Linting + test runner (CI and local dev). ruff is the linter; the corpus/pytest
 # suites need real ANE hardware to run.
 dev = [
