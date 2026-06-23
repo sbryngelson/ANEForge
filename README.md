@@ -4,6 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/aneforge?color=2e6b69)](https://pypi.org/project/aneforge/)
 [![Docs](https://readthedocs.org/projects/aneforge/badge/?version=latest)](https://aneforge.readthedocs.io)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.17090-b31b1b.svg)](https://arxiv.org/abs/2606.17090)
+[![ANE guide](https://img.shields.io/badge/ANE%20guide-arXiv%202606.22283-b31b1b.svg)](https://arxiv.org/abs/2606.22283)
 [![Zenodo](https://zenodo.org/badge/DOI/10.5281/zenodo.20672609.svg)](https://doi.org/10.5281/zenodo.20672609)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e6b69.svg)](LICENSE)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-macOS%2014%2B-b84310.svg)](#install)
@@ -175,6 +176,11 @@ PYTHONPATH=. python3 -m pytest tests/ -q
 
 The manual is hosted at [aneforge.readthedocs.io](https://aneforge.readthedocs.io).
 The API is documented in the module docstrings and demonstrated in [`examples/`](examples/).
+
+The reverse engineering ANEForge builds on, the program-container format, the e5rt
+dispatch path, and the engine internals down to the firmware, is collected in the
+ANE guide at [ane-guide.readthedocs.io](https://ane-guide.readthedocs.io)
+([arXiv:2606.22283](https://arxiv.org/abs/2606.22283)).
 
 ## Contributing
 
