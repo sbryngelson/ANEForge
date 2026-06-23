@@ -125,6 +125,92 @@ def _save_cache(cache: dict) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# attention query-tile autotune                                                #
+# --------------------------------------------------------------------------- #
+# The query-tile count in mha/sdpa/cross_attention sets how the [H, S, T] score is
+# fissioned. The S-based heuristic (max(1,(S+256)//512)) avoids the un-tiled wall but is
+# not the per-shape optimum, and the optimum is bound by L2 residency / pipelining, so it
+# shifts with head count and chip. This measures the best count ONCE per (chip, S, T,
+# heads, head_dim) and caches it; the heuristic is the default until a tuned value exists.
+_TILE_MEMO: dict = {}
+_TILE_CANDIDATES = (1, 2, 3, 4, 5, 6, 8)
+
+
+def _heuristic_tiles(S: int) -> int:
+    return max(1, (S + 256) // 512)
+
+
+def _time_attention_core(S: int, T: int, n_heads: int, dh: int, n_tiles: int, reps: int = 20) -> float:
+    """Median wall time (s) of the query-tiled attention core [H,S,dh] x [H,dh,T] on the ANE."""
+    from . import graph as g
+    qh, kh, vh = g.input((n_heads, S, dh)), g.input((n_heads, T, dh)), g.input((n_heads, T, dh))
+    kt = kh.transpose([0, 2, 1]); scale = 1.0 / dh ** 0.5
+    if n_tiles == 1:
+        o = ((qh @ kt) * scale).softmax(-1) @ vh
+    else:
+        tile = -(-S // n_tiles); parts = []
+        for start in range(0, S, tile):
+            n = min(tile, S - start)
+            qt = qh.slice_by_size([0, start, 0], [n_heads, n, dh])
+            parts.append(((qt @ kt) * scale).softmax(-1) @ vh)
+        o = g.concat(parts, axis=1)
+    prog = _raw_compile(o)
+    rng = np.random.default_rng(0)
+    args = [rng.standard_normal((n_heads, S, dh)).astype(np.float32) * 0.1,
+            rng.standard_normal((n_heads, T, dh)).astype(np.float32) * 0.1,
+            rng.standard_normal((n_heads, T, dh)).astype(np.float32) * 0.1]
+    try:
+        for _ in range(5):
+            prog(*args)
+        ts = []
+        for _ in range(reps):
+            t0 = time.perf_counter(); prog(*args); ts.append(time.perf_counter() - t0)
+        return sorted(ts)[reps // 2]
+    finally:
+        try:
+            prog.release()
+        except Exception:
+            pass
+
+
+def attention_tiles(S: int, n_heads: int, dh: int, T: int | None = None,
+                    tune: bool = False, candidates=_TILE_CANDIDATES) -> int:
+    """Query-tile count for an [n_heads, S, dh] x [n_heads, dh, T] attention score.
+
+    Returns a chip+shape-cached tuned value if one exists, else the S-based heuristic.
+    With `tune=True` (or env ANEFORGE_TUNE_ATTENTION=1) it measures the candidate counts
+    once on the engine, caches the fastest (persisted in autotune.json, keyed by chip),
+    and returns it. Exact either way - the tile count only changes how the score fissions."""
+    T = S if T is None else T
+    from ._targets import _cpu_brand
+    key = f"attn_tiles:{_cpu_brand() or 'unknown'}:{S}:{T}:{n_heads}:{dh}"
+    if key in _TILE_MEMO:
+        return _TILE_MEMO[key]
+    cache = _load_cache()
+    if key in cache:
+        return _TILE_MEMO.setdefault(key, int(cache[key]))
+    want = tune or os.environ.get("ANEFORGE_TUNE_ATTENTION", "").lower() in ("1", "true", "yes")
+    if not want:
+        return _heuristic_tiles(S)
+    best_n, best_t = _heuristic_tiles(S), float("inf")
+    for nt in candidates:
+        try:
+            dt = _time_attention_core(S, T, n_heads, dh, nt)
+        except Exception:
+            continue
+        if dt < best_t:
+            best_t, best_n = dt, nt
+    cache[key] = best_n; _save_cache(cache); _TILE_MEMO[key] = best_n
+    return best_n
+
+
+def tune_attention(S: int, n_heads: int, dh: int, T: int | None = None,
+                   candidates=_TILE_CANDIDATES) -> int:
+    """Measure and cache the best query-tile count for this attention shape on this chip."""
+    return attention_tiles(S, n_heads, dh, T=T, tune=True, candidates=candidates)
+
+
+# --------------------------------------------------------------------------- #
 # variant space (legal == metamorphic-proven-safe)                            #
 # --------------------------------------------------------------------------- #
 def _has_weights(out) -> bool:
