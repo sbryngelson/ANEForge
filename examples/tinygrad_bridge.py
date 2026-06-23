@@ -58,7 +58,7 @@ def main():
     ane_ms = _median_ms(lambda: np.asarray(run.program(xn)))
     gpu_ms = _median_ms(lambda: (jit(Tensor(xn)), Device[Device.DEFAULT].synchronize()))
 
-    print(f"  model         : plain tinygrad CNN, unmodified")
+    print("  model         : plain tinygrad CNN, unmodified")
     print(f"  ran on the ANE: {run.on_ane}")
     print(f"  agreement     : cosine {cos:.5f} vs tinygrad")
     print(f"  ANE (fused)   : {ane_ms:.2f} ms")
