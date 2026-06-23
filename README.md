@@ -115,6 +115,29 @@ A passive dye is painted as the word ANEForge, and a 2-D incompressible Navier-S
 Every Fourier transform in the 2,200-step loop runs on the ANE, and the whole simulation costs about 9 J at the measured 1.48 W rail.
 Reproduce with [`python examples/fluid_vorticity.py`](examples/fluid_vorticity.py).
 
+## Reaction-diffusion on the Neural Engine
+
+<p align="center">
+  <img src="docs/assets/reaction_diffusion.png" width="400"
+       alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine">
+</p>
+
+The Gray-Scott equations grow Turing patterns from two diffusing, reacting chemicals (the mechanism behind seashell and animal-coat markings). The word ANEForge is seeded and blooms into a branching labyrinth.
+The whole update is one program that re-dispatches every step: a 3x3 Laplacian as a native ANE conv, the reaction terms as elementwise ops, the periodic boundary wrapped in-graph from the field's own edges.
+It is the real-space companion to the fluid demo above, which takes its derivatives spectrally (FFTs); this one uses a stencil (a conv).
+Reproduce with [`python examples/reaction_diffusion.py`](examples/reaction_diffusion.py).
+
+## A neural network that grows, trained on the Neural Engine
+
+<p align="center">
+  <img src="docs/assets/neural_ca.png" width="300"
+       alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel">
+</p>
+
+A cellular-automaton update rule (a small CNN, shared across every cell) is trained so that a single live seed pixel grows into a target image, the way morphogenesis builds a body from one cell.
+The forward pass through the rollout and the backward pass both run on the engine, gradient-checkpointed so the rollout's depth does not bound the compile (the optimizer runs host-side over the streamed gradients). So the rule is *learned* on the engine, not just run there, then dispatched step by step to grow the image, again on the engine.
+Reproduce with [`python examples/train_neural_ca.py`](examples/train_neural_ca.py).
+
 ## What it does
 
 - **Graph -> compile -> run.** 58 fused operators (conv/pool, `matmul`/`bmm`/`einsum`, activations, reductions, norms, softmax, attention, shape/geometry) into one program with int8/int4/fp16 weights, plus a bridge route for 19 native ops the public toolchain never emits.
