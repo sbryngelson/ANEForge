@@ -20,6 +20,17 @@ demo logic itself stays in each file so every example is self-contained.
   passive dye and wound into thin glowing filaments by a 2-D incompressible Navier-Stokes
   flow (pseudo-spectral), every FFT in the 2,200-step loop on the ANE. Writes the animated
   `docs/assets/fluid_vorticity.png` (a full-colour APNG).
+- `train_neural_ca.py` - a neural cellular automaton TRAINED on the engine: a small
+  per-cell rule learns to grow a target image from one seed pixel. The forward pass
+  through the rollout and the backward pass run on the engine, gradient-checkpointed
+  (`aneforge.streaming.CheckpointedStack`) so the rollout depth does not bound the
+  compile and the grid can be larger; Adam runs host-side over the streamed gradients.
+  The trained rule is then dispatched step by step to grow the image. Writes the animated
+  `docs/assets/neural_ca.png`.
+- `reaction_diffusion.py` - the real-space companion to the fluid demo: a Gray-Scott
+  reaction-diffusion system grows Turing patterns from the "ANEForge" wordmark, the whole
+  update (a 3x3 Laplacian conv + reaction terms, periodic in-graph) compiled once and
+  re-dispatched every step. Writes the animated `docs/assets/reaction_diffusion.png`.
 - `quickstart.py` - the clean API end to end: a CNN and a transformer encoder block,
   each fused into ONE ANE program, fp16 + int8.
 

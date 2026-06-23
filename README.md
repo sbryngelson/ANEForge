@@ -114,6 +114,18 @@ Reproduce with [`bench/device_compare_wattcomplete.py`](bench/device_compare_wat
 A passive dye is painted as the word ANEForge, and a 2-D incompressible Navier-Stokes flow (pseudo-spectral) stirs it into thin glowing filaments.
 Every Fourier transform in the 2,200-step loop runs on the ANE, and the whole simulation costs about 9 J at the measured 1.48 W rail.
 Reproduce with [`python examples/fluid_vorticity.py`](examples/fluid_vorticity.py).
+For the real-space companion (a Gray-Scott reaction-diffusion stencil instead of spectral FFTs, Turing patterns grown from the wordmark) see [`examples/reaction_diffusion.py`](examples/reaction_diffusion.py).
+
+## A neural network that grows, trained on the Neural Engine
+
+<p align="center">
+  <img src="docs/assets/neural_ca.png" width="300"
+       alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel">
+</p>
+
+A cellular-automaton update rule (a small CNN, shared across every cell) is trained so that a single live seed pixel grows into a target image, the way morphogenesis builds a body from one cell.
+The forward pass through the rollout and the backward pass both run on the engine, gradient-checkpointed so the rollout's depth does not bound the compile (the optimizer runs host-side over the streamed gradients). So the rule is *learned* on the engine, not just run there, then dispatched step by step to grow the image, again on the engine.
+Reproduce with [`python examples/train_neural_ca.py`](examples/train_neural_ca.py).
 
 ## What it does
 
