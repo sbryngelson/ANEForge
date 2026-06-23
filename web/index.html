@@ -118,10 +118,14 @@
   .caption{font-size:.84rem; color:var(--faint); margin-top:13px; max-width:72ch}
   .caption code{font-family:var(--mono)}
 
-  .showcase{display:grid; grid-template-columns:1fr 1fr; gap:34px; align-items:center}
-  @media(max-width:720px){.showcase{grid-template-columns:1fr; gap:20px}}
-  .showcase img{width:100%; border:1px solid var(--line); border-radius:5px; display:block}
-  .showcase .stat{font-family:var(--mono); font-size:.85rem; color:var(--soft); margin-top:14px}
+  .gallery{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; margin-top:34px}
+  @media(max-width:720px){.gallery{grid-template-columns:1fr; gap:26px}}
+  .demo{border:1px solid var(--line); border-radius:5px; overflow:hidden; background:var(--panel); display:flex; flex-direction:column}
+  .demo img{width:100%; display:block; border-bottom:1px solid var(--line-soft)}
+  .demo figcaption{padding:16px 18px}
+  .demo h3{font-size:1.02rem; font-weight:600; margin-bottom:6px}
+  .demo p{color:var(--soft); font-size:.86rem}
+  .demo a.go{font-family:var(--mono); font-size:.78rem; display:inline-block; margin-top:12px}
 
   .install{text-align:center}
   .install h2{margin:0 auto}
@@ -281,15 +285,37 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
     </div>
   </section>
 
-  <section id="showcase">
-    <div class="wrap showcase">
-      <div>
-        <span class="label">A fluid simulation on the engine</span>
-        <h2 style="margin-top:10px; font-size:1.35rem">70k Fourier transforms, all on the Neural Engine.</h2>
-        <p class="sub">A passive dye painted as the word <em>ANEForge</em>, stirred by a 2-D incompressible Navier–Stokes flow. Every FFT in the pseudo-spectral loop runs on the ANE.</p>
-        <div class="stat">~54 J at the measured 1.48 W rail</div>
+  <section id="demos">
+    <div class="wrap">
+      <span class="label">Demos</span>
+      <h2 style="margin-top:10px">Simulations and learning, run and trained on the engine.</h2>
+      <p class="sub">Not just neural nets. Each of these compiles to ANE programs and runs end to end on the Neural Engine.</p>
+      <div class="gallery">
+        <figure class="demo">
+          <img src="./assets/fluid_vorticity.png" alt="A passive dye shaped as the word ANEForge stirred into glowing filaments by a fluid simulation on the Apple Neural Engine" loading="lazy">
+          <figcaption>
+            <h3>Fluid simulation</h3>
+            <p>A dye painted as the word ANEForge, stirred by a 2-D incompressible Navier–Stokes flow. Every FFT in the pseudo-spectral loop runs on the engine, about 54 J at the 1.48 W rail.</p>
+            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/fluid_vorticity.py">reproduce →</a>
+          </figcaption>
+        </figure>
+        <figure class="demo">
+          <img src="./assets/reaction_diffusion.png" alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine" loading="lazy">
+          <figcaption>
+            <h3>Reaction-diffusion</h3>
+            <p>Gray–Scott Turing patterns bloom from the word into a branching labyrinth. One program re-dispatches each step: a 3×3 Laplacian as a native ANE conv, the reactions as elementwise ops.</p>
+            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/reaction_diffusion.py">reproduce →</a>
+          </figcaption>
+        </figure>
+        <figure class="demo">
+          <img src="./assets/neural_ca.png" alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel" loading="lazy">
+          <figcaption>
+            <h3>A network that grows</h3>
+            <p>A small CNN update rule, trained on the engine, grows a lizard from one seed pixel. The forward and backward passes both run on the ANE, so the rule is learned there, not just replayed.</p>
+            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/train_neural_ca.py">reproduce →</a>
+          </figcaption>
+        </figure>
       </div>
-      <img src="./assets/fluid_vorticity.png" alt="A passive dye shaped as the word ANEForge stirred into filaments by a fluid simulation on the Apple Neural Engine" loading="lazy">
     </div>
   </section>
 
@@ -309,7 +335,7 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
     <div class="foot">
       <div class="col">
         <div class="brand" style="margin-bottom:8px">ANE<b>Forge</b></div>
-        <p>Direct, CoreML-free access to the Apple Neural Engine, from Python. A research project by Spencer H. Bryngelson, Georgia Institute of Technology.</p>
+        <p>Run and train on the Apple Neural Engine directly from Python, without CoreML. A research project by Spencer H. Bryngelson.</p>
       </div>
       <div class="col" style="max-width:none">
         <h5>Project</h5>
