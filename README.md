@@ -114,7 +114,18 @@ Reproduce with [`bench/device_compare_wattcomplete.py`](bench/device_compare_wat
 A passive dye is painted as the word ANEForge, and a 2-D incompressible Navier-Stokes flow (pseudo-spectral) stirs it into thin glowing filaments.
 Every Fourier transform in the 2,200-step loop runs on the ANE, and the whole simulation costs about 9 J at the measured 1.48 W rail.
 Reproduce with [`python examples/fluid_vorticity.py`](examples/fluid_vorticity.py).
-For the real-space companion (a Gray-Scott reaction-diffusion stencil instead of spectral FFTs, Turing patterns grown from the wordmark) see [`examples/reaction_diffusion.py`](examples/reaction_diffusion.py).
+
+## Reaction-diffusion on the Neural Engine
+
+<p align="center">
+  <img src="docs/assets/reaction_diffusion.png" width="400"
+       alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine">
+</p>
+
+The Gray-Scott equations grow Turing patterns from two diffusing, reacting chemicals (the mechanism behind seashell and animal-coat markings). The word ANEForge is seeded and blooms into a branching labyrinth.
+The whole update is one program that re-dispatches every step: a 3x3 Laplacian as a native ANE conv, the reaction terms as elementwise ops, the periodic boundary wrapped in-graph from the field's own edges.
+It is the real-space companion to the fluid demo above, which takes its derivatives spectrally (FFTs); this one uses a stencil (a conv).
+Reproduce with [`python examples/reaction_diffusion.py`](examples/reaction_diffusion.py).
 
 ## A neural network that grows, trained on the Neural Engine
 
