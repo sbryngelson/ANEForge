@@ -81,11 +81,11 @@ import os as _os
 _os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 try:
-    from ._version import __version__            # written by hatch-vcs at build time
+  from ._version import __version__            # written by hatch-vcs at build time
 except ImportError:                              # raw source checkout, not yet built
-    from importlib.metadata import version, PackageNotFoundError
-    try: __version__ = version("aneforge")
-    except PackageNotFoundError: __version__ = "0+unknown"
+  from importlib.metadata import version, PackageNotFoundError
+  try: __version__ = version("aneforge")
+  except PackageNotFoundError: __version__ = "0+unknown"
 
 from ._op_catalog import (OP_CATALOG, op_info, device_status, is_native, ops_on,
                           min_native_family, walled_everywhere, categories)
