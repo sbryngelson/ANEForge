@@ -129,34 +129,34 @@ _BRIDGE_EVIDENCE: dict[str, str] = {
 
 
 def _introspect_fused() -> list[dict[str, Any]]:
-    """Every op live in `_compile._EMIT` -> a `fused` registry entry."""
-    out = []
-    for name in sorted(_compile._EMIT):
-        out.append({
-            "name": name,
-            "status": "fused",
-            "route": "e5rt-MIL (fused into one program; no graph cut)",
-            "frontend": _FRONTEND_SPELLING.get(name),
-            "verified": "silicon",
-            "evidence": "aneforge/_compile.py @op(...) registry; "
-                        "the reverse-engineering corpus (37/42 verified correct on e5rt)",
-        })
-    return out
+  """Every op live in `_compile._EMIT` -> a `fused` registry entry."""
+  out = []
+  for name in sorted(_compile._EMIT):
+    out.append({
+      "name": name,
+      "status": "fused",
+      "route": "e5rt-MIL (fused into one program; no graph cut)",
+      "frontend": _FRONTEND_SPELLING.get(name),
+      "verified": "silicon",
+      "evidence": "aneforge/_compile.py @op(...) registry; "
+                  "the reverse-engineering corpus (37/42 verified correct on e5rt)",
+    })
+  return out
 
 
 def _introspect_bridge() -> list[dict[str, Any]]:
-    """Every op live in `_compile.NETPLIST_OPS` -> a `bridge` registry entry."""
-    out = []
-    for name in sorted(_compile.NETPLIST_OPS):
-        out.append({
-            "name": name,
-            "status": "bridge",
-            "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
-            "frontend": _FRONTEND_SPELLING.get(name),
-            "verified": "silicon",
-            "evidence": _BRIDGE_EVIDENCE.get(name, "aneforge/_compile.py NETPLIST_OPS"),
-        })
-    return out
+  """Every op live in `_compile.NETPLIST_OPS` -> a `bridge` registry entry."""
+  out = []
+  for name in sorted(_compile.NETPLIST_OPS):
+    out.append({
+      "name": name,
+      "status": "bridge",
+      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+      "frontend": _FRONTEND_SPELLING.get(name),
+      "verified": "silicon",
+      "evidence": _BRIDGE_EVIDENCE.get(name, "aneforge/_compile.py NETPLIST_OPS"),
+    })
+  return out
 
 
 # --------------------------------------------------------------------------- #
@@ -607,77 +607,74 @@ _SWEEP_REACHABLE_KLASSES = ("reachable+correct", "reachable")
 
 
 def _load_sweep() -> list[dict[str, Any]]:
-    try:
-        with open(_SWEEP_PATH) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return []  # sweep artifact absent -> registry still well-formed (just not extended)
+  try:
+    with open(_SWEEP_PATH) as f:
+      return json.load(f)
+  except (OSError, ValueError):
+    return []  # sweep artifact absent -> registry still well-formed (just not extended)
 
 
 def _introspect_sweep(already: set[str]) -> list[dict[str, Any]]:
-    """Synthesize registry entries for every full-MIL-vocabulary-sweep op not already
+  """Synthesize registry entries for every full-MIL-vocabulary-sweep op not already
     represented (`already` = names from _EMIT / NETPLIST_OPS / curated cracked /
     negatives / predicted). Classified from the sweep `klass`. Curated entries win - any
     op in `already` is skipped so its hand-written wall/evidence/note is preserved."""
-    out: list[dict[str, Any]] = []
-    for e in _load_sweep():
-        op = e["op"]
-        if op in already:
-            continue
-        klass = e["klass"]
-        relerr = e.get("relerr")
-        if klass in _SWEEP_REACHABLE_KLASSES:
-            entry: dict[str, Any] = {
-                "name": op, "status": "reachable",
-                "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; "
-                         "not promoted to a frontend _EMIT emitter / af. method)",
-                "frontend": None, "verified": "silicon",
-                "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}"
-                            + (f", relerr={relerr}" if klass == "reachable+correct" and relerr is not None else "")
-                            + "); the reverse-engineering corpus",
-            }
-            if op in _SWEEP_CAPABILITY_ALIAS:
-                entry["alias_of"] = _SWEEP_CAPABILITY_ALIAS[op]
-            if op in _SWEEP_NOTE:
-                entry["note"] = _SWEEP_NOTE[op]
-            if klass == "reachable":
-                entry["note"] = (entry.get("note") or "") + (
-                    " Sweep klass 'reachable' = compiles + runs (presence), correctness not "
-                    "numerically pinned against a reference." if op not in _SWEEP_NOTE else "")
-                entry["note"] = entry["note"].strip()
-            out.append(entry)
-        elif op in _NOT_AUTHORABLE_OPS:
-            out.append({
-                "name": op, "status": "not-authorable",
-                "route": None, "frontend": None, "verified": "negative-confirmed",
-                "wall": "control-flow / list / state op with no single-op form on the "
-                        "single-procedure feed-forward MIL surface aneforge targets (the "
-                        "recurrence/scan wall); recorded, not defeated.",
-                "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}); "
-                            "the reverse-engineering corpus; finding_ane_numerical (scan wall)",
-            })
-        elif klass == "not-implemented-on-ANE":
-            out.append({
-                "name": op, "status": "arch-gated-negative",
-                "route": None, "frontend": None, "verified": "negative-confirmed",
-                "wall": "the native MIL op is unimplemented on the ANE backend "
-                        "(ane_e5rt_program_compile fails, mask=0x4) - a native-op gap. Some "
-                        "of these capabilities are reachable via a decomposition on the same "
-                        "e5rt path (see the curated reduce_prod/gather/cumsum entries); this "
-                        "synthesized entry records only that the NATIVE op does not lower.",
-                "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}); "
-                            "the reverse-engineering corpus",
-            })
-        else:  # compile-walled, non-control-flow -> codegen wall
-            out.append({
-                "name": op, "status": "arch-gated-negative",
-                "route": None, "frontend": None, "verified": "negative-confirmed",
-                "wall": "compiles-walled: the authored minimal MIL program fails ANECCompile "
-                        "(ane_e5rt_program_compile, mask=0x4) on M5 - a codegen/backend wall.",
-                "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}); "
-                            "the reverse-engineering corpus",
-            })
-    return out
+  out: list[dict[str, Any]] = []
+  for e in _load_sweep():
+    op = e["op"]
+    if op in already: continue
+    klass = e["klass"]
+    relerr = e.get("relerr")
+    if klass in _SWEEP_REACHABLE_KLASSES:
+      entry: dict[str, Any] = {
+        "name": op, "status": "reachable",
+        "route": "e5rt-MIL op (compiles + runs on aneforge's own e5rt path; "
+                 "not promoted to a frontend _EMIT emitter / af. method)",
+        "frontend": None, "verified": "silicon",
+        "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}"
+                    + (f", relerr={relerr}" if klass == "reachable+correct" and relerr is not None else "")
+                    + "); the reverse-engineering corpus",
+      }
+      if op in _SWEEP_CAPABILITY_ALIAS: entry["alias_of"] = _SWEEP_CAPABILITY_ALIAS[op]
+      if op in _SWEEP_NOTE: entry["note"] = _SWEEP_NOTE[op]
+      if klass == "reachable":
+        entry["note"] = (entry.get("note") or "") + (
+          " Sweep klass 'reachable' = compiles + runs (presence), correctness not "
+          "numerically pinned against a reference." if op not in _SWEEP_NOTE else "")
+        entry["note"] = entry["note"].strip()
+      out.append(entry)
+    elif op in _NOT_AUTHORABLE_OPS:
+      out.append({
+        "name": op, "status": "not-authorable",
+        "route": None, "frontend": None, "verified": "negative-confirmed",
+        "wall": "control-flow / list / state op with no single-op form on the "
+                "single-procedure feed-forward MIL surface aneforge targets (the "
+                "recurrence/scan wall); recorded, not defeated.",
+        "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}); "
+                    "the reverse-engineering corpus; finding_ane_numerical (scan wall)",
+      })
+    elif klass == "not-implemented-on-ANE":
+      out.append({
+        "name": op, "status": "arch-gated-negative",
+        "route": None, "frontend": None, "verified": "negative-confirmed",
+        "wall": "the native MIL op is unimplemented on the ANE backend "
+                "(ane_e5rt_program_compile fails, mask=0x4) - a native-op gap. Some "
+                "of these capabilities are reachable via a decomposition on the same "
+                "e5rt path (see the curated reduce_prod/gather/cumsum entries); this "
+                "synthesized entry records only that the NATIVE op does not lower.",
+        "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}); "
+                    "the reverse-engineering corpus",
+      })
+    else:  # compile-walled, non-control-flow -> codegen wall
+      out.append({
+        "name": op, "status": "arch-gated-negative",
+        "route": None, "frontend": None, "verified": "negative-confirmed",
+        "wall": "compiles-walled: the authored minimal MIL program fails ANECCompile "
+                "(ane_e5rt_program_compile, mask=0x4) on M5 - a codegen/backend wall.",
+        "evidence": f"full_mil_vocabulary_sweep.json (klass={klass}); "
+                    "the reverse-engineering corpus",
+      })
+  return out
 
 
 # --------------------------------------------------------------------------- #
@@ -781,48 +778,46 @@ _BRIDGE_ROUTES: dict[str, dict[str, Any]] = {
 
 
 def _routes_for(name: str, status: str) -> dict[str, Any]:
-    """Route classification for one op: `{"route_class": "selectable"|"single", ...}`.
+  """Route classification for one op: `{"route_class": "selectable"|"single", ...}`.
     A bridge op in `_BRIDGE_ROUTES` with an `alt` is `selectable`; everything else
     (single-route bridge, or any fused op - one lowering by construction) is `single`
     with a reason."""
-    info = _BRIDGE_ROUTES.get(name)
-    if info and "alt" in info:
-        return {"route_class": "selectable", "alt_route": info["alt"],
-                "alt_loss": info["loss"], "route_evidence": info["evidence"]}
-    if info and info.get("single_route"):
-        return {"route_class": "single", "route_reason": info["reason"]}
-    if status == "fused":
-        return {"route_class": "single",
-                "route_reason": "fused _EMIT op - one lowering by construction (no graph "
-                                "cut to remove; no alternative route)."}
-    if status == "bridge":
-        # a bridge op not in the table is an oversight - surface it via the gate.
-        return {"route_class": "single",
-                "route_reason": "UNCLASSIFIED bridge op (add to _capabilities._BRIDGE_ROUTES)."}
-    # cracked / negative / predicted: not optimizer-route-bearing.
-    return {"route_class": "n/a"}
+  info = _BRIDGE_ROUTES.get(name)
+  if info and "alt" in info:
+    return {"route_class": "selectable", "alt_route": info["alt"],
+            "alt_loss": info["loss"], "route_evidence": info["evidence"]}
+  if info and info.get("single_route"):
+    return {"route_class": "single", "route_reason": info["reason"]}
+  if status == "fused":
+    return {"route_class": "single",
+            "route_reason": "fused _EMIT op - one lowering by construction (no graph "
+                            "cut to remove; no alternative route)."}
+  if status == "bridge":
+    # a bridge op not in the table is an oversight - surface it via the gate.
+    return {"route_class": "single",
+            "route_reason": "UNCLASSIFIED bridge op (add to _capabilities._BRIDGE_ROUTES)."}
+  # cracked / negative / predicted: not optimizer-route-bearing.
+  return {"route_class": "n/a"}
 
 
 def route_registry() -> dict[str, Any]:
-    """The closed equivalence-route registry over the BRIDGE ops: which are route-
+  """The closed equivalence-route registry over the BRIDGE ops: which are route-
     selectable (with the validated alternative + loss class + evidence) and which are
     single-route (with the reason). Driven off the live `NETPLIST_OPS` so it can never
     silently omit a bridge op. Reconciled against `_rewrite._BRIDGE_DECOMPOSERS` and the
     census by tests/test_routes.py."""
-    selectable, single = [], []
-    for name in sorted(_compile.NETPLIST_OPS):
-        r = _routes_for(name, "bridge")
-        if r["route_class"] == "selectable":
-            selectable.append({"name": name, **r})
-        else:
-            single.append({"name": name, **r})
-    return {
-        "schema": "aneforge-route-registry/1",
-        "selectable": selectable,
-        "single_route": single,
-        "summary": {"selectable": len(selectable), "single_route": len(single),
-                    "total_bridge": len(_compile.NETPLIST_OPS)},
-    }
+  selectable, single = [], []
+  for name in sorted(_compile.NETPLIST_OPS):
+    r = _routes_for(name, "bridge")
+    if r["route_class"] == "selectable": selectable.append({"name": name, **r})
+    else: single.append({"name": name, **r})
+  return {
+    "schema": "aneforge-route-registry/1",
+    "selectable": selectable,
+    "single_route": single,
+    "summary": {"selectable": len(selectable), "single_route": len(single),
+                "total_bridge": len(_compile.NETPLIST_OPS)},
+  }
 
 
 # --------------------------------------------------------------------------- #
@@ -857,7 +852,7 @@ _CRACKED_MANIFEST_HISTORICAL_NOTE = (
 
 
 def cracked_manifest() -> list[dict[str, Any]]:
-    """The closed, machine-checkable manifest of the distinct cracked native hardware
+  """The closed, machine-checkable manifest of the distinct cracked native hardware
     layers behind the "26 cracked native hardware layers" count.
 
     Membership rule (exact): a cracked native hardware layer is a registry entry whose
@@ -878,157 +873,153 @@ def cracked_manifest() -> list[dict[str, Any]]:
     Returns a list of `{name, status, route, evidence}` items, sorted by name. The
     aliased member carries its fold-in via an `aliases` key.
     """
-    reg = build_registry()
-    by_name = {e["name"]: e for e in reg["entries"]}
+  reg = build_registry()
+  by_name = {e["name"]: e for e in reg["entries"]}
 
-    members: list[dict[str, Any]] = []
-    for e in reg["entries"]:
-        if e["status"] not in ("cracked", "bridge"):
-            continue
-        if e["name"] in _CRACKED_DEDUPE_ALIAS:
-            continue  # folded into its canonical entry below
-        item = {
-            "name": e["name"],
-            "status": e["status"],
-            "route": e["route"],
-            "evidence": e["evidence"],
-        }
-        # attach any cracked alias that folds into this entry
-        aliases = [a for a, canon in _CRACKED_DEDUPE_ALIAS.items() if canon == e["name"]]
-        if aliases:
-            item["aliases"] = sorted(aliases)
-            item["alias_evidence"] = {
-                a: by_name[a]["evidence"] for a in aliases if a in by_name
-            }
-        members.append(item)
+  members: list[dict[str, Any]] = []
+  for e in reg["entries"]:
+    if e["status"] not in ("cracked", "bridge"): continue
+    if e["name"] in _CRACKED_DEDUPE_ALIAS: continue  # folded into its canonical entry below
+    item = {
+      "name": e["name"],
+      "status": e["status"],
+      "route": e["route"],
+      "evidence": e["evidence"],
+    }
+    # attach any cracked alias that folds into this entry
+    aliases = [a for a, canon in _CRACKED_DEDUPE_ALIAS.items() if canon == e["name"]]
+    if aliases:
+      item["aliases"] = sorted(aliases)
+      item["alias_evidence"] = {
+        a: by_name[a]["evidence"] for a in aliases if a in by_name
+      }
+    members.append(item)
 
-    members.sort(key=lambda m: m["name"])
-    return members
+  members.sort(key=lambda m: m["name"])
+  return members
 
 
 def cracked_count() -> int:
-    """The number of distinct cracked native hardware layers (see `cracked_manifest`)."""
-    return len(cracked_manifest())
+  """The number of distinct cracked native hardware layers (see `cracked_manifest`)."""
+  return len(cracked_manifest())
 
 
 def cracked_manifest_doc() -> dict[str, Any]:
-    """The full committed manifest artifact: definition string, historical-promotion
+  """The full committed manifest artifact: definition string, historical-promotion
     note, member list, and count. Serialised by `write_cracked_manifest` to
     `cracked_manifest.json`."""
-    members = cracked_manifest()
-    return {
-        "schema": "aneforge-cracked-manifest/1",
-        "definition": _CRACKED_MANIFEST_DEFINITION,
-        "historical_promotion_note": _CRACKED_MANIFEST_HISTORICAL_NOTE,
-        "dedupe": {
-            "alias": _CRACKED_DEDUPE_ALIAS,
-            "explanation": "slice_by_index (cracked) == input_view (bridge): same "
-                           "Type=InputView hardware capability; counted once.",
-        },
-        "ci_assertion": "tests/test_routes.py::test_route_tables_reconcile",
-        "count": len(members),
-        "members": members,
-    }
+  members = cracked_manifest()
+  return {
+    "schema": "aneforge-cracked-manifest/1",
+    "definition": _CRACKED_MANIFEST_DEFINITION,
+    "historical_promotion_note": _CRACKED_MANIFEST_HISTORICAL_NOTE,
+    "dedupe": {
+      "alias": _CRACKED_DEDUPE_ALIAS,
+      "explanation": "slice_by_index (cracked) == input_view (bridge): same "
+                     "Type=InputView hardware capability; counted once.",
+    },
+    "ci_assertion": "tests/test_routes.py::test_route_tables_reconcile",
+    "count": len(members),
+    "members": members,
+  }
 
 
 def write_cracked_manifest(path: str = "cracked_manifest.json") -> str:
-    """Serialise the cracked-layer manifest to `path` (default `cracked_manifest.json`,
+  """Serialise the cracked-layer manifest to `path` (default `cracked_manifest.json`,
     matching where `capabilities.json` lives). Returns the path written. Reproducible -
     re-run whenever the registry changes."""
-    doc = cracked_manifest_doc()
-    with open(path, "w") as f:
-        json.dump(doc, f, indent=2, sort_keys=False)
-        f.write("\n")
-    return path
+  doc = cracked_manifest_doc()
+  with open(path, "w") as f:
+    json.dump(doc, f, indent=2, sort_keys=False)
+    f.write("\n")
+  return path
 
 
 def build_registry() -> dict[str, Any]:
-    """Build the closed capability registry: introspect the live `_EMIT` /
+  """Build the closed capability registry: introspect the live `_EMIT` /
     `NETPLIST_OPS` and merge with the curated cracked/negative/predicted entries.
 
     Returns a dict with `entries` (list, sorted by (status-order, name)) and a
     `summary` of per-status counts. This is the source of truth `write_json`
     serialises and `tests/test_routes.py` reconciles against.
     """
-    entries: list[dict[str, Any]] = []
-    entries += _introspect_fused()
-    entries += _introspect_bridge()
+  entries: list[dict[str, Any]] = []
+  entries += _introspect_fused()
+  entries += _introspect_bridge()
 
-    for e in _CRACKED:
-        entries.append({
-            "name": e["name"], "status": "cracked", "route": e["route"],
-            "frontend": None, "verified": "silicon",
-            "evidence": e["evidence"], "note": e.get("note"),
-        })
-    for e in _NEGATIVES:
-        entries.append({
-            "name": e["name"], "status": "arch-gated-negative",
-            "route": None, "frontend": None, "verified": "negative-confirmed",
-            "wall": e["wall"], "evidence": e["evidence"], "probe": e.get("probe"),
-        })
-    for e in _PREDICTED:
-        entries.append({
-            "name": e["name"], "status": "predicted", "route": e["route"],
-            "frontend": None, "verified": "no",
-            "evidence": e["evidence"],
-        })
+  for e in _CRACKED:
+    entries.append({
+      "name": e["name"], "status": "cracked", "route": e["route"],
+      "frontend": None, "verified": "silicon",
+      "evidence": e["evidence"], "note": e.get("note"),
+    })
+  for e in _NEGATIVES:
+    entries.append({
+      "name": e["name"], "status": "arch-gated-negative",
+      "route": None, "frontend": None, "verified": "negative-confirmed",
+      "wall": e["wall"], "evidence": e["evidence"], "probe": e.get("probe"),
+    })
+  for e in _PREDICTED:
+    entries.append({
+      "name": e["name"], "status": "predicted", "route": e["route"],
+      "frontend": None, "verified": "no",
+      "evidence": e["evidence"],
+    })
 
-    # (D) extend exhaustively over the full 166-op MIL vocabulary sweep: synthesize an
-    # entry for every swept op not already represented (curated entries win - same name
-    # is skipped so the hand-written walls/notes survive). Makes the registry exhaustive
-    # over the MIL vocabulary, not just the 50 validators / surfaced ops.
-    already = {e["name"] for e in entries}
-    entries += _introspect_sweep(already)
+  # (D) extend exhaustively over the full 166-op MIL vocabulary sweep: synthesize an
+  # entry for every swept op not already represented (curated entries win - same name
+  # is skipped so the hand-written walls/notes survive). Makes the registry exhaustive
+  # over the MIL vocabulary, not just the 50 validators / surfaced ops.
+  already = {e["name"] for e in entries}
+  entries += _introspect_sweep(already)
 
-    # detect any accidental duplicate names within a status (curation hygiene)
-    seen: set[tuple[str, str]] = set()
-    for e in entries:
-        key = (e["name"], e["status"])
-        if key in seen:
-            raise ValueError(f"capability registry: duplicate entry {key}")
-        seen.add(key)
+  # detect any accidental duplicate names within a status (curation hygiene)
+  seen: set[tuple[str, str]] = set()
+  for e in entries:
+    key = (e["name"], e["status"])
+    if key in seen: raise ValueError(f"capability registry: duplicate entry {key}")
+    seen.add(key)
 
-    # enrich fused/bridge entries with their equivalence-route classification (the
-    # source of truth for the optimizer's route choice - selectable vs single).
-    for e in entries:
-        if e["status"] in ("fused", "bridge"):
-            e.update(_routes_for(e["name"], e["status"]))
+  # enrich fused/bridge entries with their equivalence-route classification (the
+  # source of truth for the optimizer's route choice - selectable vs single).
+  for e in entries:
+    if e["status"] in ("fused", "bridge"): e.update(_routes_for(e["name"], e["status"]))
 
-    order = {s: i for i, s in enumerate(STATUSES)}
-    entries.sort(key=lambda e: (order[e["status"]], e["name"]))
+  order = {s: i for i, s in enumerate(STATUSES)}
+  entries.sort(key=lambda e: (order[e["status"]], e["name"]))
 
-    summary = {s: sum(1 for e in entries if e["status"] == s) for s in STATUSES}
-    summary["total"] = len(entries)
-    # distinct cracked native hardware layers (cracked + bridge, minus the one alias);
-    # the traceable count behind the "26 cracked" figure (see cracked_manifest()).
-    summary["cracked_count"] = (
-        summary["cracked"] + summary["bridge"] - len(_CRACKED_DEDUPE_ALIAS)
-    )
-    return {
-        "schema": "aneforge-capability-census/1",
-        "statuses": list(STATUSES),
-        "summary": summary,
-        "entries": entries,
-    }
+  summary = {s: sum(1 for e in entries if e["status"] == s) for s in STATUSES}
+  summary["total"] = len(entries)
+  # distinct cracked native hardware layers (cracked + bridge, minus the one alias);
+  # the traceable count behind the "26 cracked" figure (see cracked_manifest()).
+  summary["cracked_count"] = (
+    summary["cracked"] + summary["bridge"] - len(_CRACKED_DEDUPE_ALIAS)
+  )
+  return {
+    "schema": "aneforge-capability-census/1",
+    "statuses": list(STATUSES),
+    "summary": summary,
+    "entries": entries,
+  }
 
 
 def write_json(path: str = "capabilities.json") -> str:
-    """Serialise the registry to `path` (default `capabilities.json` at cwd). Returns
+  """Serialise the registry to `path` (default `capabilities.json` at cwd). Returns
     the path written. Reproducible - re-run any time the runtime changes."""
-    reg = build_registry()
-    with open(path, "w") as f:
-        json.dump(reg, f, indent=2, sort_keys=False)
-        f.write("\n")
-    return path
+  reg = build_registry()
+  with open(path, "w") as f:
+    json.dump(reg, f, indent=2, sort_keys=False)
+    f.write("\n")
+  return path
 
 
 if __name__ == "__main__":
-    import sys
-    out = sys.argv[1] if len(sys.argv) > 1 else "capabilities.json"
-    reg = build_registry()
-    write_json(out)
-    s = reg["summary"]
-    print(f"wrote {out}: " + ", ".join(f"{k}={s[k]}" for k in (*STATUSES, "total")))
-    # the cracked-layer manifest (the traceable artifact behind the "26")
-    man = write_cracked_manifest()
-    print(f"wrote {man}: cracked_count={cracked_count()}")
+  import sys
+  out = sys.argv[1] if len(sys.argv) > 1 else "capabilities.json"
+  reg = build_registry()
+  write_json(out)
+  s = reg["summary"]
+  print(f"wrote {out}: " + ", ".join(f"{k}={s[k]}" for k in (*STATUSES, "total")))
+  # the cracked-layer manifest (the traceable artifact behind the "26")
+  man = write_cracked_manifest()
+  print(f"wrote {man}: cracked_count={cracked_count()}")

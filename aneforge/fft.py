@@ -140,16 +140,14 @@ _MAX_GROUPS = 3
 
 
 def _prime_factors(N: int) -> list[int]:
-    f: list[int] = []
-    m = N
-    d = 2
-    while d * d <= m:
-        while m % d == 0:
-            f.append(d); m //= d
-        d += 1 if d == 2 else 2
-    if m > 1:
-        f.append(m)
-    return f
+  f: list[int] = []
+  m = N; d = 2
+  while d * d <= m:
+    while m % d == 0:
+      f.append(d); m //= d
+    d += 1 if d == 2 else 2
+  if m > 1: f.append(m)
+  return f
 
 
 def _factor(N: int) -> list[int]:
@@ -158,14 +156,13 @@ def _factor(N: int) -> list[int]:
     as possible (balanced -> minimal total matmul work). A prime (or near-prime) N falls
     back to a single dense DFT (one group == N)."""
     primes = _prime_factors(N)
-    if len(primes) == 1:
-        return [N]                                  # prime -> one dense DFT block
+    if len(primes) == 1: return [N]                                  # prime -> one dense DFT block
     k = min(_MAX_GROUPS, len(primes))
     groups = [1] * k
     # greedy balanced bin-packing: assign largest primes first to the currently-smallest group
     for p in sorted(primes, reverse=True):
-        i = min(range(k), key=lambda j: groups[j])
-        groups[i] *= p
+      i = min(range(k), key=lambda j: groups[j])
+      groups[i] *= p
     groups.sort()
     return groups
 
@@ -179,13 +176,13 @@ class _Builder:
     Collects the cross-twiddle constant arrays as auxiliary graph inputs."""
 
     def __init__(self, inverse: bool):
-        self.inverse = inverse
-        self.sign = +1.0 if inverse else -1.0
-        self.aux_inputs: list[Tensor] = []     # extra graph inputs (cross twiddles)
-        self.aux_values: list[np.ndarray] = []  # the constant arrays to feed
+      self.inverse = inverse
+      self.sign = +1.0 if inverse else -1.0
+      self.aux_inputs: list[Tensor] = []     # extra graph inputs (cross twiddles)
+      self.aux_values: list[np.ndarray] = []  # the constant arrays to feed
 
     def _dft(self, M: int):
-        return _idft_matrix(M) if self.inverse else _dft_matrix(M)
+      return _idft_matrix(M) if self.inverse else _dft_matrix(M)
 
     def _cross(self, N1: int, restlen: int, Ntot: int, bshape):
         """Cross twiddle T[k1, n2] = exp(sign*2pi i k1 n2 / Ntot) where k1 in [0,N1),
@@ -228,8 +225,7 @@ class _Builder:
         Transforms the block formed by `axes` (total length prod(lengths)) in place,
         leaving the result on the SAME axes. Each level: one radix-N1 DFT on the first
         axis, a cross twiddle against the trailing block, then recurse the rest."""
-        if len(axes) == 1:
-            return self._axis_dft(re, im, axes[0], lengths[0])
+        if len(axes) == 1: return self._axis_dft(re, im, axes[0], lengths[0])
         N1 = lengths[0]
         restlen = int(np.prod(lengths[1:]))
         Ntot = N1 * restlen
@@ -245,7 +241,7 @@ class _Builder:
         bshape = [1] * ndim
         bshape[a0] = N1
         for ax, L in zip(axes[1:], lengths[1:]):
-            bshape[ax] = L
+          bshape[ax] = L
         Tr, Ti = self._cross(N1, restlen, Ntot, bshape)
         re, im = (re * Tr) - (im * Ti), (re * Ti) + (im * Tr)
 
@@ -268,8 +264,8 @@ class _Builder:
         factors = _factor(N)
         m = len(factors)
         if m == 1:
-            Wr, Wi = self._dft(N)                               # single dense DFT
-            return _cmatmul_const(re, im, Wr, Wi)
+          Wr, Wi = self._dft(N)                               # single dense DFT
+          return _cmatmul_const(re, im, Wr, Wi)
 
         # one reshape: [1, N] -> [1, r0, r1, ..., r_{m-1}]   (n0 most-significant digit)
         re = re.reshape(1, *factors); im = im.reshape(1, *factors)
@@ -293,8 +289,7 @@ def _leaf_cost(N: int) -> int:
     N/g_i independent rows, costing N*g_i MACs; total = N * sum_i g_i.
     The dense single DFT is N*N, so the staged build is ~N*sum(g) << N^2."""
     groups = _factor(N)
-    if len(groups) == 1:
-        return N * N
+    if len(groups) == 1: return N * N
     return N * sum(groups)
 
 
@@ -307,36 +302,36 @@ class Plan:
     constant arrays, which it threads in automatically on every call."""
 
     def __init__(self, N: int, inverse: bool, real_input: bool):
-        self.N = N
-        self.inverse = inverse
-        self.real_input = real_input
-        b = _Builder(inverse)
-        # two user inputs: real and imag parts of the signal. For rfft the imag input is
-        # fed as zeros (kept as a declared input so the graph stays a pure function).
-        xr = af.input((1, N)); xi = af.input((1, N))
-        Xr, Xi = b.transform(xr, xi, N)
-        if inverse:
-            Xr = Xr * (1.0 / N)
-            Xi = Xi * (1.0 / N)
-        # one fused program with a single output: concat(re, im) -> [1, 2N], split on host
-        out = af.concat([Xr, Xi], axis=1)
-        self._aux_values = b.aux_values
-        self.n_stages = _stage_count(N)          # number of dense-DFT matmul stages (<=3)
-        # The DFT butterfly has exact-by-construction subtracts that trip the generic
-        # cancel_sub precision heuristic; this kernel is numerically verified (spectrum
-        # matches np.fft to fp16), so it vouches for itself and skips the check.
-        self.model = af.compile(out, _check_precision=False)
-        self.n_ops = self.model.n_ops
+      self.N = N
+      self.inverse = inverse
+      self.real_input = real_input
+      b = _Builder(inverse)
+      # two user inputs: real and imag parts of the signal. For rfft the imag input is
+      # fed as zeros (kept as a declared input so the graph stays a pure function).
+      xr = af.input((1, N)); xi = af.input((1, N))
+      Xr, Xi = b.transform(xr, xi, N)
+      if inverse:
+        Xr = Xr * (1.0 / N)
+        Xi = Xi * (1.0 / N)
+      # one fused program with a single output: concat(re, im) -> [1, 2N], split on host
+      out = af.concat([Xr, Xi], axis=1)
+      self._aux_values = b.aux_values
+      self.n_stages = _stage_count(N)          # number of dense-DFT matmul stages (<=3)
+      # The DFT butterfly has exact-by-construction subtracts that trip the generic
+      # cancel_sub precision heuristic; this kernel is numerically verified (spectrum
+      # matches np.fft to fp16), so it vouches for itself and skips the check.
+      self.model = af.compile(out, _check_precision=False)
+      self.n_ops = self.model.n_ops
 
     def __call__(self, x_re: np.ndarray, x_im: np.ndarray | None = None):
-        x_re = np.asarray(x_re, np.float16).reshape(1, self.N)
-        if x_im is None:
-            x_im = np.zeros((1, self.N), np.float16)
-        else:
-            x_im = np.asarray(x_im, np.float16).reshape(1, self.N)
-        out = self.model(x_re, x_im, *self._aux_values)
-        out = out.reshape(2, self.N)
-        return out[0].copy(), out[1].copy()
+      x_re = np.asarray(x_re, np.float16).reshape(1, self.N)
+      if x_im is None:
+        x_im = np.zeros((1, self.N), np.float16)
+      else:
+        x_im = np.asarray(x_im, np.float16).reshape(1, self.N)
+      out = self.model(x_re, x_im, *self._aux_values)
+      out = out.reshape(2, self.N)
+      return out[0].copy(), out[1].copy()
 
 
 class Plan2:
@@ -355,36 +350,36 @@ class Plan2:
     mis-fuse - see _axis_dft)."""
 
     def __init__(self, M: int, N: int, inverse: bool):
-        self.M, self.N, self.inverse = M, N, inverse
-        mk = _idft_matrix if inverse else _dft_matrix
-        WrN, WiN = mk(N)                                          # row twiddle (x @ Wt)
-        WrM, WiM = mk(M)                                          # column twiddle
-        if inverse:
-            # Fold the 1/(M*N) normalization INTO the twiddles, 1/N on the row pass and
-            # 1/M on the column pass - NOT one scale at the end. A real spectrum is large
-            # (O(M*N) at the dominant modes), so an unscaled first-axis transform would
-            # push intermediates past fp16 max (65504) and shred precision.
-            WrN, WiN = WrN * (1.0 / N), WiN * (1.0 / N)
-            WrM, WiM = WrM * (1.0 / M), WiM * (1.0 / M)
-        xr = af.input((M, N)); xi = af.input((M, N))
-        re, im = _cmatmul_const(xr, xi, WrN, WiN)                 # all M rows, one matmul
-        re = re.transpose([1, 0]); im = im.transpose([1, 0])      # columns -> rows
-        re, im = _cmatmul_const(re, im, WrM, WiM)                 # all N columns, one matmul
-        re = re.transpose([1, 0]); im = im.transpose([1, 0])
-        out = af.concat([re, im], axis=0)                          # [2M, N], split on host
-        # exact-by-construction DFT subtracts trip the generic cancel_sub heuristic;
-        # numerically verified vs np.fft.fft2 (tests/test_fft2.py), so it vouches for itself.
-        self.model = af.compile(out, _check_precision=False)
-        self.n_ops = self.model.n_ops
+      self.M, self.N, self.inverse = M, N, inverse
+      mk = _idft_matrix if inverse else _dft_matrix
+      WrN, WiN = mk(N)                                          # row twiddle (x @ Wt)
+      WrM, WiM = mk(M)                                          # column twiddle
+      if inverse:
+        # Fold the 1/(M*N) normalization INTO the twiddles, 1/N on the row pass and
+        # 1/M on the column pass - NOT one scale at the end. A real spectrum is large
+        # (O(M*N) at the dominant modes), so an unscaled first-axis transform would
+        # push intermediates past fp16 max (65504) and shred precision.
+        WrN, WiN = WrN * (1.0 / N), WiN * (1.0 / N)
+        WrM, WiM = WrM * (1.0 / M), WiM * (1.0 / M)
+      xr = af.input((M, N)); xi = af.input((M, N))
+      re, im = _cmatmul_const(xr, xi, WrN, WiN)                 # all M rows, one matmul
+      re = re.transpose([1, 0]); im = im.transpose([1, 0])      # columns -> rows
+      re, im = _cmatmul_const(re, im, WrM, WiM)                 # all N columns, one matmul
+      re = re.transpose([1, 0]); im = im.transpose([1, 0])
+      out = af.concat([re, im], axis=0)                          # [2M, N], split on host
+      # exact-by-construction DFT subtracts trip the generic cancel_sub heuristic;
+      # numerically verified vs np.fft.fft2 (tests/test_fft2.py), so it vouches for itself.
+      self.model = af.compile(out, _check_precision=False)
+      self.n_ops = self.model.n_ops
 
     def __call__(self, x_re: np.ndarray, x_im: np.ndarray | None = None):
-        x_re = np.asarray(x_re, np.float16).reshape(self.M, self.N)
-        if x_im is None:
-            x_im = np.zeros((self.M, self.N), np.float16)
-        else:
-            x_im = np.asarray(x_im, np.float16).reshape(self.M, self.N)
-        out = self.model(x_re, x_im).reshape(2, self.M, self.N)
-        return out[0].copy(), out[1].copy()
+      x_re = np.asarray(x_re, np.float16).reshape(self.M, self.N)
+      if x_im is None:
+        x_im = np.zeros((self.M, self.N), np.float16)
+      else:
+        x_im = np.asarray(x_im, np.float16).reshape(self.M, self.N)
+      out = self.model(x_re, x_im).reshape(2, self.M, self.N)
+      return out[0].copy(), out[1].copy()
 
 
 # plan cache so repeated calls at the same N reuse the compiled program
@@ -392,38 +387,33 @@ _PLAN_CACHE: dict[tuple, Plan] = {}
 
 
 def fft_plan(N: int) -> Plan:
-    key = (N, False, False)
-    if key not in _PLAN_CACHE:
-        _PLAN_CACHE[key] = Plan(N, inverse=False, real_input=False)
-    return _PLAN_CACHE[key]
+  key = (N, False, False)
+  if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan(N, inverse=False, real_input=False)
+  return _PLAN_CACHE[key]
 
 
 def ifft_plan(N: int) -> Plan:
-    key = (N, True, False)
-    if key not in _PLAN_CACHE:
-        _PLAN_CACHE[key] = Plan(N, inverse=True, real_input=False)
-    return _PLAN_CACHE[key]
+  key = (N, True, False)
+  if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan(N, inverse=True, real_input=False)
+  return _PLAN_CACHE[key]
 
 
 def rfft_plan(N: int) -> Plan:
-    key = (N, False, True)
-    if key not in _PLAN_CACHE:
-        _PLAN_CACHE[key] = Plan(N, inverse=False, real_input=True)
-    return _PLAN_CACHE[key]
+  key = (N, False, True)
+  if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan(N, inverse=False, real_input=True)
+  return _PLAN_CACHE[key]
 
 
 def fft2_plan(M: int, N: int) -> Plan2:
-    key = ("2d", M, N, False)
-    if key not in _PLAN_CACHE:
-        _PLAN_CACHE[key] = Plan2(M, N, inverse=False)
-    return _PLAN_CACHE[key]
+  key = ("2d", M, N, False)
+  if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan2(M, N, inverse=False)
+  return _PLAN_CACHE[key]
 
 
 def ifft2_plan(M: int, N: int) -> Plan2:
-    key = ("2d", M, N, True)
-    if key not in _PLAN_CACHE:
-        _PLAN_CACHE[key] = Plan2(M, N, inverse=True)
-    return _PLAN_CACHE[key]
+  key = ("2d", M, N, True)
+  if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan2(M, N, inverse=True)
+  return _PLAN_CACHE[key]
 
 
 # --------------------------------------------------------------------------- #

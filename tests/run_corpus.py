@@ -35,30 +35,30 @@ ALL_CASES = (test_nn_blocks.CASES + test_synthetic.CASES + test_corners.CASES
 
 
 def main():
-    n_int8 = sum(c.int8_ok for c in ALL_CASES)
-    n_xfail = sum(bool(c.xfail) for c in ALL_CASES)
-    cats = {}
-    for c in ALL_CASES:
-        cats[c.category] = cats.get(c.category, 0) + 1
-    print(f"aneforge corpus: {len(ALL_CASES)} cases "
-          f"({', '.join(f'{k}={v}' for k, v in sorted(cats.items()))}); "
-          f"{n_int8} run fp16+int8; {n_xfail} xfail-marked\n")
-    _, code = run_corpus(ALL_CASES)
-    return code
+  n_int8 = sum(c.int8_ok for c in ALL_CASES)
+  n_xfail = sum(bool(c.xfail) for c in ALL_CASES)
+  cats = {}
+  for c in ALL_CASES:
+    cats[c.category] = cats.get(c.category, 0) + 1
+  print(f"aneforge corpus: {len(ALL_CASES)} cases "
+        f"({', '.join(f'{k}={v}' for k, v in sorted(cats.items()))}); "
+        f"{n_int8} run fp16+int8; {n_xfail} xfail-marked\n")
+  _, code = run_corpus(ALL_CASES)
+  return code
 
 
 # ---- pytest entry points (one test per case variant) --------------------- #
 try:
-    import pytest
+  import pytest
 
-    @pytest.mark.parametrize("case", ALL_CASES, ids=[c.name for c in ALL_CASES])
-    def test_case(case):
-        for rec in eval_case(case):
-            assert rec["status"] in ("PASS", "XFAIL"), \
-                f"{rec['name']}/{rec['variant']}: {rec['status']} ({rec['metric']}) {rec['err']}"
+  @pytest.mark.parametrize("case", ALL_CASES, ids=[c.name for c in ALL_CASES])
+  def test_case(case):
+    for rec in eval_case(case):
+      assert rec["status"] in ("PASS", "XFAIL"), \
+          f"{rec['name']}/{rec['variant']}: {rec['status']} ({rec['metric']}) {rec['err']}"
 except ImportError:
-    pass
+  pass
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+  sys.exit(main())

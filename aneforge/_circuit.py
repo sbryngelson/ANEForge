@@ -33,44 +33,39 @@ _last_failure_ts: float | None = None   # monotonic time of the last compile fai
 
 
 class CompileBackoffError(RuntimeError):
-    """Raised (in strict mode) when a compile is attempted within the backoff window
+  """Raised (in strict mode) when a compile is attempted within the backoff window
     after a recent compile failure."""
 
 
 def reset() -> None:
-    """Clear the backoff state (forget the last failure)."""
-    global _last_failure_ts
-    with _lock:
-        _last_failure_ts = None
+  """Clear the backoff state (forget the last failure)."""
+  global _last_failure_ts
+  with _lock: _last_failure_ts = None
 
 
 def note_compile_result(ok: bool) -> None:
-    """Record the outcome of a compile. A failure arms the backoff; a success clears it."""
-    global _last_failure_ts
-    with _lock:
-        _last_failure_ts = None if ok else _monotonic()
+  """Record the outcome of a compile. A failure arms the backoff; a success clears it."""
+  global _last_failure_ts
+  with _lock: _last_failure_ts = None if ok else _monotonic()
 
 
 def guard_before_compile() -> None:
-    """Call immediately before a compile. If a compile failed within the last
+  """Call immediately before a compile. If a compile failed within the last
     `_BACKOFF_S` seconds, pace this one to keep consecutive failures a short interval
     apart (default: sleep the remainder; strict mode: raise)."""
-    if _DISABLED or _BACKOFF_S <= 0.0:
-        return
-    with _lock:
-        if _last_failure_ts is None:
-            return
-        wait = _BACKOFF_S - (_monotonic() - _last_failure_ts)
-    if wait <= 0.0:
-        return
-    if _STRICT:
-        raise CompileBackoffError(
-            f"aneforge: a compile failed < {_BACKOFF_S:.0f}s ago; refusing another for "
-            f"{wait:.1f}s (a defensive backstop for the autotuner's burst of variant "
-            f"compiles). Set ANEFORGE_DISABLE_COMPILE_BREAKER=1 to override.")
-    warnings.warn(
-        f"aneforge: pacing this compile by {wait:.1f}s - a compile failed recently "
-        f"(a defensive backstop for the autotuner's burst of variant compiles). "
-        f"(ANEFORGE_DISABLE_COMPILE_BREAKER=1 to override.)",
-        stacklevel=3)
-    _sleep(wait)
+  if _DISABLED or _BACKOFF_S <= 0.0: return
+  with _lock:
+    if _last_failure_ts is None: return
+    wait = _BACKOFF_S - (_monotonic() - _last_failure_ts)
+  if wait <= 0.0: return
+  if _STRICT:
+    raise CompileBackoffError(
+      f"aneforge: a compile failed < {_BACKOFF_S:.0f}s ago; refusing another for "
+      f"{wait:.1f}s (a defensive backstop for the autotuner's burst of variant "
+      f"compiles). Set ANEFORGE_DISABLE_COMPILE_BREAKER=1 to override.")
+  warnings.warn(
+    f"aneforge: pacing this compile by {wait:.1f}s - a compile failed recently "
+    f"(a defensive backstop for the autotuner's burst of variant compiles). "
+    f"(ANEFORGE_DISABLE_COMPILE_BREAKER=1 to override.)",
+    stacklevel=3)
+  _sleep(wait)

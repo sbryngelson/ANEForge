@@ -121,8 +121,7 @@ def _sum_to(t: Tensor, sub: str, keep: str) -> tuple[Tensor, str]:
     """Sum `t` over the axes whose index is not in `keep`, then drop the size-1
     reduced axes via reshape (numpy keepdims=False semantics)."""
     drop_axes = tuple(i for i, ch in enumerate(sub) if ch not in keep)
-    if not drop_axes:
-        return t, sub
+    if not drop_axes: return t, sub
     t = t.sum(drop_axes)                       # af.sum keeps dims (size 1)
     new_sub = "".join(ch for i, ch in enumerate(sub) if i not in drop_axes)
     # squeeze the reduced (size-1) axes out
@@ -133,8 +132,7 @@ def _sum_to(t: Tensor, sub: str, keep: str) -> tuple[Tensor, str]:
 def _align(t: Tensor, sub: str, order: str) -> Tensor:
     """Transpose `t` so its indices appear in the index-order given by `order`
     (a permutation of the letters of `sub`)."""
-    if list(sub) == list(order):
-        return t
+    if list(sub) == list(order): return t
     perm = [sub.index(ch) for ch in order]
     return t.transpose(perm)
 
@@ -169,8 +167,7 @@ def _contract_pair(a: Tensor, sa: str, b: Tensor, sb: str, out: str) -> tuple[Te
     keepN = [ch for ch in sb if ch not in set_a]                            # N (b-only, in out)
 
     # --- pure elementwise / outer (no contraction) ------------------------ #
-    if not contract:
-        return _broadcast_mul(a, sa, b, sb, batch, keepM, keepN)
+    if not contract: return _broadcast_mul(a, sa, b, sb, batch, keepM, keepN)
 
     # --- batched matmul path ---------------------------------------------- #
     a = _align(a, sa, "".join(batch + keepM + contract))   # [B.., M.., K..]
@@ -186,12 +183,10 @@ def _contract_pair(a: Tensor, sa: str, b: Tensor, sb: str, out: str) -> tuple[Te
     Nsz = int(np.prod(Ndims)) if Ndims else 1
 
     if batch:
-        a3 = a.reshape(Bsz, Msz, Ksz)
-        b3 = b.reshape(Bsz, Ksz, Nsz)
+        a3 = a.reshape(Bsz, Msz, Ksz); b3 = b.reshape(Bsz, Ksz, Nsz)
         c = a3 @ b3                                        # bmm -> [Bsz, Msz, Nsz]
     else:
-        a2 = a.reshape(Msz, Ksz)
-        b2 = b.reshape(Ksz, Nsz)
+        a2 = a.reshape(Msz, Ksz); b2 = b.reshape(Ksz, Nsz)
         c = a2 @ b2                                        # bmm 2D -> [Msz, Nsz]
 
     res_sub = "".join(batch + keepM + keepN)
@@ -223,8 +218,7 @@ def _len(t: Tensor, present: list, ch: str) -> int:
 def _expand_to(t: Tensor, present: list, target: list, _sizes) -> Tensor:
     """Reshape `t` (whose dims are `present`, a subsequence of `target`) to
     rank `len(target)` with size-1 at the missing positions, so it broadcasts."""
-    if list(present) == list(target):
-        return t
+    if list(present) == list(target): return t
     shape = []
     pi = 0
     for ch in target:
@@ -265,8 +259,7 @@ def einsum(equation: str, *operands: Tensor) -> Tensor:
     if len(operands) == 1:
         t, sub = operands[0], ins[0]
         t, sub = _sum_to(t, sub, out)            # drop summed indices
-        if sub == out:
-            return t
+        if sub == out: return t
         return _align(t, sub, out)               # transpose to requested order
 
     # ---- multi-operand: left-fold pairwise ------------------------------- #
@@ -283,8 +276,7 @@ def einsum(equation: str, *operands: Tensor) -> Tensor:
 
     # final: sum away any leftover non-output indices, then order to `out`
     cur, csub = _sum_to(cur, csub, out)
-    if csub != out:
-        cur = _align(cur, csub, out)
+    if csub != out: cur = _align(cur, csub, out)
     return cur
 
 
@@ -296,90 +288,90 @@ __all__ = ["EinsumUnsupported", "einsum"]
 # --------------------------------------------------------------------------- #
 
 def _selftest() -> int:
-    import aneforge as af
+  import aneforge as af
 
-    rng = np.random.default_rng(0)
-    f16 = np.float16
+  rng = np.random.default_rng(0)
+  f16 = np.float16
 
-    def R(*shape):
-        return rng.standard_normal(shape).astype(f16)
+  def R(*shape):
+    return rng.standard_normal(shape).astype(f16)
 
-    # (name, equation, [shapes...], tol)
-    battery = [
-        ("matmul",            "ij,jk->ik",        [(8, 16), (16, 12)]),
-        ("matmul-implied",    "ij,jk",            [(8, 16), (16, 12)]),
-        ("batched-matmul",    "bij,bjk->bik",     [(4, 8, 16), (4, 16, 12)]),
-        ("transpose",         "ij->ji",           [(8, 16)]),
-        ("transpose-3d",      "abc->cab",         [(3, 4, 5)]),
-        ("outer",             "i,j->ij",          [(8,), (16,)]),
-        ("matvec",            "ij,j->i",          [(8, 16), (16,)]),
-        ("vecmat",            "i,ij->j",          [(8,), (8, 16)]),
-        ("elem-reduce",       "ij,ij->i",         [(8, 16), (8, 16)]),
-        ("dot",               "i,i->",            [(32,), (32,)]),
-        ("full-reduce",       "ij->",             [(8, 16)]),
-        ("row-reduce",        "ij->i",            [(8, 16)]),
-        ("col-reduce",        "ij->j",            [(8, 16)]),
-        ("bilinear",          "bi,ij,bj->b",      [(4, 8), (8, 8), (4, 8)]),
-        ("attn-scores",       "bhqd,bhkd->bhqk",  [(2, 3, 5, 7), (2, 3, 6, 7)]),
-        ("attn-context",      "bhqk,bhkd->bhqd",  [(2, 3, 5, 6), (2, 3, 6, 7)]),
-        ("weighted-combo",    "bn,bnd->bd",       [(4, 6), (4, 6, 5)]),
-        ("three-chain",       "ij,jk,kl->il",     [(6, 8), (8, 5), (5, 7)]),
-        ("batch-elem-mul",    "bij,bij->bij",     [(2, 4, 5), (2, 4, 5)]),
-        ("tensordot",         "ijk,kl->ijl",      [(3, 4, 5), (5, 6)]),
-        ("contract-mid",      "ijk,jl->ikl",      [(3, 4, 5), (4, 6)]),
-        ("partial-reduce",    "ijk,ik->i",        [(3, 4, 5), (3, 5)]),
-        ("rand-A",            "abc,cd->abd",      [(2, 3, 4), (4, 5)]),
-        ("rand-B",            "ij,ik->jk",        [(7, 4), (7, 5)]),
-        ("rand-C",            "abcd,abce->abde",  [(2, 2, 3, 4), (2, 2, 3, 5)]),
-    ]
+  # (name, equation, [shapes...], tol)
+  battery = [
+    ("matmul",            "ij,jk->ik",        [(8, 16), (16, 12)]),
+    ("matmul-implied",    "ij,jk",            [(8, 16), (16, 12)]),
+    ("batched-matmul",    "bij,bjk->bik",     [(4, 8, 16), (4, 16, 12)]),
+    ("transpose",         "ij->ji",           [(8, 16)]),
+    ("transpose-3d",      "abc->cab",         [(3, 4, 5)]),
+    ("outer",             "i,j->ij",          [(8,), (16,)]),
+    ("matvec",            "ij,j->i",          [(8, 16), (16,)]),
+    ("vecmat",            "i,ij->j",          [(8,), (8, 16)]),
+    ("elem-reduce",       "ij,ij->i",         [(8, 16), (8, 16)]),
+    ("dot",               "i,i->",            [(32,), (32,)]),
+    ("full-reduce",       "ij->",             [(8, 16)]),
+    ("row-reduce",        "ij->i",            [(8, 16)]),
+    ("col-reduce",        "ij->j",            [(8, 16)]),
+    ("bilinear",          "bi,ij,bj->b",      [(4, 8), (8, 8), (4, 8)]),
+    ("attn-scores",       "bhqd,bhkd->bhqk",  [(2, 3, 5, 7), (2, 3, 6, 7)]),
+    ("attn-context",      "bhqk,bhkd->bhqd",  [(2, 3, 5, 6), (2, 3, 6, 7)]),
+    ("weighted-combo",    "bn,bnd->bd",       [(4, 6), (4, 6, 5)]),
+    ("three-chain",       "ij,jk,kl->il",     [(6, 8), (8, 5), (5, 7)]),
+    ("batch-elem-mul",    "bij,bij->bij",     [(2, 4, 5), (2, 4, 5)]),
+    ("tensordot",         "ijk,kl->ijl",      [(3, 4, 5), (5, 6)]),
+    ("contract-mid",      "ijk,jl->ikl",      [(3, 4, 5), (4, 6)]),
+    ("partial-reduce",    "ijk,ik->i",        [(3, 4, 5), (3, 5)]),
+    ("rand-A",            "abc,cd->abd",      [(2, 3, 4), (4, 5)]),
+    ("rand-B",            "ij,ik->jk",        [(7, 4), (7, 5)]),
+    ("rand-C",            "abcd,abce->abde",  [(2, 2, 3, 4), (2, 2, 3, 5)]),
+  ]
 
-    rejected = [
-        ("diag",   "ii->i",   [(5, 5)]),
-        ("trace",  "ii->",    [(5, 5)]),
-        ("diag-batch", "bii->bi", [(3, 5, 5)]),
-        ("ellipsis", "...ij->...ji", [(2, 3, 4)]),
-        ("diag-write", "ij->ii", [(5, 5)]),
-    ]
+  rejected = [
+    ("diag",   "ii->i",   [(5, 5)]),
+    ("trace",  "ii->",    [(5, 5)]),
+    ("diag-batch", "bii->bi", [(3, 5, 5)]),
+    ("ellipsis", "...ij->...ji", [(2, 3, 4)]),
+    ("diag-write", "ij->ii", [(5, 5)]),
+  ]
 
-    print("SUPPORTED battery (relerr vs numpy.einsum on the ANE):")
-    passes = 0
-    for name, eq, shapes in battery:
-        arrs = [R(*s) for s in shapes]
-        try:
-            ref = np.einsum(eq, *[a.astype(np.float32) for a in arrs])
-            t_in = [af.input(s) for s in shapes]
-            t_out = einsum(eq, *t_in)
-            net = af.compile(t_out)
-            got = net(*arrs)
-            ref_a = np.atleast_1d(ref)
-            got_a = np.atleast_1d(got).reshape(ref_a.shape)
-            relerr = float(np.abs(got_a - ref_a).max() / (np.abs(ref_a).max() + 1e-6))
-            ok = relerr < 0.02
-            passes += ok
-            print(f"  {name:18s} {eq:20s} {'OK ' if ok else 'FAIL'} relerr {relerr:.5f}  shape {tuple(np.shape(got))}")
-        except Exception as e:  # noqa
-            print(f"  {name:18s} {eq:20s} ERROR {type(e).__name__}: {e}")
+  print("SUPPORTED battery (relerr vs numpy.einsum on the ANE):")
+  passes = 0
+  for name, eq, shapes in battery:
+    arrs = [R(*s) for s in shapes]
+    try:
+      ref = np.einsum(eq, *[a.astype(np.float32) for a in arrs])
+      t_in = [af.input(s) for s in shapes]
+      t_out = einsum(eq, *t_in)
+      net = af.compile(t_out)
+      got = net(*arrs)
+      ref_a = np.atleast_1d(ref)
+      got_a = np.atleast_1d(got).reshape(ref_a.shape)
+      relerr = float(np.abs(got_a - ref_a).max() / (np.abs(ref_a).max() + 1e-6))
+      ok = relerr < 0.02
+      passes += ok
+      print(f"  {name:18s} {eq:20s} {'OK ' if ok else 'FAIL'} relerr {relerr:.5f}  shape {tuple(np.shape(got))}")
+    except Exception as e:  # noqa
+      print(f"  {name:18s} {eq:20s} ERROR {type(e).__name__}: {e}")
 
-    print(f"\n{passes}/{len(battery)} supported patterns correct on the ANE\n")
+  print(f"\n{passes}/{len(battery)} supported patterns correct on the ANE\n")
 
-    print("REJECTED patterns (must raise, never compute wrong results):")
-    rej_ok = 0
-    for name, eq, shapes in rejected:
-        t_in = [af.input(s) for s in shapes]
-        try:
-            einsum(eq, *t_in)
-            print(f"  {name:14s} {eq:16s} FAIL (did NOT raise)")
-        except EinsumUnsupported as e:
-            rej_ok += 1
-            print(f"  {name:14s} {eq:16s} rejected: {str(e).splitlines()[0][:70]}")
-        except (ValueError, NotImplementedError) as e:
-            rej_ok += 1
-            print(f"  {name:14s} {eq:16s} rejected: {type(e).__name__}: {str(e)[:60]}")
+  print("REJECTED patterns (must raise, never compute wrong results):")
+  rej_ok = 0
+  for name, eq, shapes in rejected:
+    t_in = [af.input(s) for s in shapes]
+    try:
+      einsum(eq, *t_in)
+      print(f"  {name:14s} {eq:16s} FAIL (did NOT raise)")
+    except EinsumUnsupported as e:
+      rej_ok += 1
+      print(f"  {name:14s} {eq:16s} rejected: {str(e).splitlines()[0][:70]}")
+    except (ValueError, NotImplementedError) as e:
+      rej_ok += 1
+      print(f"  {name:14s} {eq:16s} rejected: {type(e).__name__}: {str(e)[:60]}")
 
-    print(f"\n{rej_ok}/{len(rejected)} unsupported patterns correctly rejected")
-    return 0 if (passes == len(battery) and rej_ok == len(rejected)) else 1
+  print(f"\n{rej_ok}/{len(rejected)} unsupported patterns correctly rejected")
+  return 0 if (passes == len(battery) and rej_ok == len(rejected)) else 1
 
 
 if __name__ == "__main__":
-    import sys
-    sys.exit(_selftest())
+  import sys
+  sys.exit(_selftest())

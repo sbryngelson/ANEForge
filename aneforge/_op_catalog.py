@@ -234,39 +234,36 @@ OP_CATALOG: dict[str, dict] = {
 # headline: 187 MIL ops total
 
 def op_info(name: str) -> dict | None:
-    """Full catalog entry for a MIL op (or None if unknown)."""
-    return OP_CATALOG.get(name)
+  """Full catalog entry for a MIL op (or None if unknown)."""
+  return OP_CATALOG.get(name)
 
 def device_status(name: str, chip: str = 'm1') -> str | None:
-    """'native' | 'bridge' | 'walled' for `name` on `chip` (m1/m2/m3/m4/m5 or a13..a17/h13..h17)."""
-    d = OP_CATALOG.get(name)
-    if d is None:
-        return None
-    return d[_CHIP.get(chip.lower(), 'm1')]
+  """'native' | 'bridge' | 'walled' for `name` on `chip` (m1/m2/m3/m4/m5 or a13..a17/h13..h17)."""
+  d = OP_CATALOG.get(name)
+  if d is None: return None
+  return d[_CHIP.get(chip.lower(), 'm1')]
 
 def is_native(name: str, chip: str = 'm1') -> bool:
-    """True iff `name` runs natively on-engine on `chip`."""
-    return device_status(name, chip) == 'native'
+  """True iff `name` runs natively on-engine on `chip`."""
+  return device_status(name, chip) == 'native'
 
 def ops_on(chip: str = 'm1', status: str = 'native') -> list[str]:
-    """All ops with the given status (native/bridge/walled) on `chip`, sorted."""
-    key = _CHIP.get(chip.lower(), 'm1')
-    return sorted(n for n, d in OP_CATALOG.items() if d[key] == status)
+  """All ops with the given status (native/bridge/walled) on `chip`, sorted."""
+  key = _CHIP.get(chip.lower(), 'm1')
+  return sorted(n for n, d in OP_CATALOG.items() if d[key] == status)
 
 def min_native_family(name: str) -> int | None:
-    """Lowest ANE family (2=A13/M1 .. 5=A16/M5) where `name` is native; None if walled on all."""
-    d = OP_CATALOG.get(name)
-    if d is None:
-        return None
-    for key in ('m1', 'm2', 'm3', 'm4_m5'):
-        if d[key] == 'native':
-            return _FAMILY[key]
-    return None
+  """Lowest ANE family (2=A13/M1 .. 5=A16/M5) where `name` is native; None if walled on all."""
+  d = OP_CATALOG.get(name)
+  if d is None: return None
+  for key in ('m1', 'm2', 'm3', 'm4_m5'):
+    if d[key] == 'native': return _FAMILY[key]
+  return None
 
 def walled_everywhere() -> list[str]:
-    """Ops with no native/bridge path on any family (must be decomposed on host)."""
-    return sorted(n for n, d in OP_CATALOG.items()
-                  if all(d[k] == 'walled' for k in ('m1', 'm2', 'm3', 'm4_m5')))
+  """Ops with no native/bridge path on any family (must be decomposed on host)."""
+  return sorted(n for n, d in OP_CATALOG.items()
+                if all(d[k] == 'walled' for k in ('m1', 'm2', 'm3', 'm4_m5')))
 
 def categories() -> list[str]:
-    return sorted({d['category'] for d in OP_CATALOG.values()})
+  return sorted({d['category'] for d in OP_CATALOG.values()})
