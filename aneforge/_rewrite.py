@@ -73,24 +73,12 @@ def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
     returned unchanged, so a no-op rule yields the SAME object - the optimizer relies
     on that to keep opt=0 byte-identical.
     """
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        cached = memo.get(id(t))
-        if cached is not None:
-            return cached
-        # rewrite sources first (bottom-up)
-        new_srcs = [visit(s) for s in t.srcs]
-        if all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            rebuilt = t                      # sources unchanged -> reuse the node
-        else:
-            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
-        replacement = rule(rebuilt)
-        result = replacement if replacement is not None else rebuilt
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    # `rule` must be a pure node-local transform: it is called once in `match` and
+    # again in `build`, so a stateful/non-deterministic rule would be unsafe. The
+    # match-guard ensures `build` fires only when `rule` returns a Tensor (not None),
+    # which is why the build-lambda's None-able return is type-ignored as safe.
+    r = Rule("adhoc", "lossless", lambda t: rule(t) is not None, lambda t: rule(t))  # type: ignore[arg-type]
+    return graph_rewrite(out, [r])
 
 
 def _decompose_sdpa(node: Tensor) -> Tensor:
@@ -114,14 +102,9 @@ def sdpa_to_decomposed(out: Tensor, only_id: Optional[int] = None) -> Tensor:
     `only_id` (an `id()` of a node in the ORIGINAL graph) rewrites just that one
     sdpa node; None rewrites every sdpa node. Returns a new output DAG (the same
     object if there was nothing to rewrite)."""
-    def rule(t: Tensor) -> Optional[Tensor]:
-        if t.op != "sdpa":
-            return None
-        if only_id is not None and id(t) != only_id:
-            return None
-        return _decompose_sdpa(t)
-
-    return rewrite(out, rule)
+    sel = None if only_id is None else {only_id}
+    r = Rule("sdpa", "lossless", lambda t: t.op == "sdpa", _decompose_sdpa)
+    return graph_rewrite(out, [r], select=sel)
 
 
 def list_sdpa_nodes(out: Tensor) -> list[Tensor]:
@@ -134,35 +117,10 @@ def set_node_int8(out: Tensor, node_ids: set[int]) -> Tensor:
     """Return a new DAG where each weight-bearing node whose `id()` is in
     `node_ids` carries an `int8=True` attr (per-weight int8 override). The
     compiler's `weight()` honors `t.attrs['int8']` over the global flag."""
-    def rule(t: Tensor) -> Optional[Tensor]:
-        if id(t) in node_ids and t.op in ("matmul", "conv"):
-            attrs = dict(t.attrs)
-            attrs["int8"] = True
-            return Tensor(t.shape, t.op, t.srcs, attrs)
-        return None
-
-    # node_ids reference original nodes; rewrite() rebuilds bottom-up so a tagged
-    # node's id changes once its sources change. Tag by matching the original ids
-    # against the pre-rewrite identity during the walk.
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        cached = memo.get(id(t))
-        if cached is not None:
-            return cached
-        new_srcs = [visit(s) for s in t.srcs]
-        tag = id(t) in node_ids and t.op in ("matmul", "conv")
-        if not tag and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            result = t
-        else:
-            attrs = dict(t.attrs)
-            if tag:
-                attrs["int8"] = True
-            result = Tensor(t.shape, t.op, new_srcs, attrs)
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    if not node_ids: return out
+    r = Rule("int8", "numeric", lambda t: t.op in ("matmul", "conv"),
+             lambda t: Tensor(t.shape, t.op, t.srcs, {**t.attrs, "int8": True}))
+    return graph_rewrite(out, [r], select=set(node_ids))
 
 
 def list_weight_nodes(out: Tensor) -> list[Tensor]:
@@ -221,38 +179,12 @@ def reduce_sum_to_matmul(out: Tensor, only_idx: set[int] | None = None) -> Tenso
     nothing matched)."""
     from ._compile import _topo
     order = _topo(out)
-    if only_idx is None:
-        target_ids = {id(t) for t in order
-                      if t.op == "reduce_sum" and len(t.attrs.get("axes", ())) == 1}
-    else:
-        target_ids = {id(order[i]) for i in only_idx
-                      if i < len(order) and order[i].op == "reduce_sum"
-                      and len(order[i].attrs.get("axes", ())) == 1}
-
-    def rule(t: Tensor) -> Optional[Tensor]:
-        if id(t) in target_ids:
-            return _reduce_sum_as_matmul(t)
-        return None
-
-    # target_ids are pre-rewrite identities; match against the original nodes during
-    # the bottom-up walk (a reduce_sum's id changes once its source is rebuilt).
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        cached = memo.get(id(t))
-        if cached is not None:
-            return cached
-        new_srcs = [visit(s) for s in t.srcs]
-        hit = id(t) in target_ids
-        if not hit and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            rebuilt = t
-        else:
-            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
-        result = _reduce_sum_as_matmul(rebuilt) if hit else rebuilt
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    elig = lambda t: t.op == "reduce_sum" and len(t.attrs.get("axes", ())) == 1
+    if only_idx is None: sel = {id(t) for t in order if elig(t)}
+    else: sel = {id(order[i]) for i in only_idx if i < len(order) and elig(order[i])}
+    if not sel: return out
+    r = Rule("rsum_mm", "numeric", elig, _reduce_sum_as_matmul)
+    return graph_rewrite(out, [r], select=sel)
 
 
 # --------------------------------------------------------------------------- #
@@ -325,25 +257,12 @@ def decompose_bridge(out: Tensor, decomp_idx: set[int]) -> Tensor:
     no registered decomposer is left as-is (single-route). Returns a new output DAG."""
     from ._compile import _topo
     order = _topo(out)
-    targets = {id(order[i]): order[i].op for i in decomp_idx
-               if 0 <= i < len(order) and order[i].op in _BRIDGE_DECOMPOSERS}
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        c = memo.get(id(t))
-        if c is not None:
-            return c
-        new_srcs = [visit(s) for s in t.srcs]
-        hit_op = targets.get(id(t))
-        if hit_op is None and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            rebuilt = t
-        else:
-            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
-        result = _BRIDGE_DECOMPOSERS[hit_op](rebuilt) if hit_op is not None else rebuilt
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    sel = {id(order[i]) for i in decomp_idx
+           if 0 <= i < len(order) and order[i].op in _BRIDGE_DECOMPOSERS}
+    if not sel: return out
+    r = Rule("bridge", "lossless", lambda t: t.op in _BRIDGE_DECOMPOSERS,
+             lambda t: _BRIDGE_DECOMPOSERS[t.op](t))
+    return graph_rewrite(out, [r], select=sel)
 
 
 def paired_subtract(a, b):
