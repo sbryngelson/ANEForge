@@ -27,9 +27,40 @@ On top of that, two concrete rewrites the optimizer uses:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from .graph import Tensor
+
+
+@dataclass(frozen=True)
+class Rule:
+  """One graph-rewrite rule. `match`/`build` both see the REBUILT node (sources
+  already rewritten); identity-based selection is delegated to graph_rewrite's
+  `select`. `kind` is "lossless" (always-on canon) or "numeric" (tuner-gated)."""
+  name: str; kind: str
+  match: Callable[[Tensor], bool]; build: Callable[[Tensor], Tensor]
+
+
+def graph_rewrite(out: Tensor, rules: list["Rule"], select: set[int] | None = None) -> Tensor:
+  """Return a new output DAG, rules applied bottom-up in ONE memoized pass.
+
+  Sources are rewritten first; the node is rebuilt on the (possibly new) sources;
+  then the first rule whose `match` accepts the rebuilt node fires (its `build`
+  replaces it). `select` (original-node id()s) gates eligibility; None = all
+  eligible. A node with no applied rule and unchanged sources is returned
+  unchanged (same object), so a no-op rule-set yields the SAME object."""
+  memo: dict[int, Tensor] = {}
+  def visit(t: Tensor) -> Tensor:
+    if (c := memo.get(id(t))) is not None: return c
+    new_srcs = [visit(s) for s in t.srcs]
+    rebuilt = t if all(a is b for a, b in zip(new_srcs, t.srcs)) else Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
+    res = rebuilt
+    if select is None or id(t) in select:
+      for r in rules:
+        if r.match(rebuilt): res = r.build(rebuilt); break
+    memo[id(t)] = res; return res
+  return visit(out)
 
 
 def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
