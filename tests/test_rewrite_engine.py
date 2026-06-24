@@ -188,3 +188,16 @@ def test_apply_variant_noop_cfg_keeps_baseline():
   x = af.input((1, 4)); y = (x * 2.0).adds(1.0)
   new_out, int8 = O._apply_variant(y, {"int8": False, "decomp": [], "lossy": False})
   assert new_out is y and int8 is False
+
+
+# -- Task 7: README-example canon-equivalence (on-device) -------------------- #
+def test_readme_example_canon_equivalent():
+  rng = np.random.default_rng(1)
+  img = rng.integers(0, 255, (1, 3, 32, 32)).astype(np.uint8).astype(np.float16)
+  W = rng.standard_normal((8, 3, 3, 3)).astype(np.float16)
+  x = af.input((1, 3, 32, 32)); y = af.conv(x, W, pad=1).relu().mean((2, 3))
+  base = af.compile(y, opt=0)(img)                     # un-canonicalized baseline
+  opt = af.compile(y, opt=1)(img)                      # canonicalized + cost-model pick
+  cos = float((base.ravel() @ opt.ravel()) /
+              (np.linalg.norm(base) * np.linalg.norm(opt) + 1e-12))
+  assert cos > 0.9999
