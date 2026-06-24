@@ -175,7 +175,7 @@ def test_apply_variant_single_pass_composes_axes():
   cfg = {"int8": False, "decomp": [], "lossy": True,
          "scalarfold": [i for i, t in enumerate(order) if t.op == "muls" and t.srcs[0].op == "muls"],
          "constfold": O._constfold_candidates(y)}
-  new_out, int8 = O._apply_variant(y, cfg)
+  new_out, _ = O._apply_variant(y, cfg)
   ops = _ops(new_out)
   assert ops.count("muls") == 1                                # 2*3 folded
   assert "const_array" in ops                                  # const cone folded
