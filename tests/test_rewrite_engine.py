@@ -163,3 +163,28 @@ def test_const_fold_rule_replaces_with_const_array():
   a = _const(np.full((1, 4), 2.0)); y = a.adds(5.0)
   out = _apply(y, {"const_fold"})                              # _apply from Task 4
   assert out.op == "const_array" and np.allclose(out.attrs["value"].astype(np.float32), 7.0)
+
+
+# -- Task 6: tuner integration — numeric passes as gated variant axes --------- #
+from aneforge import _optimize as O
+
+def test_apply_variant_single_pass_composes_axes():
+  a = Tensor((1, 4), "const_array", [], {"value": np.full((1, 4), 2.0, np.float16)})
+  x = af.input((1, 4)); y = (x * 2.0) * 3.0 + a.adds(1.0)     # scalar chain + foldable const cone
+  order = _topo(y)
+  cfg = {"int8": False, "decomp": [], "lossy": True,
+         "scalarfold": [i for i, t in enumerate(order) if t.op == "muls" and t.srcs[0].op == "muls"],
+         "constfold": O._constfold_candidates(y)}
+  new_out, int8 = O._apply_variant(y, cfg)
+  ops = _ops(new_out)
+  assert ops.count("muls") == 1                                # 2*3 folded
+  assert "const_array" in ops                                  # const cone folded
+
+def test_constfold_candidates_skip_inputs():
+  x = af.input((1, 4)); y = x * 2.0
+  assert O._constfold_candidates(y) == []                      # nothing constant
+
+def test_apply_variant_noop_cfg_keeps_baseline():
+  x = af.input((1, 4)); y = (x * 2.0).adds(1.0)
+  new_out, int8 = O._apply_variant(y, {"int8": False, "decomp": [], "lossy": False})
+  assert new_out is y and int8 is False
