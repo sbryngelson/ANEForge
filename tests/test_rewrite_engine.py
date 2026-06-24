@@ -69,3 +69,46 @@ def test_sdpa_to_decomposed_noop_identity():
 def test_decompose_bridge_empty_set_identity():
   x = af.input((1, 8)); y = (x * 2.0).adds(1.0)
   assert decompose_bridge(y, set()) is y               # empty select -> same object
+
+
+# -- Task 3: CANON_RULES + canonicalize -------------------------------------- #
+from aneforge._rewrite import canonicalize
+
+def test_canon_drops_reshape_to_same_shape():
+  x = af.input((2, 3)); y = x.reshape(2, 3)            # no-op reshape
+  out = canonicalize(y * 1.0)                          # muls(1.0) also a no-op
+  assert "reshape" not in _ops(out) and "muls" not in _ops(out)
+
+def test_canon_drops_mul1_and_add0():
+  x = af.input((1, 4)); y = (x * 1.0).adds(0.0)
+  out = canonicalize(y)
+  assert out is x                                       # both no-ops removed -> x itself
+
+def test_canon_collapses_transpose_inverse():
+  x = af.input((2, 3, 4)); y = x.transpose((1, 0, 2)).transpose((1, 0, 2))  # self-inverse
+  out = canonicalize(y)
+  assert "transpose" not in _ops(out)
+
+def test_canon_collapses_double_logical_not():
+  import numpy as np
+  x = af.input((1, 4))
+  zero = Tensor((1, 4), "const_array", [], {"value": np.zeros((1, 4), dtype=np.float16)})
+  y = x.greater(zero).logical_not().logical_not()
+  out = canonicalize(y)
+  assert _ops(out).count("logical_not") == 0
+
+def test_canon_noop_keeps_identity():
+  x = af.input((1, 4)); y = (x * 2.0).adds(1.0)        # nothing redundant
+  assert canonicalize(y) is y
+
+def test_canon_drops_cast_on_compute_tensor():
+  x = af.input((1, 4)); c = x * 2.0                    # a compute tensor (not an input)
+  y = Tensor(c.shape, "cast", [c], {"dtype": "fp16"})  # redundant fp16->fp16 cast
+  out = canonicalize(y)
+  assert "cast" not in _ops(out)
+
+def test_canon_preserves_uint8_input_cast():
+  y = af.image_input((1, 3, 4, 4))                     # uint8 input -> cast(fp16) -> dequant
+  assert "cast" in _ops(y) and "input" in _ops(y)     # the dequant cast is present
+  out = canonicalize(y)
+  assert "cast" in _ops(out)                           # NOT stripped (srcs[0].op == "input")

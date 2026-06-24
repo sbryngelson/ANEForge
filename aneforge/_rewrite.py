@@ -281,3 +281,43 @@ def paired_subtract(a, b):
     pa = a if isinstance(a, Paired) else _mk_paired(a)
     pb = b if isinstance(b, Paired) else _mk_paired(b)
     return (pa - pb).to_tensor()
+
+
+# --------------------------------------------------------------------------- #
+# CANON_RULES: lossless identity/redundancy elimination                        #
+# --------------------------------------------------------------------------- #
+
+def _compose_perm(outer: tuple, inner: tuple) -> tuple:
+  """perm of (transpose(outer) o transpose(inner)): result[i] = inner[outer[i]]."""
+  return tuple(inner[i] for i in outer)
+
+# Each builder gets the REBUILT node; returns the simplified replacement.
+def _b_drop_to_src(t: Tensor) -> Tensor: return t.srcs[0]                       # identity node -> its src
+
+def _b_collapse_reshape(t: Tensor) -> Tensor:
+  return Tensor(t.shape, "reshape", t.srcs[0].srcs, dict(t.srcs[0].attrs))      # reshape o reshape -> one reshape
+
+def _b_collapse_transpose(t: Tensor) -> Tensor:
+  inner = t.srcs[0]; perm = _compose_perm(t.attrs["perm"], inner.attrs["perm"])
+  src = inner.srcs[0]
+  if perm == tuple(range(len(perm))): return src                                # composes to identity -> drop both
+  return Tensor(t.shape, "transpose", [src], {"perm": perm})
+
+CANON_RULES: list[Rule] = [
+  Rule("cast_same", "lossless",
+       lambda t: t.op == "cast" and t.srcs[0].op != "input" and t.attrs.get("dtype", "fp16") == "fp16",
+       _b_drop_to_src),                                                          # cast fp16->fp16 on a compute tensor (NOT the uint8 input port)
+  Rule("reshape_same", "lossless", lambda t: t.op == "reshape" and t.shape == t.srcs[0].shape, _b_drop_to_src),
+  Rule("reshape_chain", "lossless", lambda t: t.op == "reshape" and t.srcs[0].op == "reshape", _b_collapse_reshape),
+  Rule("transpose_chain", "lossless", lambda t: t.op == "transpose" and t.srcs[0].op == "transpose", _b_collapse_transpose),
+  Rule("mul_one", "lossless", lambda t: t.op == "muls" and t.attrs.get("k") == 1.0, _b_drop_to_src),
+  Rule("add_zero", "lossless", lambda t: t.op == "adds" and t.attrs.get("k") == 0.0, _b_drop_to_src),
+  Rule("not_not", "lossless", lambda t: t.op == "logical_not" and t.srcs[0].op == "logical_not", lambda t: t.srcs[0].srcs[0]),
+]
+
+def canonicalize(out: Tensor) -> Tensor:
+  """Apply the lossless CANON_RULES to a fixed point (a rule may expose a fresh
+  redundancy for the next pass). Returns the SAME object when nothing matches, so
+  a clean graph is unchanged."""
+  while (nxt := graph_rewrite(out, CANON_RULES)) is not out: out = nxt
+  return out
