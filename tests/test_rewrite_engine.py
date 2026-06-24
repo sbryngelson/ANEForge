@@ -101,6 +101,16 @@ def test_canon_noop_keeps_identity():
   x = af.input((1, 4)); y = (x * 2.0).adds(1.0)        # nothing redundant
   assert canonicalize(y) is y
 
+def test_graph_rewrite_deep_graph_no_recursion():
+  # Iterative-solver graphs (eigh/svd unrolls) are thousands of nodes deep; the
+  # walk must not blow Python's recursion limit (_topo is iterative for the same
+  # reason). 4000 deep >> sys.getrecursionlimit() (default 1000). The add_zero
+  # canon rule drops every node, so a stack-unsafe walk would RecursionError here.
+  x = af.input((10, 1)); y = x
+  for _ in range(4000): y = y.adds(0.0)                # deep chain of no-op adds
+  out = canonicalize(y)                                # must not RecursionError
+  assert out is x                                      # all 4000 no-op adds dropped to x
+
 def test_canon_drops_cast_on_compute_tensor():
   x = af.input((1, 4)); c = x * 2.0                    # a compute tensor (not an input)
   y = Tensor(c.shape, "cast", [c], {"dtype": "fp16"})  # redundant fp16->fp16 cast

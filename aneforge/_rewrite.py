@@ -53,17 +53,17 @@ def graph_rewrite(out: Tensor, rules: list["Rule"], select: set[int] | None = No
   replaces it). `select` (original-node id()s) gates eligibility; None = all
   eligible. A node with no applied rule and unchanged sources is returned
   unchanged (same object), so a no-op rule-set yields the SAME object."""
-  memo: dict[int, Tensor] = {}
-  def visit(t: Tensor) -> Tensor:
-    if (c := memo.get(id(t))) is not None: return c
-    new_srcs = [visit(s) for s in t.srcs]
+  from ._compile import _topo                 # iterative post-order (sources before consumers);
+  memo: dict[int, Tensor] = {}                 # a forward pass over it is stack-safe on deep unrolled graphs
+  for t in _topo(out):
+    new_srcs = [memo[id(s)] for s in t.srcs]   # every src precedes t in _topo, so it is already in memo
     rebuilt = t if all(a is b for a, b in zip(new_srcs, t.srcs)) else Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
     res = rebuilt
     if select is None or id(t) in select:
       for r in rules:
         if r.match(rebuilt): res = r.build(rebuilt); break
-    memo[id(t)] = res; return res
-  return visit(out)
+    memo[id(t)] = res
+  return memo[id(out)]
 
 
 def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
