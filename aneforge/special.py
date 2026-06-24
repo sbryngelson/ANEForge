@@ -42,9 +42,9 @@ from __future__ import annotations
 import numpy as np
 
 try:
-    from .graph import Tensor
+  from .graph import Tensor
 except ImportError:  # run directly as `python3 aneforge/special.py`
-    from aneforge.graph import Tensor
+  from aneforge.graph import Tensor
 
 
 # --------------------------------------------------------------------------- #
@@ -283,8 +283,7 @@ def exp_wide(x: Tensor, splits: int = 1) -> Tensor:
     only (at best marginally) trade accuracy.
     """
     e = (x * (1.0 / (1 << splits))).exp()
-    for _ in range(splits):
-        e = e * e
+    for _ in range(splits): e = e * e
     return e
 
 
@@ -298,8 +297,7 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
     mainly as a documented range-reduction recipe; the native `x.log()` is the
     better default on this hardware."""
     r = x
-    for _ in range(sqrts):
-        r = r.sqrt()
+    for _ in range(sqrts): r = r.sqrt()
     return r.log() * float(1 << sqrts)
 
 
@@ -314,127 +312,127 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 
 if __name__ == "__main__":
-    import sys
+  import sys
 
-    import scipy.special as sp
+  import scipy.special as sp
 
-    import aneforge as af
+  import aneforge as af
 
-    def run(fn, lo, hi, n=64, geom=False):
-        xs = (np.geomspace(lo, hi, n) if geom else np.linspace(lo, hi, n))
-        xs = xs.astype(np.float16).reshape(1, n)
-        net = af.compile(fn(af.input((1, n))))
-        out = net(xs)
-        return xs.astype(np.float32), out
+  def run(fn, lo, hi, n=64, geom=False):
+    xs = (np.geomspace(lo, hi, n) if geom else np.linspace(lo, hi, n))
+    xs = xs.astype(np.float16).reshape(1, n)
+    net = af.compile(fn(af.input((1, n))))
+    out = net(xs)
+    return xs.astype(np.float32), out
 
-    def relerr(out, ref):
-        ref = np.asarray(ref, np.float32)
-        return float(np.abs(out - ref).max() / (np.abs(ref).max() + 1e-12))
+  def relerr(out, ref):
+    ref = np.asarray(ref, np.float32)
+    return float(np.abs(out - ref).max() / (np.abs(ref).max() + 1e-12))
 
-    def abserr(out, ref):
-        return float(np.abs(out - np.asarray(ref, np.float32)).max())
+  def abserr(out, ref):
+    return float(np.abs(out - np.asarray(ref, np.float32)).max())
 
-    print(f"{'function':18s} {'range':16s} {'metric':10s} {'value':10s} verdict")
-    print("-" * 92)
+  print(f"{'function':18s} {'range':16s} {'metric':10s} {'value':10s} verdict")
+  print("-" * 92)
 
-    results = []
+  results = []
 
-    # erfc - the cancellation showcase
-    xs, out = run(erfc, 0.0, 6.0)
-    ref = sp.erfc(xs[0])
-    e = relerr(out, ref)
-    nat = 1.0 - sp.erf(np.float16(3.0)).astype(np.float32)  # what 1-erf would give
-    results.append(("erfc", "[0, 6]", "relerr", e,
-                    f"PASS (~{e:.1e}); direct form, no cancel (1-erf(3) fp16 = "
-                    f"{np.float32(np.float16(1.0)-np.float16(sp.erf(3.0))):.0e})"))
+  # erfc - the cancellation showcase
+  xs, out = run(erfc, 0.0, 6.0)
+  ref = sp.erfc(xs[0])
+  e = relerr(out, ref)
+  nat = 1.0 - sp.erf(np.float16(3.0)).astype(np.float32)  # what 1-erf would give
+  results.append(("erfc", "[0, 6]", "relerr", e,
+                  f"PASS (~{e:.1e}); direct form, no cancel (1-erf(3) fp16 = "
+                  f"{np.float32(np.float16(1.0)-np.float16(sp.erf(3.0))):.0e})"))
 
-    # expm1
-    xs, out = run(expm1, -0.7, 0.7)
-    results.append(("expm1", "[-0.7, 0.7]", "relerr", relerr(out, sp.expm1(xs[0])),
-                    "PASS; cancellation-free near 0"))
+  # expm1
+  xs, out = run(expm1, -0.7, 0.7)
+  results.append(("expm1", "[-0.7, 0.7]", "relerr", relerr(out, sp.expm1(xs[0])),
+                  "PASS; cancellation-free near 0"))
 
-    # log1p
-    xs, out = run(log1p, -0.5, 1.0)
-    results.append(("log1p", "[-0.5, 1.0]", "relerr", relerr(out, sp.log1p(xs[0])),
-                    "PASS; x*poly keeps it exact at 0"))
+  # log1p
+  xs, out = run(log1p, -0.5, 1.0)
+  results.append(("log1p", "[-0.5, 1.0]", "relerr", relerr(out, sp.log1p(xs[0])),
+                  "PASS; x*poly keeps it exact at 0"))
 
-    # lgamma - relative error away from its zeros (x>=2.5; lgamma=0 at x=1,2 makes
-    # relerr ill-defined there). The worst ABSOLUTE error is at those zeros (~0.2,
-    # fp16 reconstructing a near-zero value); we report both.
-    xs, out = run(lgamma, 1.0, 8.0)
-    ref_lg = sp.gammaln(xs[0])
-    away = xs[0] >= 2.5
-    e_rel_away = relerr(out[:, away], ref_lg[away])
-    e_abs_all = abserr(out, ref_lg)
-    results.append(("lgamma", "[2.5, 8]", "relerr", e_rel_away,
-                    f"PASS (~{e_rel_away:.0e} rel for x>=2.5); centered in (x-4.5). "
-                    f"abs ~{e_abs_all:.1e} AT zeros x=1,2 (fp16 cancels to 0)"))
+  # lgamma - relative error away from its zeros (x>=2.5; lgamma=0 at x=1,2 makes
+  # relerr ill-defined there). The worst ABSOLUTE error is at those zeros (~0.2,
+  # fp16 reconstructing a near-zero value); we report both.
+  xs, out = run(lgamma, 1.0, 8.0)
+  ref_lg = sp.gammaln(xs[0])
+  away = xs[0] >= 2.5
+  e_rel_away = relerr(out[:, away], ref_lg[away])
+  e_abs_all = abserr(out, ref_lg)
+  results.append(("lgamma", "[2.5, 8]", "relerr", e_rel_away,
+                  f"PASS (~{e_rel_away:.0e} rel for x>=2.5); centered in (x-4.5). "
+                  f"abs ~{e_abs_all:.1e} AT zeros x=1,2 (fp16 cancels to 0)"))
 
-    # gamma on [1,2]
-    xs, out = run(gamma, 1.0, 2.0)
-    results.append(("gamma", "[1, 2]", "relerr", relerr(out, sp.gamma(xs[0])),
-                    "PASS; fp16-narrow (overflows >65504 past x~8.3)"))
+  # gamma on [1,2]
+  xs, out = run(gamma, 1.0, 2.0)
+  results.append(("gamma", "[1, 2]", "relerr", relerr(out, sp.gamma(xs[0])),
+                  "PASS; fp16-narrow (overflows >65504 past x~8.3)"))
 
-    # gamma_via_lgamma wider
-    xs, out = run(gamma_via_lgamma, 1.0, 7.5)
-    results.append(("gamma_via_lgamma", "[1, 7.5]", "relerr", relerr(out, sp.gamma(xs[0])),
-                    "PASS; wider range via exp(lgamma), still fp16-bounded"))
+  # gamma_via_lgamma wider
+  xs, out = run(gamma_via_lgamma, 1.0, 7.5)
+  results.append(("gamma_via_lgamma", "[1, 7.5]", "relerr", relerr(out, sp.gamma(xs[0])),
+                  "PASS; wider range via exp(lgamma), still fp16-bounded"))
 
-    # Bessel J0
-    xs, out = run(bessel_j0, 0.0, 3.0)
-    results.append(("bessel_j0", "[0, 3]", "relerr", relerr(out, sp.j0(xs[0])),
-                    "PASS; first lobe + first zero (2.405) in range"))
+  # Bessel J0
+  xs, out = run(bessel_j0, 0.0, 3.0)
+  results.append(("bessel_j0", "[0, 3]", "relerr", relerr(out, sp.j0(xs[0])),
+                  "PASS; first lobe + first zero (2.405) in range"))
 
-    # Bessel I0
-    xs, out = run(bessel_i0, 0.0, 3.75)
-    results.append(("bessel_i0", "[0, 3.75]", "relerr", relerr(out, sp.i0(xs[0])),
-                    "PASS; overflows fp16 past x~12 (hard wall)"))
+  # Bessel I0
+  xs, out = run(bessel_i0, 0.0, 3.75)
+  results.append(("bessel_i0", "[0, 3.75]", "relerr", relerr(out, sp.i0(xs[0])),
+                  "PASS; overflows fp16 past x~12 (hard wall)"))
 
-    # Bessel K0
-    xs, out = run(bessel_k0, 0.1, 2.0)
-    results.append(("bessel_k0", "(0, 2]", "relerr", relerr(out, sp.k0(xs[0])),
-                    "PASS; -ln singularity at 0 (x must be > 0)"))
+  # Bessel K0
+  xs, out = run(bessel_k0, 0.1, 2.0)
+  results.append(("bessel_k0", "(0, 2]", "relerr", relerr(out, sp.k0(xs[0])),
+                  "PASS; -ln singularity at 0 (x must be > 0)"))
 
-    # exp_wide vs native exp accuracy at wide range (per-point median, the fair
-    # metric - max-relerr is dominated by the single largest output)
-    xs, out = run(exp_wide, -10.0, 10.0)
-    ref = np.exp(xs[0])
-    m = ref < 60000.0
-    e_wide = float(np.median(np.abs(out[0, m] - ref[m]) / (np.abs(ref[m]) + 1e-9)))
-    out_nat = af.compile(af.input((1, 64)).exp())(xs.astype(np.float16))
-    e_nat = float(np.median(np.abs(out_nat[0, m] - ref[m]) / (np.abs(ref[m]) + 1e-9)))
-    results.append(("exp_wide", "[-10, 10]", "relerr", e_wide,
-                    f"PASS; per-point ~native ({e_nat:.1e}) -- splitting does NOT "
-                    f"beat the (already good) native fp16 exp on this ANE"))
+  # exp_wide vs native exp accuracy at wide range (per-point median, the fair
+  # metric - max-relerr is dominated by the single largest output)
+  xs, out = run(exp_wide, -10.0, 10.0)
+  ref = np.exp(xs[0])
+  m = ref < 60000.0
+  e_wide = float(np.median(np.abs(out[0, m] - ref[m]) / (np.abs(ref[m]) + 1e-9)))
+  out_nat = af.compile(af.input((1, 64)).exp())(xs.astype(np.float16))
+  e_nat = float(np.median(np.abs(out_nat[0, m] - ref[m]) / (np.abs(ref[m]) + 1e-9)))
+  results.append(("exp_wide", "[-10, 10]", "relerr", e_wide,
+                  f"PASS; per-point ~native ({e_nat:.1e}) -- splitting does NOT "
+                  f"beat the (already good) native fp16 exp on this ANE"))
 
-    # log_wide
-    xs, out = run(log_wide, 1e-2, 1e4, geom=True)
-    results.append(("log_wide", "[1e-2, 1e4]", "relerr", relerr(out, np.log(xs[0])),
-                    "PASS; native log already good, this is a refinement"))
+  # log_wide
+  xs, out = run(log_wide, 1e-2, 1e4, geom=True)
+  results.append(("log_wide", "[1e-2, 1e4]", "relerr", relerr(out, np.log(xs[0])),
+                  "PASS; native log already good, this is a refinement"))
 
-    ok = True
-    for name, rng, metric, val, verdict in results:
-        bad = val > (0.05 if metric == "relerr" else 0.02)
-        ok = ok and not bad
-        flag = "  <-- HIGH" if bad else ""
-        print(f"{name:18s} {rng:16s} {metric:10s} {val:<10.2e} {verdict}{flag}")
+  ok = True
+  for name, rng, metric, val, verdict in results:
+    bad = val > (0.05 if metric == "relerr" else 0.02)
+    ok = ok and not bad
+    flag = "  <-- HIGH" if bad else ""
+    print(f"{name:18s} {rng:16s} {metric:10s} {val:<10.2e} {verdict}{flag}")
 
-    print("\nFP16 ACCURACY VERDICT:")
-    print("  - All functions hold to ~1e-3..1e-4 relerr in fp16, capped by fp16's")
-    print("    ~3-4 significant digits (the fp64 polynomials are far tighter).")
-    print("  - erfc/expm1/log1p: the WIN is avoiding cancellation that the naive")
-    print("    native composition (1-erf, exp-1, log(1+x)) loses entirely in fp16.")
-    print("  - gamma/bessel_i0: fp16 OUTPUT-RANGE limited (overflow), not coeff-")
-    print("    limited -- ranges above are the fp16-representable windows.")
-    print("  - lgamma: ~1e-3 abs AWAY from its zeros; right at x=1,2 (lgamma=0) the")
-    print("    fp16 reconstruction cancels to ~0.2 abs. Centering in (x-4.5) is what")
-    print("    makes the rest fp16-clean (raw Horner in x is ~8 abs -- unusable).")
-    print("  - gamma beyond [1,2] and lgamma for x<0 need DATA-DEPENDENT reduction")
-    print("    (recurrence count / reflection branch) which a static graph can't do;")
-    print("    scoped to the single-graph range and documented as such.")
-    print("  - exp_wide/log_wide: range-reduction recipes that do NOT beat the native")
-    print("    fp16 exp/log on this ANE -- the native ops are already ~1e-3 and the")
-    print("    re-rounding of squaring/sqrt cancels the small-argument benefit. The")
-    print("    native unaries are the better default; these are documented, not wins.")
+  print("\nFP16 ACCURACY VERDICT:")
+  print("  - All functions hold to ~1e-3..1e-4 relerr in fp16, capped by fp16's")
+  print("    ~3-4 significant digits (the fp64 polynomials are far tighter).")
+  print("  - erfc/expm1/log1p: the WIN is avoiding cancellation that the naive")
+  print("    native composition (1-erf, exp-1, log(1+x)) loses entirely in fp16.")
+  print("  - gamma/bessel_i0: fp16 OUTPUT-RANGE limited (overflow), not coeff-")
+  print("    limited -- ranges above are the fp16-representable windows.")
+  print("  - lgamma: ~1e-3 abs AWAY from its zeros; right at x=1,2 (lgamma=0) the")
+  print("    fp16 reconstruction cancels to ~0.2 abs. Centering in (x-4.5) is what")
+  print("    makes the rest fp16-clean (raw Horner in x is ~8 abs -- unusable).")
+  print("  - gamma beyond [1,2] and lgamma for x<0 need DATA-DEPENDENT reduction")
+  print("    (recurrence count / reflection branch) which a static graph can't do;")
+  print("    scoped to the single-graph range and documented as such.")
+  print("  - exp_wide/log_wide: range-reduction recipes that do NOT beat the native")
+  print("    fp16 exp/log on this ANE -- the native ops are already ~1e-3 and the")
+  print("    re-rounding of squaring/sqrt cancels the small-argument benefit. The")
+  print("    native unaries are the better default; these are documented, not wins.")
 
-    sys.exit(0 if ok else 1)
+  sys.exit(0 if ok else 1)
