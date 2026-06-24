@@ -30,6 +30,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+import numpy as np
+
 from .graph import Tensor
 
 
@@ -127,7 +129,6 @@ def list_weight_nodes(out: Tensor) -> list[Tensor]:
     """Weight-bearing (int8-eligible) nodes in topo order: matmul (streamed `wt`) and
     conv (baked `weight`). Both honor per-channel int8 (constexpr_affine_dequantize)
     as a routable weight operand on the ANE."""
-    import numpy as np
     from ._compile import _topo
     return [t for t in _topo(out)
             if (t.op == "matmul" and isinstance(t.attrs.get("wt"), np.ndarray))
@@ -148,7 +149,6 @@ def _reduce_sum_as_matmul(t: Tensor) -> Tensor:
     non-last single axis we transpose the axis to the end, contract, and transpose
     back. Multi-axis sums are left to reduce_sum (the rewrite would need a reshape
     chain; not worth it, and the optimizer won't offer it)."""
-    import numpy as np
     src = t.srcs[0]
     axes = tuple(t.attrs.get("axes", ()))
     if len(axes) != 1:
@@ -321,3 +321,23 @@ def canonicalize(out: Tensor) -> Tensor:
   a clean graph is unchanged."""
   while (nxt := graph_rewrite(out, CANON_RULES)) is not out: out = nxt
   return out
+
+
+# --------------------------------------------------------------------------- #
+# NUMERIC_RULES: accuracy-affecting scalar-chain folding (fp16-gated)         #
+# --------------------------------------------------------------------------- #
+
+def _b_fold_muls(t: Tensor) -> Tensor:
+  """muls(b) o muls(a) -> muls(a*b). Folded in fp16 to match device semantics."""
+  inner = t.srcs[0]; k = float(np.float16(inner.attrs["k"]) * np.float16(t.attrs["k"]))
+  return Tensor(t.shape, "muls", inner.srcs, {"k": k})
+
+def _b_fold_adds(t: Tensor) -> Tensor:
+  """adds(b) o adds(a) -> adds(a+b). Folded in fp16 to match device semantics."""
+  inner = t.srcs[0]; k = float(np.float16(inner.attrs["k"]) + np.float16(t.attrs["k"]))
+  return Tensor(t.shape, "adds", inner.srcs, {"k": k})
+
+NUMERIC_RULES: list[Rule] = [
+  Rule("muls_chain", "numeric", lambda t: t.op == "muls" and t.srcs[0].op == "muls", _b_fold_muls),
+  Rule("adds_chain", "numeric", lambda t: t.op == "adds" and t.srcs[0].op == "adds", _b_fold_adds),
+]

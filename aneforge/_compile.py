@@ -1300,7 +1300,7 @@ def _retarget_for(out: Tensor, target) -> Tensor:
     return memo[id(out)]
 
 
-def compile(out: Tensor, int8: bool = False, build_dir=None, opt="routes",
+def compile(out: Tensor, int8: bool = False, build_dir=None, opt: "str | int | None" = "routes",
             compress: str | None = None, compress_atol: float = 0.05,
             block_size: int = 32, validate: bool = False, target=None,
             _check_precision: bool = True):

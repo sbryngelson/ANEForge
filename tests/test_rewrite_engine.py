@@ -1,7 +1,7 @@
 # tests/test_rewrite_engine.py
 import aneforge as af
 from aneforge.graph import Tensor
-from aneforge._rewrite import Rule, graph_rewrite
+from aneforge._rewrite import Rule, graph_rewrite, NUMERIC_RULES, graph_rewrite as _gr
 
 def _noop_rules(): return []
 
@@ -112,3 +112,28 @@ def test_canon_preserves_uint8_input_cast():
   assert "cast" in _ops(y) and "input" in _ops(y)     # the dequant cast is present
   out = canonicalize(y)
   assert "cast" in _ops(out)                           # NOT stripped (srcs[0].op == "input")
+
+
+# -- Task 4: NUMERIC_RULES -- scalar-chain folding -------------------------- #
+def _apply(out, names):
+  rules = [r for r in NUMERIC_RULES if r.name in names]
+  while (nxt := _gr(out, rules)) is not out: out = nxt
+  return out
+
+def test_muls_chain_folds():
+  x = af.input((1, 4)); y = (x * 2.0) * 3.0
+  out = _apply(y, {"muls_chain"})
+  assert _ops(out).count("muls") == 1 and out.attrs["k"] == 6.0
+
+def test_adds_chain_folds():
+  x = af.input((1, 4)); y = x.adds(2.0).adds(5.0)
+  out = _apply(y, {"adds_chain"})
+  assert _ops(out).count("adds") == 1 and out.attrs["k"] == 7.0
+
+def test_scalar_fold_matches_fp32_reference():
+  rng = np.random.default_rng(0); xv = rng.standard_normal((1, 16)).astype(np.float16)
+  x = af.input((1, 16)); y = (x * 0.5) * 4.0
+  folded = _apply(y, {"muls_chain"})
+  ref = (xv.astype(np.float32) * 0.5) * 4.0
+  net = af.compile(folded, opt=0); got = net(xv)
+  assert np.allclose(got.astype(np.float32), ref, atol=1e-2)
