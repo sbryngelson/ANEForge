@@ -55,7 +55,7 @@ rng = np.random.default_rng(20260529)
 
 
 def f16(*shape, scale=1.0):
-    return (rng.standard_normal(shape).astype(np.float32) * scale).astype(np.float16)
+  return (rng.standard_normal(shape).astype(np.float32) * scale).astype(np.float16)
 
 
 # tag side-table: name -> (cost_character, feasibility)
@@ -63,8 +63,8 @@ TAGS: dict[str, tuple[str, str]] = {}
 
 
 def tagged(case: Case, cost: str, feasibility: str) -> Case:
-    TAGS[case.name] = (cost, feasibility)
-    return case
+  TAGS[case.name] = (cost, feasibility)
+  return case
 
 
 # SPECTRAL - the "can the ANE do an FFT?" probe (complex as real pairs)
@@ -492,46 +492,46 @@ def _gauss_legendre(n: int, tol: float):
 # SPECTRAL: tolerances track the measured fp16 floor (flat ~3e-4..6e-4 in N because the
 # wide accumulator does not compound the twiddle sum). We give a little headroom per N.
 SPECTRAL = [
-    _dft_matmul(8,    tol=0.004),
-    _dft_matmul(16,   tol=0.004),
-    _dft_matmul(32,   tol=0.004),
-    _dft_matmul(64,   tol=0.004),
-    _dft_matmul(128,  tol=0.005),
-    _dft_matmul(256,  tol=0.005),
-    _dft_matmul(512,  tol=0.005),
-    _dft_matmul(1024, tol=0.006),
-    _dft_matmul(2048, tol=0.006),
-    _fft_butterfly_radix2(8,  tol=0.004),
-    _fft_butterfly_radix2(16, tol=0.006),
-    _rfft_power_spectrum(64,  tol=0.01),
-    _rfft_power_spectrum(256, tol=0.012),
+  _dft_matmul(8,    tol=0.004),
+  _dft_matmul(16,   tol=0.004),
+  _dft_matmul(32,   tol=0.004),
+  _dft_matmul(64,   tol=0.004),
+  _dft_matmul(128,  tol=0.005),
+  _dft_matmul(256,  tol=0.005),
+  _dft_matmul(512,  tol=0.005),
+  _dft_matmul(1024, tol=0.006),
+  _dft_matmul(2048, tol=0.006),
+  _fft_butterfly_radix2(8,  tol=0.004),
+  _fft_butterfly_radix2(16, tol=0.006),
+  _rfft_power_spectrum(64,  tol=0.01),
+  _rfft_power_spectrum(256, tol=0.012),
 ]
 
 SIGNAL = [
-    _fir_filter(64, 5, tol=0.01),
-    _fir_filter(128, 9, tol=0.012),
-    _autocorr_crosscorr(8, 8, 3, 3, tol=0.01),
-    _autocorr_crosscorr(12, 12, 4, 4, tol=0.012),
-    _autocorr_conv(64, 8, tol=0.02),
+  _fir_filter(64, 5, tol=0.01),
+  _fir_filter(128, 9, tol=0.012),
+  _autocorr_crosscorr(8, 8, 3, 3, tol=0.01),
+  _autocorr_crosscorr(12, 12, 4, 4, tol=0.012),
+  _autocorr_conv(64, 8, tol=0.02),
 ]
 
 MONTECARLO = [
-    _mc_integral(4096, tol=0.01),
-    _mc_integral(8192, tol=0.01),
-    _mc_mean_var(8192, tol=0.03),
+  _mc_integral(4096, tol=0.01),
+  _mc_integral(8192, tol=0.01),
+  _mc_mean_var(8192, tol=0.03),
 ]
 
 NBODY = [
-    _nbody_spring(6, tol=0.01),
-    _nbody_spring(16, tol=0.015),
-    _nbody_invsq_potential(8, tol=0.03),
+  _nbody_spring(6, tol=0.01),
+  _nbody_spring(16, tol=0.015),
+  _nbody_invsq_potential(8, tol=0.03),
 ]
 
 QUADRATURE = [
-    _simpson(32, tol=0.005),
-    _simpson(64, tol=0.005),
-    _gauss_legendre(8, tol=0.01),
-    _gauss_legendre(16, tol=0.01),
+  _simpson(32, tol=0.005),
+  _simpson(64, tol=0.005),
+  _gauss_legendre(8, tol=0.01),
+  _gauss_legendre(16, tol=0.01),
 ]
 
 CASES = SPECTRAL + SIGNAL + MONTECARLO + NBODY + QUADRATURE
@@ -647,5 +647,5 @@ def run_spectral(cases, verbose: bool = True):
 
 
 if __name__ == "__main__":
-    _, code = run_spectral(CASES)
-    sys.exit(code)
+  _, code = run_spectral(CASES)
+  sys.exit(code)
