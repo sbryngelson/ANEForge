@@ -1300,7 +1300,7 @@ def _retarget_for(out: Tensor, target) -> Tensor:
     return memo[id(out)]
 
 
-def compile(out: Tensor, int8: bool = False, build_dir=None, opt="routes",
+def compile(out: Tensor, int8: bool = False, build_dir=None, opt: "str | int | None" = "routes",
             compress: str | None = None, compress_atol: float = 0.05,
             block_size: int = 32, validate: bool = False, target=None,
             _check_precision: bool = True):
@@ -1357,6 +1357,9 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt="routes",
         opt = 0          # compressed weights always take the byte-identical lowering
         if compress == "auto":
             family = _resolve_family(target)   # auto is family-aware: stream-only candidates
+    if opt not in _OPT0:                  # lossless canon for routes/1/2/max; never opt=0 or compress
+        from ._rewrite import canonicalize
+        out = canonicalize(out)
     if opt == "routes":
         from . import _optimize
         return _optimize._compile_routes(out, int8=int8, build_dir=build_dir)

@@ -27,9 +27,43 @@ On top of that, two concrete rewrites the optimizer uses:
 """
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from typing import Callable, Optional
 
+import numpy as np
+
 from .graph import Tensor
+
+
+@dataclass(frozen=True)
+class Rule:
+  """One graph-rewrite rule. `match`/`build` both see the REBUILT node (sources
+  already rewritten); identity-based selection is delegated to graph_rewrite's
+  `select`. `kind` is "lossless" (always-on canon) or "numeric" (tuner-gated)."""
+  name: str; kind: str
+  match: Callable[[Tensor], bool]; build: Callable[[Tensor], Tensor]
+
+
+def graph_rewrite(out: Tensor, rules: list["Rule"], select: set[int] | None = None) -> Tensor:
+  """Return a new output DAG, rules applied bottom-up in ONE memoized pass.
+
+  Sources are rewritten first; the node is rebuilt on the (possibly new) sources;
+  then the first rule whose `match` accepts the rebuilt node fires (its `build`
+  replaces it). `select` (original-node id()s) gates eligibility; None = all
+  eligible. A node with no applied rule and unchanged sources is returned
+  unchanged (same object), so a no-op rule-set yields the SAME object."""
+  from ._compile import _topo                 # iterative post-order (sources before consumers);
+  memo: dict[int, Tensor] = {}                 # a forward pass over it is stack-safe on deep unrolled graphs
+  for t in _topo(out):
+    new_srcs = [memo[id(s)] for s in t.srcs]   # every src precedes t in _topo, so it is already in memo
+    rebuilt = t if all(a is b for a, b in zip(new_srcs, t.srcs)) else Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
+    res = rebuilt
+    if select is None or id(t) in select:
+      for r in rules:
+        if r.match(rebuilt): res = r.build(rebuilt); break
+    memo[id(t)] = res
+  return memo[id(out)]
 
 
 def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
@@ -42,24 +76,12 @@ def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
     returned unchanged, so a no-op rule yields the SAME object - the optimizer relies
     on that to keep opt=0 byte-identical.
     """
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        cached = memo.get(id(t))
-        if cached is not None:
-            return cached
-        # rewrite sources first (bottom-up)
-        new_srcs = [visit(s) for s in t.srcs]
-        if all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            rebuilt = t                      # sources unchanged -> reuse the node
-        else:
-            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
-        replacement = rule(rebuilt)
-        result = replacement if replacement is not None else rebuilt
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    # `rule` must be a pure node-local transform: it is called once in `match` and
+    # again in `build`, so a stateful/non-deterministic rule would be unsafe. The
+    # match-guard ensures `build` fires only when `rule` returns a Tensor (not None),
+    # which is why the build-lambda's None-able return is type-ignored as safe.
+    r = Rule("adhoc", "lossless", lambda t: rule(t) is not None, lambda t: rule(t))  # type: ignore[arg-type]
+    return graph_rewrite(out, [r])
 
 
 def _decompose_sdpa(node: Tensor) -> Tensor:
@@ -83,14 +105,9 @@ def sdpa_to_decomposed(out: Tensor, only_id: Optional[int] = None) -> Tensor:
     `only_id` (an `id()` of a node in the ORIGINAL graph) rewrites just that one
     sdpa node; None rewrites every sdpa node. Returns a new output DAG (the same
     object if there was nothing to rewrite)."""
-    def rule(t: Tensor) -> Optional[Tensor]:
-        if t.op != "sdpa":
-            return None
-        if only_id is not None and id(t) != only_id:
-            return None
-        return _decompose_sdpa(t)
-
-    return rewrite(out, rule)
+    sel = None if only_id is None else {only_id}
+    r = Rule("sdpa", "lossless", lambda t: t.op == "sdpa", _decompose_sdpa)
+    return graph_rewrite(out, [r], select=sel)
 
 
 def list_sdpa_nodes(out: Tensor) -> list[Tensor]:
@@ -103,42 +120,16 @@ def set_node_int8(out: Tensor, node_ids: set[int]) -> Tensor:
     """Return a new DAG where each weight-bearing node whose `id()` is in
     `node_ids` carries an `int8=True` attr (per-weight int8 override). The
     compiler's `weight()` honors `t.attrs['int8']` over the global flag."""
-    def rule(t: Tensor) -> Optional[Tensor]:
-        if id(t) in node_ids and t.op in ("matmul", "conv"):
-            attrs = dict(t.attrs)
-            attrs["int8"] = True
-            return Tensor(t.shape, t.op, t.srcs, attrs)
-        return None
-
-    # node_ids reference original nodes; rewrite() rebuilds bottom-up so a tagged
-    # node's id changes once its sources change. Tag by matching the original ids
-    # against the pre-rewrite identity during the walk.
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        cached = memo.get(id(t))
-        if cached is not None:
-            return cached
-        new_srcs = [visit(s) for s in t.srcs]
-        tag = id(t) in node_ids and t.op in ("matmul", "conv")
-        if not tag and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            result = t
-        else:
-            attrs = dict(t.attrs)
-            if tag:
-                attrs["int8"] = True
-            result = Tensor(t.shape, t.op, new_srcs, attrs)
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    if not node_ids: return out
+    r = Rule("int8", "numeric", lambda t: t.op in ("matmul", "conv"),
+             lambda t: Tensor(t.shape, t.op, t.srcs, {**t.attrs, "int8": True}))
+    return graph_rewrite(out, [r], select=set(node_ids))
 
 
 def list_weight_nodes(out: Tensor) -> list[Tensor]:
     """Weight-bearing (int8-eligible) nodes in topo order: matmul (streamed `wt`) and
     conv (baked `weight`). Both honor per-channel int8 (constexpr_affine_dequantize)
     as a routable weight operand on the ANE."""
-    import numpy as np
     from ._compile import _topo
     return [t for t in _topo(out)
             if (t.op == "matmul" and isinstance(t.attrs.get("wt"), np.ndarray))
@@ -159,7 +150,6 @@ def _reduce_sum_as_matmul(t: Tensor) -> Tensor:
     non-last single axis we transpose the axis to the end, contract, and transpose
     back. Multi-axis sums are left to reduce_sum (the rewrite would need a reshape
     chain; not worth it, and the optimizer won't offer it)."""
-    import numpy as np
     src = t.srcs[0]
     axes = tuple(t.attrs.get("axes", ()))
     if len(axes) != 1:
@@ -190,38 +180,12 @@ def reduce_sum_to_matmul(out: Tensor, only_idx: set[int] | None = None) -> Tenso
     nothing matched)."""
     from ._compile import _topo
     order = _topo(out)
-    if only_idx is None:
-        target_ids = {id(t) for t in order
-                      if t.op == "reduce_sum" and len(t.attrs.get("axes", ())) == 1}
-    else:
-        target_ids = {id(order[i]) for i in only_idx
-                      if i < len(order) and order[i].op == "reduce_sum"
-                      and len(order[i].attrs.get("axes", ())) == 1}
-
-    def rule(t: Tensor) -> Optional[Tensor]:
-        if id(t) in target_ids:
-            return _reduce_sum_as_matmul(t)
-        return None
-
-    # target_ids are pre-rewrite identities; match against the original nodes during
-    # the bottom-up walk (a reduce_sum's id changes once its source is rebuilt).
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        cached = memo.get(id(t))
-        if cached is not None:
-            return cached
-        new_srcs = [visit(s) for s in t.srcs]
-        hit = id(t) in target_ids
-        if not hit and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            rebuilt = t
-        else:
-            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
-        result = _reduce_sum_as_matmul(rebuilt) if hit else rebuilt
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    elig = lambda t: t.op == "reduce_sum" and len(t.attrs.get("axes", ())) == 1
+    if only_idx is None: sel = {id(t) for t in order if elig(t)}
+    else: sel = {id(order[i]) for i in only_idx if i < len(order) and elig(order[i])}
+    if not sel: return out
+    r = Rule("rsum_mm", "numeric", elig, _reduce_sum_as_matmul)
+    return graph_rewrite(out, [r], select=sel)
 
 
 # --------------------------------------------------------------------------- #
@@ -294,25 +258,12 @@ def decompose_bridge(out: Tensor, decomp_idx: set[int]) -> Tensor:
     no registered decomposer is left as-is (single-route). Returns a new output DAG."""
     from ._compile import _topo
     order = _topo(out)
-    targets = {id(order[i]): order[i].op for i in decomp_idx
-               if 0 <= i < len(order) and order[i].op in _BRIDGE_DECOMPOSERS}
-    memo: dict[int, Tensor] = {}
-
-    def visit(t: Tensor) -> Tensor:
-        c = memo.get(id(t))
-        if c is not None:
-            return c
-        new_srcs = [visit(s) for s in t.srcs]
-        hit_op = targets.get(id(t))
-        if hit_op is None and all(ns is os for ns, os in zip(new_srcs, t.srcs)):
-            rebuilt = t
-        else:
-            rebuilt = Tensor(t.shape, t.op, new_srcs, dict(t.attrs))
-        result = _BRIDGE_DECOMPOSERS[hit_op](rebuilt) if hit_op is not None else rebuilt
-        memo[id(t)] = result
-        return result
-
-    return visit(out)
+    sel = {id(order[i]) for i in decomp_idx
+           if 0 <= i < len(order) and order[i].op in _BRIDGE_DECOMPOSERS}
+    if not sel: return out
+    r = Rule("bridge", "lossless", lambda t: t.op in _BRIDGE_DECOMPOSERS,
+             lambda t: _BRIDGE_DECOMPOSERS[t.op](t))
+    return graph_rewrite(out, [r], select=sel)
 
 
 def paired_subtract(a, b):
@@ -331,3 +282,102 @@ def paired_subtract(a, b):
     pa = a if isinstance(a, Paired) else _mk_paired(a)
     pb = b if isinstance(b, Paired) else _mk_paired(b)
     return (pa - pb).to_tensor()
+
+
+# --------------------------------------------------------------------------- #
+# CANON_RULES: lossless identity/redundancy elimination                        #
+# --------------------------------------------------------------------------- #
+
+def _compose_perm(outer: tuple, inner: tuple) -> tuple:
+  """perm of (transpose(outer) o transpose(inner)): result[i] = inner[outer[i]]."""
+  return tuple(inner[i] for i in outer)
+
+# Each builder gets the REBUILT node; returns the simplified replacement.
+def _b_drop_to_src(t: Tensor) -> Tensor: return t.srcs[0]                       # identity node -> its src
+
+def _b_collapse_reshape(t: Tensor) -> Tensor:
+  return Tensor(t.shape, "reshape", t.srcs[0].srcs, dict(t.srcs[0].attrs))      # reshape o reshape -> one reshape
+
+def _b_collapse_transpose(t: Tensor) -> Tensor:
+  inner = t.srcs[0]; perm = _compose_perm(t.attrs["perm"], inner.attrs["perm"])
+  src = inner.srcs[0]
+  if perm == tuple(range(len(perm))): return src                                # composes to identity -> drop both
+  return Tensor(t.shape, "transpose", [src], {"perm": perm})
+
+CANON_RULES: list[Rule] = [
+  Rule("cast_same", "lossless",
+       lambda t: t.op == "cast" and t.srcs[0].op != "input" and t.attrs.get("dtype", "fp16") == "fp16",
+       _b_drop_to_src),                                                          # cast fp16->fp16 on a compute tensor (NOT the uint8 input port)
+  Rule("reshape_same", "lossless", lambda t: t.op == "reshape" and t.shape == t.srcs[0].shape, _b_drop_to_src),
+  Rule("reshape_chain", "lossless", lambda t: t.op == "reshape" and t.srcs[0].op == "reshape", _b_collapse_reshape),
+  Rule("transpose_chain", "lossless", lambda t: t.op == "transpose" and t.srcs[0].op == "transpose", _b_collapse_transpose),
+  Rule("mul_one", "lossless", lambda t: t.op == "muls" and t.attrs.get("k") == 1.0, _b_drop_to_src),
+  Rule("add_zero", "lossless", lambda t: t.op == "adds" and t.attrs.get("k") == 0.0, _b_drop_to_src),
+  Rule("not_not", "lossless", lambda t: t.op == "logical_not" and t.srcs[0].op == "logical_not", lambda t: t.srcs[0].srcs[0]),
+]
+
+def canonicalize(out: Tensor) -> Tensor:
+  """Apply the lossless CANON_RULES to a fixed point (a rule may expose a fresh
+  redundancy for the next pass). Returns the SAME object when nothing matches, so
+  a clean graph is unchanged."""
+  while (nxt := graph_rewrite(out, CANON_RULES)) is not out: out = nxt
+  return out
+
+
+# --------------------------------------------------------------------------- #
+# NUMERIC_RULES: accuracy-affecting scalar-chain folding (fp16-gated)         #
+# --------------------------------------------------------------------------- #
+
+def _b_fold_muls(t: Tensor) -> Tensor:
+  """muls(b) o muls(a) -> muls(a*b). Folded in fp16 to match device semantics."""
+  inner = t.srcs[0]; k = float(np.float16(inner.attrs["k"]) * np.float16(t.attrs["k"]))
+  return Tensor(t.shape, "muls", inner.srcs, {"k": k})
+
+def _b_fold_adds(t: Tensor) -> Tensor:
+  """adds(b) o adds(a) -> adds(a+b). Folded in fp16 to match device semantics."""
+  inner = t.srcs[0]; k = float(np.float16(inner.attrs["k"]) + np.float16(t.attrs["k"]))
+  return Tensor(t.shape, "adds", inner.srcs, {"k": k})
+
+NUMERIC_RULES: list[Rule] = [
+  Rule("muls_chain", "numeric", lambda t: t.op == "muls" and t.srcs[0].op == "muls", _b_fold_muls),
+  Rule("adds_chain", "numeric", lambda t: t.op == "adds" and t.srcs[0].op == "adds", _b_fold_adds),
+]
+
+# fp16 NumPy kernels for the foldable ops. Compute reproduces device fp16 where it can,
+# but is NEVER assumed bit-identical to the engine -> const_fold is gated (NUMERIC).
+def _f16(x: "np.ndarray") -> "np.ndarray": return np.asarray(x, np.float16)
+_EVAL: dict[str, "object"] = {
+  "muls":    lambda s, a: _f16(s[0] * _f16(a["k"])),
+  "adds":    lambda s, a: _f16(s[0] + _f16(a["k"])),
+  "add":     lambda s, a: _f16(s[0] + s[1]),
+  "sub":     lambda s, a: _f16(s[0] - s[1]),
+  "mul":     lambda s, a: _f16(s[0] * s[1]),
+  "relu":    lambda s, a: _f16(np.maximum(s[0], 0)),
+  "reshape": lambda s, a, shape=None: _f16(s[0].reshape(shape)),
+  "cast":    lambda s, a: _f16(s[0]),
+}
+
+def _const_subgraph(t: Tensor, max_elems: int = 1 << 16) -> "np.ndarray | None":
+  """fp16 value of `t` if its entire source cone is constant (const_array leaves,
+  no `input`) and the op set is foldable and the size is bounded; else None."""
+  if math.prod(t.shape) > max_elems: return None
+  memo: dict[int, "np.ndarray | None"] = {}
+  def ev(n: Tensor) -> "np.ndarray | None":
+    if id(n) in memo: return memo[id(n)]
+    if n.op == "const_array": memo[id(n)] = _f16(n.attrs["value"]); return memo[id(n)]
+    if n.op == "input" or n.op not in _EVAL: memo[id(n)] = None; return None
+    srcs = [ev(s) for s in n.srcs]
+    if any(s is None for s in srcs): memo[id(n)] = None; return None
+    fn = _EVAL[n.op]  # type: ignore[index]
+    v: "np.ndarray" = fn(srcs, n.attrs, n.shape) if n.op == "reshape" else fn(srcs, n.attrs)  # type: ignore[operator]
+    memo[id(n)] = v; return v
+  return ev(t)
+
+def _b_const_fold(t: Tensor) -> Tensor:
+  v = _const_subgraph(t); assert v is not None  # match guard makes None unreachable
+  return Tensor(t.shape, "const_array", [], {"value": v})
+
+NUMERIC_RULES.append(
+  Rule("const_fold", "numeric",
+       lambda t: t.op != "const_array" and t.op != "input" and _const_subgraph(t) is not None,
+       _b_const_fold))

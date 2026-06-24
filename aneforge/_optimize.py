@@ -40,6 +40,7 @@ import numpy as np
 
 from ._compile import compile as _raw_compile, _topo
 from ._cost import estimate, precision_risk
+from .graph import Tensor
 
 # --------------------------------------------------------------------------- #
 # tolerance for variant correctness (vs the opt=0 baseline)                    #
@@ -272,53 +273,74 @@ def _route_ids(out):
             and not (t.op == "sdpa" and (t.attrs.get("causal") or t.attrs.get("masked")))]
 
 
+def _constfold_candidates(out):
+    """Topo indices of nodes whose whole source cone is constant (foldable to one
+    const_array). Excludes the const/input leaves themselves."""
+    from ._rewrite import _const_subgraph
+    return [i for i, t in enumerate(_topo(out))
+            if t.op not in ("const_array", "input") and _const_subgraph(t) is not None]
+
+
+def _scalarchain_candidates(out):
+    """Topo indices of muls/adds chain heads (a muls whose src is a muls, or adds
+    over adds) - the nodes a scalar-chain fold collapses."""
+    return [i for i, t in enumerate(_topo(out))
+            if t.op in ("muls", "adds") and t.srcs[0].op == t.op]
+
+
 def _apply_variant(out, cfg):
-    """Materialize the rewritten output DAG for a variant `cfg`. The compile-time
-    int8 flag is returned separately (it is a compiler arg, not a graph rewrite).
+    """Materialize the rewritten DAG for a variant `cfg` in ONE graph_rewrite pass.
+    Every axis composes over the ORIGINAL graph (indices resolved to original ids up
+    front), so there is no chained-rewrite index drift. The compile-time global int8
+    flag is returned separately (a compiler arg, not a graph rewrite).
 
-    cfg keys:
-      `int8`    : the GLOBAL int8 compile flag (legacy whole-graph int8).
-      `decomp`  : tuple of ROUTE-BEARING bridge topo-indices to rewrite to their
-                    fused decomposition (sdpa/minmax_norm/flatten - see the route
-                    registry / _rewrite._BRIDGE_DECOMPOSERS). Empty -> every bridge
-                    node stays native (the baseline all-cut route).
-      `int8_nodes` : tuple of weight-bearing (matmul/conv) topo-indices to stream
-                       int8 per-node.
-      `rs_matmul`  : tuple of reduce_sum topo-indices to rewrite to a `@ ones`
-                       matmul contraction (the WIDE-accumulator sum - a numerics-
-                       aware, accuracy-IMPROVING rewrite). Empty -> none.
-    """
-    new_out = out
-    rs_idx = set(cfg.get("rs_matmul", ()))
-    if rs_idx:
-        from ._rewrite import reduce_sum_to_matmul
-        new_out = reduce_sum_to_matmul(new_out, only_idx=rs_idx)
-    decomp = set(cfg.get("decomp", ()))
-    if decomp:
-        new_out = _rewrite_by_topo_index(new_out, decomp_idx=decomp)
-        # route indices in `decomp` reference the original graph; rs_matmul above only
-        # rewrites reduce_sum nodes (a different op set), so the topo positions of bridge
-        # nodes are unchanged - the indices stay stable.
-    int8_nodes = tuple(cfg.get("int8_nodes", ()))
-    if int8_nodes:
-        from ._rewrite import set_node_int8
-        order = _topo(new_out)
-        # int8_nodes indexes the (already route-rewritten) graph's weight-bearing nodes
-        # (matmul streamed wt, conv baked weight - both route per-channel int8).
-        sel = {id(order[i]) for i in int8_nodes
-               if i < len(order) and order[i].op in ("matmul", "conv")}
-        if sel:
-            new_out = set_node_int8(new_out, sel)
+    cfg axes: `decomp` (bridge topo-indices -> fused decomposition), `int8_nodes`
+    (matmul/conv topo-indices -> per-node int8 tag), `rs_matmul` (reduce_sum
+    topo-indices -> @ones contraction), `scalarfold` (muls/adds chain-head indices),
+    `constfold` (constant-cone indices -> one const_array)."""
+    from ._rewrite import (Rule, graph_rewrite, _BRIDGE_DECOMPOSERS, _reduce_sum_as_matmul,
+                           _b_fold_muls, _b_fold_adds, _b_const_fold)
+    order = _topo(out)
+
+    def ids(key, ok):
+        return {id(order[i]) for i in cfg.get(key, ()) if 0 <= i < len(order) and ok(order[i])}
+
+    sel: set[int] = set()
+    rules: list = []
+
+    rs = ids("rs_matmul", lambda t: t.op == "reduce_sum" and len(t.attrs.get("axes", ())) == 1)
+    if rs:
+        sel |= rs
+        rules.append(Rule("rsum_mm", "numeric", lambda t: t.op == "reduce_sum", _reduce_sum_as_matmul))
+
+    dec = ids("decomp", lambda t: t.op in _BRIDGE_DECOMPOSERS)
+    if dec:
+        sel |= dec
+        rules.append(Rule("bridge", "lossless", lambda t: t.op in _BRIDGE_DECOMPOSERS,
+                          lambda t: _BRIDGE_DECOMPOSERS[t.op](t)))
+
+    i8 = ids("int8_nodes", lambda t: t.op in ("matmul", "conv"))
+    if i8:
+        sel |= i8
+        rules.append(Rule("int8", "numeric", lambda t: t.op in ("matmul", "conv"),
+                          lambda t: Tensor(t.shape, t.op, t.srcs, {**t.attrs, "int8": True})))
+
+    sf = ids("scalarfold", lambda t: t.op in ("muls", "adds") and t.srcs[0].op == t.op)
+    if sf:
+        sel |= sf
+        rules += [
+            Rule("muls_chain", "numeric", lambda t: t.op == "muls" and t.srcs[0].op == "muls", _b_fold_muls),
+            Rule("adds_chain", "numeric", lambda t: t.op == "adds" and t.srcs[0].op == "adds", _b_fold_adds),
+        ]
+
+    cf = ids("constfold", lambda t: t.op not in ("const_array", "input"))
+    if cf:
+        sel |= cf
+        rules.append(Rule("const_fold", "numeric",
+                          lambda t: t.op not in ("const_array", "input"), _b_const_fold))
+
+    new_out = graph_rewrite(out, rules, select=sel) if rules else out
     return new_out, bool(cfg.get("int8", False))
-
-
-def _rewrite_by_topo_index(out, decomp_idx):
-    """Rewrite the ROUTE-BEARING bridge nodes at the given topo indices to their fused
-    decomposition (sdpa/minmax_norm/flatten - any op in the closed route registry),
-    walking the ORIGINAL graph so the indices stay stable. Thin wrapper over
-    `_rewrite.decompose_bridge` (the single executable route table)."""
-    from ._rewrite import decompose_bridge
-    return decompose_bridge(out, set(decomp_idx))
 
 
 def _variants(out):
@@ -353,6 +375,12 @@ def _variants(out):
             configs.append({"int8": False, "decomp": list(routes), "lossy": False})
     if _has_weights(out):
         configs.append({"int8": True, "decomp": [], "lossy": True})   # PRIMARY: global int8
+    cf = _constfold_candidates(out)
+    if cf:
+        configs.append({"int8": False, "decomp": [], "constfold": cf, "lossy": True})
+    sf = _scalarchain_candidates(out)
+    if sf:
+        configs.append({"int8": False, "decomp": [], "scalarfold": sf, "lossy": True})
     return configs
 
 
