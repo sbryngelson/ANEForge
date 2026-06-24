@@ -27,6 +27,7 @@ On top of that, two concrete rewrites the optimizer uses:
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -341,3 +342,42 @@ NUMERIC_RULES: list[Rule] = [
   Rule("muls_chain", "numeric", lambda t: t.op == "muls" and t.srcs[0].op == "muls", _b_fold_muls),
   Rule("adds_chain", "numeric", lambda t: t.op == "adds" and t.srcs[0].op == "adds", _b_fold_adds),
 ]
+
+# fp16 NumPy kernels for the foldable ops. Compute reproduces device fp16 where it can,
+# but is NEVER assumed bit-identical to the engine -> const_fold is gated (NUMERIC).
+def _f16(x: "np.ndarray") -> "np.ndarray": return np.asarray(x, np.float16)
+_EVAL: dict[str, "object"] = {
+  "muls":    lambda s, a: _f16(s[0] * _f16(a["k"])),
+  "adds":    lambda s, a: _f16(s[0] + _f16(a["k"])),
+  "add":     lambda s, a: _f16(s[0] + s[1]),
+  "sub":     lambda s, a: _f16(s[0] - s[1]),
+  "mul":     lambda s, a: _f16(s[0] * s[1]),
+  "relu":    lambda s, a: _f16(np.maximum(s[0], 0)),
+  "reshape": lambda s, a, shape=None: _f16(s[0].reshape(shape)),
+  "cast":    lambda s, a: _f16(s[0]),
+}
+
+def _const_subgraph(t: Tensor, max_elems: int = 1 << 16) -> "np.ndarray | None":
+  """fp16 value of `t` if its entire source cone is constant (const_array leaves,
+  no `input`) and the op set is foldable and the size is bounded; else None."""
+  if math.prod(t.shape) > max_elems: return None
+  memo: dict[int, "np.ndarray | None"] = {}
+  def ev(n: Tensor) -> "np.ndarray | None":
+    if id(n) in memo: return memo[id(n)]
+    if n.op == "const_array": memo[id(n)] = _f16(n.attrs["value"]); return memo[id(n)]
+    if n.op == "input" or n.op not in _EVAL: memo[id(n)] = None; return None
+    srcs = [ev(s) for s in n.srcs]
+    if any(s is None for s in srcs): memo[id(n)] = None; return None
+    fn = _EVAL[n.op]  # type: ignore[index]
+    v: "np.ndarray" = fn(srcs, n.attrs, n.shape) if n.op == "reshape" else fn(srcs, n.attrs)  # type: ignore[operator]
+    memo[id(n)] = v; return v
+  return ev(t)
+
+def _b_const_fold(t: Tensor) -> Tensor:
+  v = _const_subgraph(t); assert v is not None  # match guard makes None unreachable
+  return Tensor(t.shape, "const_array", [], {"value": v})
+
+NUMERIC_RULES.append(
+  Rule("const_fold", "numeric",
+       lambda t: t.op != "const_array" and t.op != "input" and _const_subgraph(t) is not None,
+       _b_const_fold))

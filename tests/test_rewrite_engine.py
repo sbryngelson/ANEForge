@@ -137,3 +137,29 @@ def test_scalar_fold_matches_fp32_reference():
   ref = (xv.astype(np.float32) * 0.5) * 4.0
   net = af.compile(folded, opt=0); got = net(xv)
   assert np.allclose(got.astype(np.float32), ref, atol=1e-2)
+
+
+# -- Task 5: constant folding ------------------------------------------------ #
+from aneforge._rewrite import _const_subgraph
+
+def _const(v): return Tensor(v.shape, "const_array", [], {"value": np.asarray(v, np.float16)})
+
+def test_const_subgraph_folds_pure_constants():
+  a = _const(np.full((1, 4), 2.0)); y = (a * 3.0).adds(1.0)   # all-constant cone
+  val = _const_subgraph(y)
+  assert val is not None and np.allclose(val.astype(np.float32), 7.0)
+
+def test_const_subgraph_returns_none_with_input():
+  x = af.input((1, 4)); y = x * 2.0                            # depends on a runtime input
+  assert _const_subgraph(y) is None
+
+def test_const_subgraph_respects_size_bound():
+  a = _const(np.ones((1, 100), np.float16))
+  assert _const_subgraph(a, max_elems=10) is None             # too big to fold (leaf early-exit)
+  y = a.adds(1.0)                                             # multi-op cone with a large root
+  assert _const_subgraph(y, max_elems=10) is None             # bound blocks a real computation
+
+def test_const_fold_rule_replaces_with_const_array():
+  a = _const(np.full((1, 4), 2.0)); y = a.adds(5.0)
+  out = _apply(y, {"const_fold"})                              # _apply from Task 4
+  assert out.op == "const_array" and np.allclose(out.attrs["value"].astype(np.float32), 7.0)
