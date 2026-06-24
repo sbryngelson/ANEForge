@@ -237,8 +237,11 @@ symbol exists but ANEForge doesn't yet expose it; an open follow-up.
 No. Containers don't have access to `aned` or the kernel ANE driver.
 ANEForge needs to run on the macOS host directly.
 
-For Linux + Apple silicon (Asahi), ANE access is unavailable - the
-hardware exists but no open driver.
+For Linux + Apple silicon (Asahi), ANEForge does not run: it dispatches
+through macOS `aned`, which Asahi does not have. The ANE itself is reachable
+on Asahi though, through the open kernel driver ([eiln/ane](https://github.com/eiln/ane))
+and pure register programming with no CoreML or `aned`
+([allbilly/ane](https://github.com/allbilly/ane)).
 
 ## "Can I distribute compiled bundles?"
 
