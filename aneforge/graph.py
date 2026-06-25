@@ -1100,12 +1100,8 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
     o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
   else:
     tile = -(-S // n_tiles)                                 # ceil -> near-even chunks
-    parts = []
-    for start in range(0, S, tile):
-      n = min(tile, S - start)
-      qt = qh.slice_by_size([0, start, 0], [n_heads, n, dh])
-      parts.append(((qt @ kt) * scale).softmax(-1) @ vh)  # [H, n, dh]
-    o = concat(parts, axis=1)                               # [H, S, dh]
+    o = concat([((qh.slice_by_size([0, s, 0], [n_heads, min(tile, S-s), dh]) @ kt)
+                 * scale).softmax(-1) @ vh for s in range(0, S, tile)], axis=1)  # [H, S, dh]
   o = o.transpose([1, 0, 2]).reshape(S, D)
   return o.linear(Wo, bo)
 
@@ -1133,12 +1129,8 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
     o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
   else:
     tile = -(-S // n_tiles)                                 # ceil -> near-even chunks
-    parts = []
-    for start in range(0, S, tile):
-      n = min(tile, S - start)
-      qt = qh.slice_by_size([0, start, 0], [n_heads, n, dh])
-      parts.append(((qt @ kt) * scale).softmax(-1) @ vh)  # [H, n, dh]
-    o = concat(parts, axis=1)                               # [H, S, dh]
+    o = concat([((qh.slice_by_size([0, s, 0], [n_heads, min(tile, S-s), dh]) @ kt)
+                 * scale).softmax(-1) @ vh for s in range(0, S, tile)], axis=1)  # [H, S, dh]
   o = o.transpose([1, 0, 2]).reshape(S, D)
   return o.linear(Wo, bo)
 

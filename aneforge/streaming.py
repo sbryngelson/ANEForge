@@ -79,9 +79,8 @@ class CheckpointedStack:
         checkpoints = []
         for lp in layers_params:
             checkpoints.append(x)
-            feed = {id(self._x): x.astype(_F16)}
-            for t, v in zip(self._p, lp):
-                feed[id(t)] = np.asarray(v, _F16)
+            feed = {id(self._x): x.astype(_F16),
+                    **{id(t): np.asarray(v, _F16) for t, v in zip(self._p, lp)}}
             # any other input port is a baked constant (e.g. a causal mask): feed its value
             vals = [feed[id(t)] if id(t) in feed else np.asarray(t.attrs["value"], _F16)
                     for t in self._fwd._input_tensors]
