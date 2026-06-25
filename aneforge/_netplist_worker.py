@@ -85,9 +85,16 @@ class _Worker:
       # Python-level read buffering in front of it.
       self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, bufsize=0)
-      ready = self._proc.stdout.readline()
+      assert self._proc.stdin is not None
+      assert self._proc.stdout is not None
+      assert self._proc.stderr is not None
+      # Store pipes as non-Optional IO so pyright can narrow in other methods.
+      self._stdin = self._proc.stdin
+      self._stdout = self._proc.stdout
+      self._stderr = self._proc.stderr
+      ready = self._stdout.readline()
       if not ready:
-        err = self._proc.stderr.read().decode(errors="replace")
+        err = self._stderr.read().decode(errors="replace")
         raise RuntimeError(f"persistent worker failed to start: {err}")
       info = json.loads(ready.decode())
       if info.get("status") != "ready":
@@ -128,10 +135,10 @@ class _Worker:
         try:
           data = memoryview(b"".join(parts))
           while data:
-            data = data[self._proc.stdin.write(data):]
-          self._proc.stdin.flush()
+            data = data[self._stdin.write(data):]
+          self._stdin.flush()
         except (BrokenPipeError, OSError):
-          err = self._proc.stderr.read().decode(errors="replace")
+          err = self._stderr.read().decode(errors="replace")
           raise RuntimeError(f"persistent worker ({self._op}) died on request: {err}")
         raw = self._read_exact(self._out_bytes * n)
         out_sets, off = [], 0
@@ -145,7 +152,7 @@ class _Worker:
 
     def _read_exact(self, n: int) -> bytes:
       timeout = float(os.environ.get("ANEFORGE_WORKER_TIMEOUT_S", "120"))
-      fd = self._proc.stdout.fileno()
+      fd = self._stdout.fileno()
       buf = bytearray()
       while len(buf) < n:
         if timeout > 0:
@@ -153,13 +160,13 @@ class _Worker:
           if not ready:
             self._proc.kill()
             self._proc.wait()
-            err = self._proc.stderr.read().decode(errors="replace")
+            err = self._stderr.read().decode(errors="replace")
             raise RuntimeError(
               f"persistent worker ({self._op}) unresponsive after "
               f"{timeout:g}s: {err}")
         chunk = os.read(fd, n - len(buf))
         if not chunk:
-          err = self._proc.stderr.read().decode(errors="replace")
+          err = self._stderr.read().decode(errors="replace")
           raise RuntimeError(f"persistent worker ({self._op}) died mid-eval: {err}")
         buf += chunk
       return bytes(buf)
@@ -167,7 +174,7 @@ class _Worker:
     def release(self) -> None:
       if self._proc.poll() is None:
         try:
-          self._proc.stdin.close()  # EOF -> clean shutdown
+          self._stdin.close()  # EOF -> clean shutdown
           self._proc.wait(timeout=5)
         except Exception:
           self._proc.kill()

@@ -69,6 +69,7 @@ Run the self-test:
 from __future__ import annotations
 
 import os
+from typing import Any
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import numpy as np
@@ -111,7 +112,7 @@ def _ane_gemm(A16: np.ndarray, B16: np.ndarray, transpose_a: bool = False) -> np
 # host helpers                                                                 #
 # =========================================================================== #
 
-def _spectral_omega(A16: np.ndarray) -> float:
+def _spectral_omega(A16: np.ndarray | np.floating[Any]) -> float:
   """Richardson/Jacobi relaxation factor omega from the max abs row-sum (an
     upper bound on the spectral radius). Host-side scalar."""
   rowsum = np.abs(np.asarray(A16, np.float64)).sum(1).max()

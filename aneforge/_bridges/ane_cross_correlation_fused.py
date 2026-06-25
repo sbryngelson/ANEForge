@@ -32,7 +32,7 @@ def cross_correlation_fused(x: np.ndarray, template: np.ndarray) -> np.ndarray:
   H, W = x.shape
   Th, Tw = template.shape
   out_h, out_w = H - Th + 1, W - Tw + 1
-  from ._netplist import write_model, ensure_invoker  # type: ignore
+  from ._netplist import write_model, ensure_invoker
 
   with tempfile.TemporaryDirectory(prefix="ane_xcorr_") as d:
     wd = Path(d)

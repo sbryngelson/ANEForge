@@ -2423,6 +2423,7 @@ def build_sdpa(
   # Inputs: Q, K, V are tensor inputs; Scale is a weight-backed constant.
   # The Bottom array places Scale as the 4th input (index 3), matching
   # Apple's __Z18ValidateLayer_Impl<ANECSDPALayerDesc, ...> 4-tensor layout.
+  params: dict[str, object] = {"SubtractMax": bool(subtract_max)}
   unit: dict[str, object] = {
     "Bottom": ["query", "key", "value", "scale"],
     "InputType": ["Float16", "Float16", "Float16", "Float16"],
@@ -2435,7 +2436,7 @@ def build_sdpa(
     # defaults desc[0x00]=kCFBooleanFalse (no stabilization) - the source of
     # the original "Y depends on Q,K,V,scale but doesn't equal
     # softmax(Q@K^T*s)@V" numerics gap.
-    "Params": {"SubtractMax": bool(subtract_max)},
+    "Params": params,
     "Type": "SDPA",
   }
 
@@ -2446,7 +2447,7 @@ def build_sdpa(
   if constant_flag_spelling in {"ConstantTensor_unit", "all"}: unit["ConstantTensor"] = [False, False, False, True]
   if constant_flag_spelling in {"ScaleMutable_false", "all"}:
     unit["ScaleMutable"] = False
-    unit["Params"]["ScaleMutable"] = False  # type: ignore[index]
+    params["ScaleMutable"] = False
 
   plist = build_plist(
     network_name,
@@ -2486,7 +2487,7 @@ def build_plist(
   outputs: list[dict],
   units_by_name: dict[str, dict],
 ) -> dict:
-  network = dict(units_by_name)
+  network: dict[str, object] = dict(units_by_name)
   network["Units"] = list(units_by_name)
   network["Weights"] = ["weights.0"]
   network["y"] = {

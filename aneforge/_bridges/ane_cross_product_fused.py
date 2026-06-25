@@ -26,7 +26,7 @@ def cross_product_fused(x: np.ndarray, z: np.ndarray) -> np.ndarray:
     """
   x = np.asarray(x, dtype=np.float16).reshape(3)
   z = np.asarray(z, dtype=np.float16).reshape(3)
-  from ._netplist import write_model, ensure_invoker  # type: ignore
+  from ._netplist import write_model, ensure_invoker
 
   with tempfile.TemporaryDirectory(prefix="ane_xprod_") as d:
     wd = Path(d)
