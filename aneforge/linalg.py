@@ -57,6 +57,33 @@ def _solve_once(out, *feeds):
   return y
 
 
+def _run_multi(outs, *feeds):
+  """compile_multi a list of output graphs, run once, return outputs in `outs` order."""
+  from aneforge._compile import compile_multi
+  net = compile_multi(outs)
+  out = net(*feeds)
+  vals = [out[name] for _, name in net.output_ports]
+  net.release()
+  return vals
+
+
+def _mgs_qr_graph(X, height: int, ones):
+  """Modified Gram-Schmidt thin QR of an in-graph matrix X [height, n] -> (Q, R) graphs.
+    `ones` is a [height,1] fp16 const for the matmul dot (wide accum). Shared by qr/eigvals."""
+  n = X.shape[1]
+  Q, Rcols, z = [], [], None
+  dot = lambda a, b: (a * b).transpose([1, 0]) @ ones        # [1,height]@[height,1] = [1,1]
+  for j in range(n):
+    v = X.slice_by_size([0, j], [height, 1]); rcol = []
+    for i in range(j):
+      rij = dot(Q[i], v); rcol.append(rij); v = v - rij * Q[i]
+    d2 = dot(v, v); rjj = d2.sqrt(); rcol.append(rjj)
+    Q.append(v * d2.rsqrt())                                  # q_j = v / ||v||
+    z = rjj - rjj if z is None else z                        # exact-zero [1,1]
+    Rcols.append(af.concat(rcol + [z] * (n - j - 1), axis=0))   # R column j -> [n,1]
+  return af.concat(Q, axis=1), af.concat(Rcols, axis=1)
+
+
 # =========================================================================== #
 # 1. CONJUGATE GRADIENT  (SPD A, fixed K iterations)                           #
 # =========================================================================== #
@@ -451,28 +478,10 @@ def _els_routed(Xt, n: int):
 def qr(A):
   """Thin QR A = Q R by modified Gram-Schmidt, FULLY on the ANE (one program). Returns
     (Q, R); Q orthonormal columns, R upper-triangular. Small-n."""
-  from aneforge._compile import compile_multi
   A16 = np.asarray(A, f16); m, n = A16.shape; onem = np.ones((m, 1), f16)
-  At = af.input((m, n))
-  dot = lambda a, b: (a * b).transpose([1, 0]) @ onem        # [1,m]@[m,1] = [1,1]
-  Q, Rcols = [], []
-  z = None
-  for j in range(n):
-    v = At.slice_by_size([0, j], [m, 1])
-    rcol = []
-    for i in range(j):
-      rij = dot(Q[i], v); rcol.append(rij); v = v - rij * Q[i]
-    rjj = dot(v, v).sqrt(); rcol.append(rjj)
-    Q.append(v * dot(v, v).rsqrt())                        # q_j = v / ||v||
-    z = rjj - rjj if z is None else z                      # exact-zero [1,1]
-    Rcols.append(af.concat(rcol + [z] * (n - j - 1), axis=0))   # R column j -> [n,1]
-  net = compile_multi([af.concat(Q, axis=1), af.concat(Rcols, axis=1)])
-  nm = dict(net.output_ports)
-  out = net(A16)
-  Qv = np.asarray(out[nm[net.output_tensors[0]]], np.float32)
-  Rv = np.asarray(out[nm[net.output_tensors[1]]], np.float32)
-  net.release()
-  return Qv, Rv
+  Qg, Rg = _mgs_qr_graph(af.input((m, n)), m, onem)
+  Qv, Rv = _run_multi([Qg, Rg], A16)
+  return np.asarray(Qv, np.float32), np.asarray(Rv, np.float32)
 
 
 def cholesky(A):
@@ -495,7 +504,6 @@ def cholesky(A):
 def lu(A):
   """Unpivoted LU (A = L U, L unit-lower, U upper) by Doolittle, FULLY on the ANE.
     Returns (L, U). Small-n; UNPIVOTED, valid when no leading pivot underflows."""
-  from aneforge._compile import compile_multi
   A16 = np.asarray(A, f16); n = A16.shape[0]
   At = af.input((n, n)); el = _els_routed(At, n)
   z = el(0, 0) - el(0, 0); one = z.adds(1.0)
@@ -509,13 +517,8 @@ def lu(A):
       s = el(k, i)
       for t in range(i): s = s - L[(k, t)] * U[(t, i)]
       L[(k, i)] = s / U[(i, i)]
-  net = compile_multi([_grid(L, n, z), _grid(U, n, z)])
-  nm = dict(net.output_ports)
-  out = net(A16)
-  Lv = np.asarray(out[nm[net.output_tensors[0]]], np.float32)
-  Uv = np.asarray(out[nm[net.output_tensors[1]]], np.float32)
-  net.release()
-  return Lv, Uv
+  Lv, Uv = _run_multi([_grid(L, n, z), _grid(U, n, z)], A16)
+  return np.asarray(Lv, np.float32), np.asarray(Uv, np.float32)
 
 
 def lu_pivoted(A):
@@ -585,21 +588,8 @@ def eigvals(A, iters: int = 60):
     ~2e-3 (real)/~2e-2 (complex). Unshifted QR is linear, so clusters need more iters."""
   A16 = np.asarray(A, f16); n = A16.shape[0]; onen = np.ones((n, 1), f16)
   M = af.input((n, n))
-
-  def _qr_graph(X):                                      # modified Gram-Schmidt -> (Q, R)
-    Q, Rcols, z = [], [], None
-    for j in range(n):
-      v = X.slice_by_size([0, j], [n, 1]); rcol = []
-      for i in range(j):
-        rij = (Q[i] * v).transpose([1, 0]) @ onen; rcol.append(rij); v = v - rij * Q[i]
-      rjj = ((v * v).transpose([1, 0]) @ onen).sqrt(); rcol.append(rjj)
-      Q.append(v * ((v * v).transpose([1, 0]) @ onen).rsqrt())
-      z = rjj - rjj if z is None else z
-      Rcols.append(af.concat(rcol + [z] * (n - j - 1), axis=0))
-    return af.concat(Q, axis=1), af.concat(Rcols, axis=1)
-
   for _ in range(iters):
-    Q, R = _qr_graph(M); M = R @ Q                     # RQ; unrolls into one program
+    Q, R = _mgs_qr_graph(M, n, onen); M = R @ Q        # RQ; unrolls into one program
   Mv = _solve_once(M, A16)
   evs, i = [], 0
   while i < n:
