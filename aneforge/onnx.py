@@ -8,6 +8,7 @@ from .graph import Tensor, input as _input, conv as _conv, batch_norm as _bn, co
 from .graph import instance_norm as _instnorm, space_to_depth as _s2d
 from .graph import local_response_norm as _lrnorm, depth_to_space as _d2s
 from .graph import resize_bilinear as _rbilin, resize_nearest_neighbor as _rnn
+from .graph import gather as _gather, topk as _topk
 from . import _compile
 
 _ONNX: dict[str, Callable] = {}
@@ -252,3 +253,52 @@ def _resize(node, ins, a, i):
     if ctm == "align_corners": return _rbilin(x, th, tw, align_corners=True)
     raise NotImplementedError(f"ONNX Resize linear: coordinate_transformation_mode={ctm!r} not supported (ANE matches 'asymmetric'/'align_corners' only)")
   raise NotImplementedError(f"ONNX Resize: mode={mode!r} not supported")
+
+def _reduce_op(ins, a, method):
+  """ONNX reduce: axes attr (opset<18) or input (>=18); empty/absent -> all axes; keepdims=0 squeezes after."""
+  x = ins[0]; axes = a.get("axes")
+  if axes is None and len(ins) > 1 and ins[1] is not None: axes = [int(v) for v in np.asarray(ins[1]).ravel()]
+  if not axes:
+    if int(a.get("noop_with_empty_axes", 0)):
+      raise NotImplementedError("ONNX Reduce: noop_with_empty_axes=1 with empty axes (identity) not supported")
+    axes = list(range(len(x.shape)))                 # empty/absent -> reduce over all axes
+  axes = tuple(int(v) % len(x.shape) for v in axes)
+  y = method(x, axes)
+  if not int(a.get("keepdims", 1)): y = y.squeeze(axes)   # ANE reduce keeps dims; drop them ourselves
+  return y
+@onnx_op("ReduceMax")
+def _rmax(node, ins, a, i): return _reduce_op(ins, a, Tensor.amax)
+@onnx_op("ReduceMin")
+def _rmin(node, ins, a, i): return _reduce_op(ins, a, Tensor.amin)
+@onnx_op("ReduceSum")
+def _rsum(node, ins, a, i): return _reduce_op(ins, a, Tensor.sum)
+@onnx_op("ReduceMean")
+def _rmean(node, ins, a, i): return _reduce_op(ins, a, Tensor.mean)
+@onnx_op("Gather")
+def _gather_h(node, ins, a, i):
+  """Static-index gather along `axis`; constant scalar/1-D integer indices only (data-dependent indices have no ANE path)."""
+  if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Gather: only constant integer indices supported")
+  idx = np.asarray(ins[1])
+  if idx.ndim > 1: raise NotImplementedError("ONNX Gather: only scalar or 1-D indices supported")
+  ax = int(a.get("axis", 0)) % len(ins[0].shape)
+  y = _gather(ins[0], [int(v) for v in idx.ravel()], axis=ax)
+  if idx.ndim == 0: y = y.squeeze(ax)                # scalar index drops the gathered axis (ONNX rank rule)
+  return y
+@onnx_op("ArgMax")
+def _argmax_h(node, ins, a, i):
+  """ArgMax -> ANE argmax (2D [C,W] only, keepdims, indices fp16-encoded; GlobalArgMinMax bridge cuts the graph)."""
+  x = ins[0]
+  if len(x.shape) != 2: raise NotImplementedError("ONNX ArgMax: only 2D inputs supported on the ANE")
+  if int(a.get("select_last_index", 0)): raise NotImplementedError("ONNX ArgMax: select_last_index=1 not supported")
+  ax = int(a.get("axis", 0)) % 2
+  y = x.argmax(ax)
+  if not int(a.get("keepdims", 1)): y = y.squeeze(ax)
+  return y
+@onnx_op("TopK")
+def _topk_h(node, ins, a, i):
+  """TopK -> ANE topk (2D [C,W], last axis only); returns VALUES only - ONNX's indices output is unsupported."""
+  x = ins[0]
+  if len(x.shape) != 2: raise NotImplementedError("ONNX TopK: only 2D inputs supported on the ANE")
+  if int(a.get("axis", -1)) not in (-1, 1): raise NotImplementedError("ONNX TopK: only last-axis (width) topk supported")
+  k = int(np.asarray(ins[1]).ravel()[0])
+  return _topk(x, k, largest=bool(int(a.get("largest", 1))))

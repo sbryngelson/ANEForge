@@ -37,6 +37,8 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat`, `SpaceToDepth`, `DepthToSpace` |
 | Normalization (cross-channel) | `LRN` |
 | Resampling | `Resize` (nearest / linear) |
+| Reduction | `ReduceMax`, `ReduceMin`, `ReduceSum`, `ReduceMean` |
+| Indexing | `Gather` (static indices), `ArgMax`, `TopK` (2D, values only) |
 | Misc | `Softmax`, `Constant`, `Identity` |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
@@ -88,3 +90,20 @@ mis-lower:
     - `half_pixel`/`pytorch_half_pixel` sampling and `mode="cubic"` are **not** matched by
       the ANE resamplers and raise. Note the ONNX default `coordinate_transformation_mode`
       is `half_pixel`, so a `Resize` must set `asymmetric`/`align_corners` explicitly.
+- **Reductions** (`ReduceMax`/`ReduceMin`/`ReduceSum`/`ReduceMean`): `axes` may be an
+  attribute (opset < 18; ReduceSum < 13) or an input initializer (later opsets); an
+  absent/empty `axes` reduces over every axis. `keepdims=1` (the default) keeps reduced
+  dims as size 1; `keepdims=0` squeezes them afterward. `noop_with_empty_axes=1` with no
+  axes (the identity edge) raises. `ReduceMean` and `ReduceMax` are validated on-device
+  against onnxruntime (cosine ~1.0).
+- **Gather:** static (constant-initializer) integer indices only - a data-dependent
+  (tensor) index raises, since on-engine gather-by-data has no ANE path. Indices must be
+  scalar or 1-D; a scalar index drops the gathered axis (ONNX rank rule) and a >1-D index
+  array raises. Lowers to `slice_by_size`+`concat`; validated on-device (cosine ~1.0).
+- **ArgMax:** 2-D `[C,W]` inputs only (the ANE `GlobalArgMinMax` bridge), `keepdims=1`
+  default (`keepdims=0` squeezes the axis); `select_last_index=1` is unsupported. Indices
+  are fp16-encoded and the bridge cuts the graph, so it is shipped shape-validated only.
+- **TopK:** 2-D `[C,W]` inputs, last axis (`axis` in `{-1, 1}`) only. Returns the **values**
+  output **only** - ONNX's second (indices) output is unsupported, so a model consuming the
+  indices fails when that name is later looked up. `k` is read from the (opset 10+) input;
+  `k` in `{3, 4}` is rejected by the ANE itself. Shipped shape-validated only.

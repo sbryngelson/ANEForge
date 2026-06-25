@@ -397,3 +397,142 @@ def test_resize_linear_onnx_matches_onnxruntime():  # linear+asymmetric is the A
              inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
   got, ref = _run_vs_ort(m, x)
   cos = _cos(got, ref); assert cos > 0.99, f"Resize linear ANE vs onnxruntime cosine={cos}"
+
+def _model18(nodes, inputs, outputs, inits=()):  # opset 18 graph (axes-as-input reduce ops)
+  g = helper.make_graph(nodes, "g", inputs, outputs, list(inits))
+  m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 18)]); m.ir_version = 9
+  return m
+
+# -- reductions ------------------------------------------------------------- #
+def test_reduce_max_builds():  # axes attr (opset<18), keepdims=1
+  n = helper.make_node("ReduceMax", ["x"], ["y"], axes=[2, 3], keepdims=1)
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8, 1, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 1, 1) and out.op == "reduce_max"
+
+def test_reduce_min_builds():
+  n = helper.make_node("ReduceMin", ["x"], ["y"], axes=[1], keepdims=1)
+  m = _model([n], [_vi("x", [2, 5])], [_vi("y", [2, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (2, 1) and out.op == "reduce_min"
+
+def test_reduce_mean_builds():
+  n = helper.make_node("ReduceMean", ["x"], ["y"], axes=[2, 3], keepdims=1)
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8, 1, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 1, 1) and out.op == "reduce_mean"
+
+def test_reduce_max_keepdims0_builds():  # keepdims=0 squeezes the reduced axes
+  n = helper.make_node("ReduceMax", ["x"], ["y"], axes=[2, 3], keepdims=0)
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8) and out.op == "squeeze"
+
+def test_reduce_sum_axes_input_builds():  # opset>=13 ReduceSum reads axes from an input initializer
+  ax = onnx.numpy_helper.from_array(np.array([1], dtype=np.int64), "ax")
+  n = helper.make_node("ReduceSum", ["x", "ax"], ["y"], keepdims=1)
+  m = _model([n], [_vi("x", [2, 5])], [_vi("y", [2, 1])], inits=[ax])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (2, 1) and out.op == "reduce_sum"
+
+def test_reduce_max_axes_input_opset18_builds():  # opset>=18 ReduceMax also moves axes to an input
+  ax = onnx.numpy_helper.from_array(np.array([2, 3], dtype=np.int64), "ax")
+  n = helper.make_node("ReduceMax", ["x", "ax"], ["y"], keepdims=1)
+  m = _model18([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8, 1, 1])], inits=[ax])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 1, 1) and out.op == "reduce_max"
+
+def test_reduce_all_axes_builds():  # absent axes -> reduce over every axis (keepdims)
+  n = helper.make_node("ReduceMean", ["x"], ["y"], keepdims=1)
+  m = _model([n], [_vi("x", [2, 3, 4])], [_vi("y", [1, 1, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 1, 1) and out.op == "reduce_mean"
+
+def test_reduce_noop_empty_axes_raises():  # noop_with_empty_axes=1 + empty axes (identity) is unsupported
+  n = helper.make_node("ReduceSum", ["x"], ["y"], keepdims=1, noop_with_empty_axes=1)
+  m = _model([n], [_vi("x", [2, 5])], [_vi("y", [2, 5])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+# -- gather / argmax / topk ------------------------------------------------- #
+def test_gather_builds():  # 1-D index along axis 0 -> [len(idx), W]; lowers to slice+concat
+  idx = onnx.numpy_helper.from_array(np.array([0, 2, 3], dtype=np.int64), "idx")
+  n = helper.make_node("Gather", ["x", "idx"], ["y"], axis=0)
+  m = _model([n], [_vi("x", [4, 8])], [_vi("y", [3, 8])], inits=[idx])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (3, 8) and out.op == "concat"
+
+def test_gather_scalar_index_builds():  # scalar index drops the gathered axis (ONNX rank rule)
+  idx = onnx.numpy_helper.from_array(np.array(2, dtype=np.int64), "idx")
+  n = helper.make_node("Gather", ["x", "idx"], ["y"], axis=0)
+  m = _model([n], [_vi("x", [4, 8])], [_vi("y", [8])], inits=[idx])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (8,) and out.op == "squeeze"
+
+def test_gather_nonconstant_index_raises():  # data-dependent (Tensor) indices have no ANE path
+  n = helper.make_node("Gather", ["x", "idx"], ["y"], axis=0)
+  m = _model([n], [_vi("x", [4, 8]), helper.make_tensor_value_info("idx", TensorProto.INT64, [2])],
+             [_vi("y", [2, 8])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_gather_2d_index_raises():  # >1-D indices change output rank in a way the 1-D gather can't replicate
+  idx = onnx.numpy_helper.from_array(np.array([[0, 1], [2, 3]], dtype=np.int64), "idx")
+  n = helper.make_node("Gather", ["x", "idx"], ["y"], axis=0)
+  m = _model([n], [_vi("x", [4, 8])], [_vi("y", [2, 2, 8])], inits=[idx])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_argmax_builds():  # 2D [C,W], axis=1 keepdims -> [C,1]
+  n = helper.make_node("ArgMax", ["x"], ["y"], axis=1, keepdims=1)
+  m = _model([n], [_vi("x", [3, 5])], [helper.make_tensor_value_info("y", TensorProto.INT64, [3, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (3, 1) and out.op == "argmax"
+
+def test_argmax_keepdims0_builds():  # keepdims=0 squeezes the reduced axis
+  n = helper.make_node("ArgMax", ["x"], ["y"], axis=1, keepdims=0)
+  m = _model([n], [_vi("x", [3, 5])], [helper.make_tensor_value_info("y", TensorProto.INT64, [3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (3,) and out.op == "squeeze"
+
+def test_argmax_rank_not_2_raises():  # ANE argmax is 2D-only
+  n = helper.make_node("ArgMax", ["x"], ["y"], axis=1)
+  m = _model([n], [_vi("x", [1, 3, 5])], [helper.make_tensor_value_info("y", TensorProto.INT64, [1, 1, 5])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_argmax_select_last_index_raises():
+  n = helper.make_node("ArgMax", ["x"], ["y"], axis=1, select_last_index=1)
+  m = _model([n], [_vi("x", [3, 5])], [helper.make_tensor_value_info("y", TensorProto.INT64, [3, 1])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_topk_builds():  # 2D [C,W], k from input -> values [C,k]; k=2 avoids the arch-gated k in {3,4}
+  k = onnx.numpy_helper.from_array(np.array([2], dtype=np.int64), "k")
+  n = helper.make_node("TopK", ["x", "k"], ["vals", "idx"], axis=-1)
+  m = _model([n], [_vi("x", [3, 5])],
+             [_vi("vals", [3, 2]), helper.make_tensor_value_info("idx", TensorProto.INT64, [3, 2])], inits=[k])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (3, 2) and out.op == "topk"
+
+def test_topk_rank_not_2_raises():  # ANE topk is 2D-only
+  k = onnx.numpy_helper.from_array(np.array([2], dtype=np.int64), "k")
+  n = helper.make_node("TopK", ["x", "k"], ["vals", "idx"], axis=-1)
+  m = _model([n], [_vi("x", [1, 3, 5])],
+             [_vi("vals", [1, 3, 2]), helper.make_tensor_value_info("idx", TensorProto.INT64, [1, 3, 2])], inits=[k])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_topk_axis_raises():  # only the last axis (width) is supported
+  k = onnx.numpy_helper.from_array(np.array([2], dtype=np.int64), "k")
+  n = helper.make_node("TopK", ["x", "k"], ["vals", "idx"], axis=0)
+  m = _model([n], [_vi("x", [3, 5])],
+             [_vi("vals", [2, 5]), helper.make_tensor_value_info("idx", TensorProto.INT64, [2, 5])], inits=[k])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+@requires_ane
+def test_reduce_mean_onnx_matches_onnxruntime():  # global-avg-pool-style reduction
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 8, 4, 4)).astype(np.float32)
+  n = helper.make_node("ReduceMean", ["x"], ["y"], axes=[2, 3], keepdims=1)
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8, 1, 1])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"ReduceMean ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_reduce_max_onnx_matches_onnxruntime():
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 8, 4, 4)).astype(np.float32)
+  n = helper.make_node("ReduceMax", ["x"], ["y"], axes=[2, 3], keepdims=1)
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8, 1, 1])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"ReduceMax ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_gather_onnx_matches_onnxruntime():  # static-index gather along axis 0
+  rng = np.random.default_rng(0); x = rng.standard_normal((4, 8)).astype(np.float32)
+  idx = onnx.numpy_helper.from_array(np.array([0, 2, 3], dtype=np.int64), "idx")
+  n = helper.make_node("Gather", ["x", "idx"], ["y"], axis=0)
+  m = _model([n], [_vi("x", [4, 8])], [_vi("y", [3, 8])], inits=[idx])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.999, f"Gather ANE vs onnxruntime cosine={cos}"
