@@ -465,6 +465,7 @@ def image_input(shape: Sequence[int], scale: float = 1.0 / 255.0, bias=0.0) -> T
   if bi_v is not None:                                    # per-channel bias: broadcast add
     y = y + Tensor(bi_v.shape, "const_array", [], {"value": bi_v})
   elif bi_s != 0.0:
+    assert bi_s is not None
     y = y.adds(bi_s)
   return y
 
@@ -1197,8 +1198,7 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
         f"{[1, 1, q.shape[2], k.shape[2]]} (one mask for all heads, full query axis); "
         f"got {list(attn_mask.shape)}. Per-head masks (H>1) and query-broadcast "
         f"(Sq-axis=1 while q_seq>1) are not supported by the native layer.")
-  if scale is None:
-    scale = 1.0 / q.shape[-1] ** 0.5
+  _scale: float = scale if scale is not None else 1.0 / q.shape[-1] ** 0.5
   seq = max(q.shape[2], k.shape[2])               # attention spans the K/V (cached) length
   both = min(q.shape[2], k.shape[2])              # the native layer breaks when BOTH axes are large
   # Native fused-attention is reliable only inside this envelope; outside it returns garbage.
@@ -1226,7 +1226,7 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
     from . import _optimize as _opt
     n_tiles = _opt.attention_tiles(q.shape[2], q.shape[1], q.shape[3], T=k.shape[2])
     if n_tiles == 1:
-      scores = q @ kt * float(scale)
+      scores = q @ kt * float(_scale)
       if attn_mask is not None:
         scores = scores + attn_mask
       return scores.softmax(-1) @ v
@@ -1236,15 +1236,15 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
     for start in range(0, Sq, tile):
       n = min(tile, Sq - start)
       qt = q.slice_by_size([0, 0, start, 0], [q.shape[0], q.shape[1], n, q.shape[3]])
-      st = qt @ kt * float(scale)
+      st = qt @ kt * float(_scale)
       if attn_mask is not None:
         st = st + attn_mask.slice_by_size(
           [0, 0, start, 0], [attn_mask.shape[0], attn_mask.shape[1], n, attn_mask.shape[3]])
       out_tiles.append(st.softmax(-1) @ v)
     return concat(out_tiles, axis=2)
   if attn_mask is not None:                       # runtime mask rides the 5th bottom (stays native)
-    return Tensor(q.shape, "sdpa", [q, k, v, attn_mask], {"scale": float(scale), "masked": True})
-  return Tensor(q.shape, "sdpa", [q, k, v], {"scale": float(scale), "causal": bool(is_causal)})
+    return Tensor(q.shape, "sdpa", [q, k, v, attn_mask], {"scale": float(_scale), "masked": True})
+  return Tensor(q.shape, "sdpa", [q, k, v], {"scale": float(_scale), "causal": bool(is_causal)})
 
 
 def geglu(x: Tensor, W, b) -> Tensor:

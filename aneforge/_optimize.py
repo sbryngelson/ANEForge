@@ -447,6 +447,7 @@ def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5
   except Exception:
     return float("inf"), None
   try:
+    res = None
     for _ in range(warmup):
       res = net(*arrs)
     # correctness gate vs baseline
