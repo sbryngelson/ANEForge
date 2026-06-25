@@ -114,3 +114,24 @@ def test_unsqueeze_builds():  # opset>=13 reads axes from input initializer
   n = helper.make_node("Unsqueeze", ["x", "ax"], ["y"])
   m = _model([n], [_vi("x", [1, 4])], [_vi("y", [1, 1, 4])], inits=[ax])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 1, 4) and out.op == "expand_dims"
+
+def test_identity_builds():  # Identity passes its input straight through
+  n = helper.make_node("Identity", ["x"], ["y"])
+  m = _model([n], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4) and out.op == "input"
+
+@requires_ane
+def test_resnet18_onnx_matches_onnxruntime(tmp_path):
+  """End-to-end: import a torch-exported ResNet-18 ONNX, run on the ANE, match onnxruntime (fp16 cosine)."""
+  import torch, torchvision, onnxruntime
+  net_t = torchvision.models.resnet18(weights=None).eval()
+  x = torch.randn(1, 3, 224, 224)
+  path = str(tmp_path / "resnet18.onnx")
+  torch.onnx.export(net_t, (x,), path, opset_version=13, do_constant_folding=True,
+                    input_names=["x"], output_names=["y"], dynamo=False)  # legacy exporter; numerics identical
+  net = af.load_onnx(path)
+  x_fp16 = x.numpy().astype(np.float16)
+  got = np.asarray(net(x_fp16)).astype(np.float32).ravel()
+  ref = np.asarray(onnxruntime.InferenceSession(path).run(None, {"x": x.numpy()})[0]).astype(np.float32).ravel()
+  cos = float(np.dot(got, ref) / (np.linalg.norm(got) * np.linalg.norm(ref)))
+  assert cos > 0.999, f"resnet18 ANE vs onnxruntime cosine={cos}"

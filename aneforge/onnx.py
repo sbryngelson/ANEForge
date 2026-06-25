@@ -161,3 +161,5 @@ def _softmax(node, ins, a, i): return ins[0].softmax(int(a.get("axis", -1)))
 def _const(node, ins, a, i):
   from onnx import numpy_helper
   return numpy_helper.to_array(a["value"])         # returns np.ndarray (folded by consumers)
+@onnx_op("Identity")
+def _identity(node, ins, a, i): return ins[0]      # pass-through (Tensor or array)
