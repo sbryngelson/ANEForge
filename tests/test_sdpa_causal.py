@@ -3,17 +3,10 @@ from __future__ import annotations
 import math
 import numpy as np
 import pytest
+from _helpers import requires_ane
 import aneforge as af
 
 
-def _ane():
-  try:
-    from aneforge._runtime import _find_dylib; _find_dylib(); return True
-  except Exception:
-    return False
-
-
-requires_ane = pytest.mark.skipif(not _ane(), reason="ANE/e5rt dylib unavailable")
 rng = np.random.default_rng(0)
 
 
@@ -108,7 +101,7 @@ def test_af_mha_query_tiled():
   # verify the tiled path is exact against a numpy multi-head-attention reference.
   S, D, H = 1500, 256, 8                          # S >= 512 -> tiles the query
   dh = D // H
-  w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)   # noqa: E731
+  w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)
   Wq, bq, Wk, Wv, bv, Wo, bo = w(D, D), w(D), w(D, D), w(D, D), w(D), w(D, D), w(D)
   x = rng.standard_normal((S, D)).astype(np.float16)
   out = np.asarray(af.compile(af.mha(af.input((S, D)), Wq, bq, Wk, None, Wv, bv, Wo, bo, H))(x))
@@ -130,7 +123,7 @@ def test_af_cross_attention_query_tiled():
   # against a numpy cross-attention reference. (Small-T stays single-shot; same result.)
   S, T, D, H = 768, 512, 256, 8                   # S>=768 and T>=512 -> tiles the query
   dh = D // H
-  w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)   # noqa: E731
+  w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)
   Wq, Wk, Wv, Wo = w(D, D), w(D, D), w(D, D), w(D, D)
   x = rng.standard_normal((S, D)).astype(np.float16)
   ctx = rng.standard_normal((T, D)).astype(np.float16)

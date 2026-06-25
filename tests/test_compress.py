@@ -1,5 +1,5 @@
 import numpy as np
-import pytest
+from _helpers import requires_ane
 from aneforge import _blob
 
 
@@ -106,16 +106,6 @@ def test_weight_int4_used_when_accurate():
 
 
 # Task 4 - on-device tests: int4-LUT runs on the ANE + weights.bin is smaller
-def _ane_available():
-  try:
-    from aneforge._runtime import _find_dylib
-    _find_dylib()
-    return True
-  except Exception:
-    return False
-
-
-requires_ane = pytest.mark.skipif(not _ane_available(), reason="ANE/e5rt dylib unavailable")
 
 
 @requires_ane

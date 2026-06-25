@@ -3,16 +3,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from _corpus import Case, run_corpus  # noqa: E402
-import aneforge as af  # noqa: E402
+from _corpus import Case, run_corpus
+from _helpers import f16
+import aneforge as af
 
 rng = np.random.default_rng(23)
-
-
-def f16(*shape, scale=1.0, pos=False):
-  a = rng.standard_normal(shape).astype(np.float32) * scale
-  if pos: a = np.abs(a) + 0.5
-  return a.astype(np.float16)
 
 
 def np_relu(x):
@@ -29,7 +24,7 @@ def np_softmax(x, axis=-1):
 # extreme-but-legal shapes
 def _tall_skinny():
   # [4096, 1]: huge leading axis, trailing axis == 1
-  x = f16(4096, 1)
+  x = f16(rng, 4096, 1)
 
   def build(xt):
     return (xt * 2.0).relu() + xt
@@ -43,8 +38,8 @@ def _tall_skinny():
 def _wide_vector_matmul():
   # contract a wide K dimension: [1, 4096] @ [4096, 8]
   K = 4096
-  x = f16(1, K, scale=0.05)
-  W = f16(K, 8, scale=0.02)
+  x = f16(rng, 1, K, scale=0.05)
+  W = f16(rng, K, 8, scale=0.02)
 
   def build(xt):
     return xt @ W
@@ -58,7 +53,7 @@ def _wide_vector_matmul():
 
 def _singleton_reduce():
   # reduce over an axis of size 1 (no-op reduction) mixed with a real one
-  x = f16(1, 1, 64)
+  x = f16(rng, 1, 1, 64)
 
   def build(xt):
     return xt.sum(0).mean(2)   # axis-0 size1, then real reduce over 64
@@ -72,8 +67,8 @@ def _singleton_reduce():
 def _big_channel_conv():
   # 1x1 conv with a large channel count (256->256)
   C = 256
-  W = f16(C, C, 1, 1, scale=0.03)
-  x = f16(1, C, 4, 4, scale=0.5)
+  W = f16(rng, C, C, 1, 1, scale=0.03)
+  x = f16(rng, 1, C, 4, 4, scale=0.5)
 
   def build(xt):
     return af.conv(xt, W).relu()
@@ -90,7 +85,7 @@ def _big_channel_conv():
 # very deep chain fused into one program
 def _deep_chain():
   # 32 ops fused into ONE program; sin/cos/tanh + *1.4 is magnitude-preserving (O(1)) so relerr stays meaningful
-  x = f16(4, 16, scale=1.0)
+  x = f16(rng, 4, 16, scale=1.0)
   n = 32
 
   def build(xt):
@@ -127,8 +122,8 @@ def _deep_chain():
 # mixed fused-MIL + netplist-bridge (graph cut -> SegmentedModel)
 def _conv_argmax_cut():
   # conv -> relu -> reduce -> argmax (netplist cut); exercises the SegmentedModel split
-  W = f16(4, 3, 3, 3, scale=0.2)
-  x = f16(1, 3, 8, 8)
+  W = f16(rng, 4, 3, 3, 3, scale=0.2)
+  x = f16(rng, 1, 3, 8, 8)
 
   def build(xt):
     h = af.conv(xt, W, pad=1).relu()     # [1,4,8,8]
@@ -165,9 +160,9 @@ def _sdpa_sandwich():
   # linear -> sdpa (native cut) -> linear; exercises a netplist cut in the MIDDLE of a fused graph
   H, S, Dh = 2, 6, 8
   D = H * Dh
-  Wi = f16(D, D, scale=0.2)
-  Wo = f16(D, D, scale=0.2)
-  x = f16(S, D, scale=0.5)
+  Wi = f16(rng, D, D, scale=0.2)
+  Wo = f16(rng, D, D, scale=0.2)
+  x = f16(rng, S, D, scale=0.5)
 
   def build(xt):
     h = xt.linear(Wi)                          # [S, D]
@@ -193,7 +188,7 @@ def _sdpa_sandwich():
 
 # multi-input graphs
 def _multi_input():
-  a = f16(4, 8); b = f16(4, 8); c = f16(8, 5, scale=0.3)
+  a = f16(rng, 4, 8); b = f16(rng, 4, 8); c = f16(rng, 8, 5, scale=0.3)
 
   def build(at, bt, ct):
     h = (at + bt).relu()
@@ -208,8 +203,8 @@ def _multi_input():
 
 def _multi_input_residual():
   # two image inputs combined, conv, with a third bias-vector input
-  x1 = f16(1, 3, 8, 8); x2 = f16(1, 3, 8, 8)
-  W = f16(6, 3, 3, 3, scale=0.2)
+  x1 = f16(rng, 1, 3, 8, 8); x2 = f16(rng, 1, 3, 8, 8)
+  W = f16(rng, 6, 3, 3, 3, scale=0.2)
 
   def build(t1, t2):
     h = af.maximum(t1, t2)
@@ -225,8 +220,8 @@ def _multi_input_residual():
 # same graph fp16 vs int8 (int8_ok cases below are run both ways)
 def _int8_linear_deep():
   D = 64
-  Ws = [f16(D, D, scale=0.12) for _ in range(3)]
-  x = f16(8, D, scale=0.5)
+  Ws = [f16(rng, D, D, scale=0.12) for _ in range(3)]
+  x = f16(rng, 8, D, scale=0.5)
 
   def build(xt):
     h = xt

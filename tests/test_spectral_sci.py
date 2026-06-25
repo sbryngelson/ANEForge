@@ -7,14 +7,11 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # tests/ -> import _corpus
-from _corpus import Case, eval_case  # noqa: E402
-import aneforge as af  # noqa: E402
+from _corpus import Case, run_corpus
+from _helpers import f16, onehot_select
+import aneforge as af
 
 rng = np.random.default_rng(20260529)
-
-
-def f16(*shape, scale=1.0):
-  return (rng.standard_normal(shape).astype(np.float32) * scale).astype(np.float16)
 
 
 # tag side-table: name -> (cost_character, feasibility)
@@ -57,7 +54,7 @@ def _dft_matmul(N: int, tol: float):
   W = np.exp(-2j * np.pi * k * n / N)                  # [N,N] DFT matrix
   Wr = np.ascontiguousarray(np.real(W)).astype(np.float16)
   Wi = np.ascontiguousarray(np.imag(W)).astype(np.float16)
-  xr = f16(1, N); xi = f16(1, N)
+  xr = f16(rng, 1, N); xi = f16(rng, 1, N)
 
   def build(rt, it):
     a = rt @ Wr.T.astype(np.float16)                # xr @ Wr^T
@@ -113,15 +110,11 @@ def _fft_butterfly_radix2(N: int, tol: float):
 
   order = [_bitrev(i, bits) for i in range(N)]
 
-  def _lane(t, i):                                     # [1,N] -> [1,1] (one-hot select)
-    s = np.zeros((N, 1), np.float16); s[i, 0] = 1.0
-    return t @ s.astype(np.float16)
-
-  xr = f16(1, N); xi = f16(1, N)
+  xr = f16(rng, 1, N); xi = f16(rng, 1, N)
 
   def build(rt, it):
-    re = [_lane(rt, order[i]) for i in range(N)]
-    im = [_lane(it, order[i]) for i in range(N)]
+    re = [onehot_select(rt, order[i], N) for i in range(N)]  # [1,N] -> [1,1] one-hot select
+    im = [onehot_select(it, order[i], N) for i in range(N)]
     size = 2
     while size <= N:
       half = size // 2
@@ -160,7 +153,7 @@ def _rfft_power_spectrum(N: int, tol: float):
   W = np.exp(-2j * np.pi * k * n / N)
   Wr = np.ascontiguousarray(np.real(W)).astype(np.float16)
   Wi = np.ascontiguousarray(np.imag(W)).astype(np.float16)
-  x = f16(1, N)
+  x = f16(rng, 1, N)
 
   def build(xt):
     Xr = xt @ Wr.T.astype(np.float16)
@@ -189,8 +182,8 @@ def _fir_filter(L: int, K: int, tol: float):
     cost: COMPUTE (a real conv - the ANE's home turf).
     feasibility: WORKS.
     """
-  sig = f16(1, 1, 1, L)
-  taps = f16(1, 1, 1, K, scale=0.5)
+  sig = f16(rng, 1, 1, 1, L)
+  taps = f16(rng, 1, 1, 1, K, scale=0.5)
 
   def build(st):
     return af.conv(st, taps, pad=0)                 # [1,1,1,L-K+1], valid
@@ -219,7 +212,7 @@ def _autocorr_crosscorr(H: int, W: int, Th: int, Tw: int, tol: float):
     cost: MIXED (cut) - one native sub-program (graph cut), no surrounding fusion.
     feasibility: WORKS (cross_correlation is RE-recovered and runtime-proven).
     """
-  x = f16(H, W)
+  x = f16(rng, H, W)
   tmpl = np.ascontiguousarray(x[:Th, :Tw]).astype(np.float16)   # patch -> autocorr-style
 
   def build(xt, tt):
@@ -254,7 +247,7 @@ def _autocorr_conv(L: int, Lk: int, tol: float):
     feasibility: WORKS (small lag window; wide windows are arch-limited by the conv
       backend).
     """
-  sig = f16(1, 1, 1, L)
+  sig = f16(rng, 1, 1, 1, L)
   kern = np.ascontiguousarray(sig[0, 0, 0, :Lk]).astype(np.float16).reshape(1, 1, 1, Lk)
 
   def build(st):
@@ -336,7 +329,7 @@ def _nbody_spring(N: int, tol: float):
       O(N^2) in the intermediate, reduction over j).
     feasibility: WORKS (small N).
     """
-  P = f16(N, 3, scale=1.0)
+  P = f16(rng, N, 3, scale=1.0)
 
   def build(pt):
     pi = pt.reshape(N, 1, 3)
@@ -495,6 +488,19 @@ QUADRATURE = [
 CASES = SPECTRAL + SIGNAL + MONTECARLO + NBODY + QUADRATURE
 
 
+def _header():
+  return f"{'case':30s} {'var':4s} {'status':6s} {'cost':14s} {'feasible':13s} detail"
+
+
+def _row(rec):
+  return (f"{rec['name']:30s} {rec['variant']:4s} {rec['status']:6s} "
+          f"{rec['cost']:14s} {rec['feasibility']:13s} {rec['metric']}")
+
+
+def _annotate(case, rec):
+  rec["cost"], rec["feasibility"] = TAGS.get(case.name, ("?", "?"))
+
+
 def run_spectral(cases, verbose: bool = True):
   """Mirror of _corpus.run_corpus, extended to print cost/feasibility tags and a
     SPECTRAL verdict block. Returns (results, exit_code).
@@ -504,104 +510,65 @@ def run_spectral(cases, verbose: bool = True):
     "passes" if its tiny fixed-N instance is numerically correct; the tag carries the
     *generalization* verdict.
     """
-  all_results = []
-  relerrs = []
-  dft_curve: list[tuple[int, str]] = []     # (N, relerr_str) for the verdict block
-  if verbose:
-    print(f"{'case':30s} {'var':4s} {'status':6s} {'cost':14s} {'feasible':13s} detail")
+  def verdict(all_results, relerrs):
+    dft_curve = [(int(r["name"].split("_N")[1]), r["metric"].split()[1])
+                 for r in all_results
+                 if r.get("relerr") is not None and r["name"].startswith("dft_matmul_N")]
+    # ------- SPECTRAL verdict block (the marquee finding) ----------------- #
+    print("\n" + "-" * 104)
+    print("CAN THE ANE DO AN FFT?  (complex emulated as real/imag tensor pairs)")
     print("-" * 104)
-  for case in cases:
-    cost, feas = TAGS.get(case.name, ("?", "?"))
-    for rec in eval_case(case):
-      rec["cost"], rec["feasibility"] = cost, feas
-      all_results.append(rec)
-      line = (f"{rec['name']:30s} {rec['variant']:4s} {rec['status']:6s} "
-          f"{cost:14s} {feas:13s} {rec['metric']}")
-      if rec["err"]:
-        line += f"  [{rec['err']}]"
-      if verbose:
-        print(line)
-        if rec.get("traceback"):
-          print("    " + rec["traceback"].replace("\n", "\n    "))
-      m = rec["metric"]
-      if m.startswith("relerr "):
-        try:
-          relerrs.append(float(m.split()[1]))
-        except ValueError:
-          pass
-        if rec["name"].startswith("dft_matmul_N"):
-          dft_curve.append((int(rec["name"].split("_N")[1]), m.split()[1]))
+    if dft_curve:
+      print("  DFT-as-matmul precision vs transform size N (fp16 weights, wide accumulator):")
+      for N, e in sorted(dft_curve):
+        print(f"    N={N:<5d} relerr {e}")
+      print("    => relerr is essentially FLAT in N (no compounding): the ANE matmul")
+      print("       accumulator is wide (>=fp32), so the length-N twiddle sum is not")
+      print("       re-rounded per term. fp16 is NOT the wall for the transform.")
+    bf = [r for r in all_results if r["name"].startswith("fft_butterfly")]
+    if bf:
+      bfst = ", ".join(f"{r['name'].split('_N')[1]}:{r['status']}({r['metric']})" for r in bf)
+      print(f"  Radix-2 butterfly FFT (fully unrolled): {bfst}")
+    print("\n  VERDICT:")
+    print("    YES - both a dense DFT (twiddle-matrix matmul) and a radix-2 butterfly FFT")
+    print("    are EXPRESSIBLE and CORRECT on the ANE via complex-as-real-pairs")
+    print("    arithmetic ((a+bi)(c+di) = (ac-bd)+(ad+bc)i over paired real tensors).")
+    print("    * DFT-matmul: fp16-CLEAN to at least N=2048 (relerr ~ few e-4, flat in N).")
+    print("      The limiter is NOT precision but the O(N^2) twiddle-matrix size/bandwidth")
+    print("      - it is a naive DFT, so cost grows quadratically; precision does not.")
+    print("    * Butterfly FFT: correct for small fixed N, but expressible ONLY as a")
+    print("      per-N STATIC UNROLL (the ANE is feed-forward: no in-graph loop, no scalar")
+    print("      feedback, and bit-reversal needs a folded one-hot since there is no")
+    print("      gather). So its O(N log N) advantage is not realizable as a graph at")
+    print("      useful N - the wall is ARCHITECTURAL (static unroll), not fp16.")
+    print("    BOTTOM LINE: the ANE has no complex dtype, but FFT/DFT is viable through")
+    print("    real-pair emulation; for practical sizes the dense DFT-matmul is the")
+    print("    right tool (fp16-robust, fuses), and a true scaling FFT is blocked by the")
+    print("    missing loop/gather, not by numerics.")
 
-  n_pass = sum(r["status"] == "PASS" for r in all_results)
-  n_xfail = sum(r["status"] == "XFAIL" for r in all_results)
-  n_fail = sum(r["status"] == "FAIL" for r in all_results)
-  n_err = sum(r["status"] == "ERROR" for r in all_results)
-  n_xpass = sum(r["status"] == "XPASS" for r in all_results)
-  total = len(all_results)
-  red = n_fail + n_err + n_xpass
+    # ------- other capability findings ------------------------------------ #
+    print("\n" + "-" * 104)
+    print("OTHER SCIENTIFIC-KERNEL FINDINGS")
+    print("-" * 104)
+    print("  SIGNAL    : FIR filter (1D conv) and 2D autocorrelation (CrossCorrelation")
+    print("              bridge + conv-of-self) WORK, fp16-clean. ANE conv == cross-")
+    print("              correlation (no kernel flip); CrossCorrelation needs the template")
+    print("              strictly smaller than the map (same-size fails ANECCompile).")
+    print("  MONTECARLO: map+reduction estimators (integral, mean/variance) WORK; the wide")
+    print("              accumulator keeps large-M reductions clean. Caveat: aneforge")
+    print("              exposes NO on-device RNG, so samples are host-drawn and fed in")
+    print("              (reference uses the same samples -> exact, not statistical).")
+    print("  N-BODY    : pairwise broadcast-diff ([N,1,3]-[1,N,3]) + reduction WORKS for")
+    print("              small N (linear forces fp16-clean; 1/r potential is fp16-limited")
+    print("              near coincident points and grows O(N^2) in the intermediate).")
+    print("  QUADRATURE: definite integrals as a weighted reduction (Simpson, Gauss-")
+    print("              Legendre) WORK to ~1e-5. BOUNDARY: cumsum/prefix-scan is NOT")
+    print("              expressible (no scan op, no in-graph loop), so cumulative/")
+    print("              indefinite integrals do not fit.")
+    print()  # blank line before the GATE line
 
-  print("\n" + "=" * 104)
-  print(f"variants run: {total}   PASS {n_pass}   XFAIL {n_xfail}   "
-          f"FAIL {n_fail}   ERROR {n_err}   XPASS {n_xpass}")
-  if relerrs:
-    print(f"relerr across {len(relerrs)} numeric variants: "
-              f"min {min(relerrs):.2e}  median {np.median(relerrs):.2e}  max {max(relerrs):.2e}")
-
-  # ------- SPECTRAL verdict block (the marquee finding) ----------------- #
-  print("\n" + "-" * 104)
-  print("CAN THE ANE DO AN FFT?  (complex emulated as real/imag tensor pairs)")
-  print("-" * 104)
-  if dft_curve:
-    print("  DFT-as-matmul precision vs transform size N (fp16 weights, wide accumulator):")
-    for N, e in sorted(dft_curve):
-      print(f"    N={N:<5d} relerr {e}")
-    print("    => relerr is essentially FLAT in N (no compounding): the ANE matmul")
-    print("       accumulator is wide (>=fp32), so the length-N twiddle sum is not")
-    print("       re-rounded per term. fp16 is NOT the wall for the transform.")
-  bf = [r for r in all_results if r["name"].startswith("fft_butterfly")]
-  if bf:
-    bfst = ", ".join(f"{r['name'].split('_N')[1]}:{r['status']}({r['metric']})" for r in bf)
-    print(f"  Radix-2 butterfly FFT (fully unrolled): {bfst}")
-  print("\n  VERDICT:")
-  print("    YES - both a dense DFT (twiddle-matrix matmul) and a radix-2 butterfly FFT")
-  print("    are EXPRESSIBLE and CORRECT on the ANE via complex-as-real-pairs")
-  print("    arithmetic ((a+bi)(c+di) = (ac-bd)+(ad+bc)i over paired real tensors).")
-  print("    * DFT-matmul: fp16-CLEAN to at least N=2048 (relerr ~ few e-4, flat in N).")
-  print("      The limiter is NOT precision but the O(N^2) twiddle-matrix size/bandwidth")
-  print("      - it is a naive DFT, so cost grows quadratically; precision does not.")
-  print("    * Butterfly FFT: correct for small fixed N, but expressible ONLY as a")
-  print("      per-N STATIC UNROLL (the ANE is feed-forward: no in-graph loop, no scalar")
-  print("      feedback, and bit-reversal needs a folded one-hot since there is no")
-  print("      gather). So its O(N log N) advantage is not realizable as a graph at")
-  print("      useful N - the wall is ARCHITECTURAL (static unroll), not fp16.")
-  print("    BOTTOM LINE: the ANE has no complex dtype, but FFT/DFT is viable through")
-  print("    real-pair emulation; for practical sizes the dense DFT-matmul is the")
-  print("    right tool (fp16-robust, fuses), and a true scaling FFT is blocked by the")
-  print("    missing loop/gather, not by numerics.")
-
-  # ------- other capability findings ------------------------------------ #
-  print("\n" + "-" * 104)
-  print("OTHER SCIENTIFIC-KERNEL FINDINGS")
-  print("-" * 104)
-  print("  SIGNAL    : FIR filter (1D conv) and 2D autocorrelation (CrossCorrelation")
-  print("              bridge + conv-of-self) WORK, fp16-clean. ANE conv == cross-")
-  print("              correlation (no kernel flip); CrossCorrelation needs the template")
-  print("              strictly smaller than the map (same-size fails ANECCompile).")
-  print("  MONTECARLO: map+reduction estimators (integral, mean/variance) WORK; the wide")
-  print("              accumulator keeps large-M reductions clean. Caveat: aneforge")
-  print("              exposes NO on-device RNG, so samples are host-drawn and fed in")
-  print("              (reference uses the same samples -> exact, not statistical).")
-  print("  N-BODY    : pairwise broadcast-diff ([N,1,3]-[1,N,3]) + reduction WORKS for")
-  print("              small N (linear forces fp16-clean; 1/r potential is fp16-limited")
-  print("              near coincident points and grows O(N^2) in the intermediate).")
-  print("  QUADRATURE: definite integrals as a weighted reduction (Simpson, Gauss-")
-  print("              Legendre) WORK to ~1e-5. BOUNDARY: cumsum/prefix-scan is NOT")
-  print("              expressible (no scan op, no in-graph loop), so cumulative/")
-  print("              indefinite integrals do not fit.")
-
-  print(f"\nGATE: {'GREEN' if red == 0 else 'RED'}  "
-          f"({n_pass + n_xfail}/{total} green, {red} red)")
-  return all_results, (0 if red == 0 else 1)
+  return run_corpus(cases, verbose, columns=(_header, _row), annotate=_annotate,
+                    verdict=verdict, sep_width=104)
 
 
 if __name__ == "__main__":

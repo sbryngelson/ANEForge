@@ -2,19 +2,12 @@
 from __future__ import annotations
 import numpy as np
 import pytest
+from _helpers import requires_ane
 import aneforge as af
 from aneforge import _compile as C
 from aneforge.graph import conv, input as ainput
 
 
-def _ane():
-  try:
-    from aneforge._runtime import _find_dylib; _find_dylib(); return True
-  except Exception:
-    return False
-
-
-requires_ane = pytest.mark.skipif(not _ane(), reason="ANE/e5rt dylib unavailable")
 rng = np.random.default_rng(0)
 
 

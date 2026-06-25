@@ -3,21 +3,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from _corpus import Case, run_corpus  # noqa: E402
-import aneforge as af  # noqa: E402
+from _corpus import Case, run_corpus
+from _helpers import f16
+import aneforge as af
 
 rng = np.random.default_rng(11)
 
 
-def f16(*shape, scale=1.0, pos=False):
-  a = rng.standard_normal(shape).astype(np.float32) * scale
-  if pos: a = np.abs(a) + 0.5
-  return a.astype(np.float16)
-
-
 # random op-chain (elementwise + activations), broadcasts
 def _elementwise_chain():
-  a = f16(4, 8); b = f16(4, 8); c = f16(4, 8, pos=True)
+  a = f16(rng, 4, 8); b = f16(rng, 4, 8); c = f16(rng, 4, 8, pos=True)
 
   def build(at, bt, ct):
     h = (at + bt) * ct
@@ -37,7 +32,7 @@ def _elementwise_chain():
 
 
 def _activation_zoo():
-  x = f16(4, 8)
+  x = f16(rng, 4, 8)
 
   def build(xt):
     h = xt.silu() + xt.gelu()
@@ -59,7 +54,7 @@ def _activation_zoo():
 
 def _broadcast_rowvec():
   # [M, D] + [1, D] and * [1, D]: classic numpy broadcast the optimizer must keep.
-  x = f16(6, 12); row = f16(1, 12); col_scale = 2.0
+  x = f16(rng, 6, 12); row = f16(rng, 1, 12); col_scale = 2.0
 
   def build(xt, rt):
     h = xt + rt
@@ -76,7 +71,7 @@ def _broadcast_rowvec():
 
 def _broadcast_3d():
   # [B, M, D] + [1, 1, D]
-  x = f16(2, 5, 8); bias = f16(1, 1, 8)
+  x = f16(rng, 2, 5, 8); bias = f16(rng, 1, 1, 8)
 
   def build(xt, bt):
     return (xt + bt).silu()
@@ -94,7 +89,7 @@ def np_relu(x):
 
 # reshape/transpose chains that cancel back to identity
 def _reshape_cancel():
-  x = f16(2, 3, 4)
+  x = f16(rng, 2, 3, 4)
 
   def build(xt):
     h = xt.reshape(6, 4).reshape(2, 3, 4)
@@ -111,7 +106,7 @@ def _reshape_cancel():
 
 def _transpose_matmul():
   # transpose then matmul (column-major-ish feed)
-  x = f16(4, 6); W = f16(4, 5, scale=0.3)  # x.T is [6,4] @ [4,5]
+  x = f16(rng, 4, 6); W = f16(rng, 4, 5, scale=0.3)  # x.T is [6,4] @ [4,5]
 
   def build(xt):
     return xt.transpose([1, 0]) @ W
@@ -124,7 +119,7 @@ def _transpose_matmul():
 
 # reductions along various axes
 def _reduce_axes():
-  x = f16(3, 4, 5)
+  x = f16(rng, 3, 4, 5)
 
   def build(xt):
     s = xt.sum(2)                 # [3,4,1]
@@ -140,7 +135,7 @@ def _reduce_axes():
 
 
 def _reduce_minmax():
-  x = f16(4, 16)
+  x = f16(rng, 4, 16)
 
   def build(xt):
     return af.maximum(xt.amax(1), xt.amin(1) * -1.0)
@@ -152,7 +147,7 @@ def _reduce_minmax():
 
 
 def _reduce_then_normalize():
-  x = f16(5, 10)
+  x = f16(rng, 5, 10)
 
   def build(xt):
     mu = xt.mean(1)            # [5,1]
@@ -171,7 +166,7 @@ def _reduce_then_normalize():
 
 # matmul / bmm rectangles
 def _matmul_rect():
-  x = f16(7, 13); W = f16(13, 5, scale=0.3)
+  x = f16(rng, 7, 13); W = f16(rng, 13, 5, scale=0.3)
 
   def build(xt):
     return xt @ W
@@ -183,7 +178,7 @@ def _matmul_rect():
 
 
 def _bmm_rect():
-  a = f16(3, 6, 9, scale=0.5); b = f16(3, 9, 4, scale=0.5)
+  a = f16(rng, 3, 6, 9, scale=0.5); b = f16(rng, 3, 9, 4, scale=0.5)
 
   def build(at, bt):
     return at @ bt
@@ -196,9 +191,9 @@ def _bmm_rect():
 
 def _linear_chain():
   D0, D1, D2 = 12, 20, 7
-  W1 = f16(D1, D0, scale=0.2); b1 = f16(D1, scale=0.1)
-  W2 = f16(D2, D1, scale=0.2); b2 = f16(D2, scale=0.1)
-  x = f16(5, D0)
+  W1 = f16(rng, D1, D0, scale=0.2); b1 = f16(rng, D1, scale=0.1)
+  W2 = f16(rng, D2, D1, scale=0.2); b2 = f16(rng, D2, scale=0.1)
+  x = f16(rng, 5, D0)
 
   def build(xt):
     return xt.linear(W1, b1).relu().linear(W2, b2)
@@ -212,7 +207,7 @@ def _linear_chain():
 
 # new primitives: extra activations / reductions / structural / select
 def _extra_activation_zoo():
-  x = f16(4, 8)
+  x = f16(rng, 4, 8)
 
   def build(xt):
     h = xt.softsign() + xt.atan()
@@ -235,7 +230,7 @@ def _extra_activation_zoo():
 
 
 def _inverse_recip():
-  x = f16(4, 8, pos=True)  # strictly positive -> reciprocal is well-defined
+  x = f16(rng, 4, 8, pos=True)  # strictly positive -> reciprocal is well-defined
 
   def build(xt):
     return xt.inverse() + xt.sqrt().inverse()
@@ -247,7 +242,7 @@ def _inverse_recip():
 
 
 def _extra_reductions():
-  x = f16(4, 8)
+  x = f16(rng, 4, 8)
 
   def build(xt):
     return xt.l1_norm(1) + xt.sum_square(1)
@@ -259,7 +254,7 @@ def _extra_reductions():
 
 
 def _log_sum_reduce():
-  x = f16(4, 8, pos=True)
+  x = f16(rng, 4, 8, pos=True)
 
   def build(xt):
     return xt.log_sum(1)
@@ -271,7 +266,7 @@ def _log_sum_reduce():
 
 
 def _squeeze_expand_roundtrip():
-  x = f16(1, 4, 1, 8)
+  x = f16(rng, 1, 4, 1, 8)
 
   def build(xt):
     h = xt.squeeze([0, 2])            # (4, 8)
@@ -287,7 +282,7 @@ def _squeeze_expand_roundtrip():
 
 
 def _slice_by_size_window():
-  x = f16(4, 8)
+  x = f16(rng, 4, 8)
 
   def build(xt):
     return xt.slice_by_size([1, 2], [2, 5]).relu()
@@ -299,7 +294,7 @@ def _slice_by_size_window():
 
 
 def _stack_split():
-  a = f16(4, 8); b = f16(4, 8)
+  a = f16(rng, 4, 8); b = f16(rng, 4, 8)
 
   def build(at, bt):
     st = af.stack([at, bt], 0)        # (2, 4, 8)
@@ -314,7 +309,7 @@ def _stack_split():
 
 
 def _select_greater():
-  a = f16(4, 8); b = f16(4, 8)
+  a = f16(rng, 4, 8); b = f16(rng, 4, 8)
 
   def build(at, bt):
     return af.select(at.greater(bt), at, bt)   # elementwise max via select
