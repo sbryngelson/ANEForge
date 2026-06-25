@@ -4,13 +4,15 @@ updated host-side, no recompile)."""
 from __future__ import annotations
 
 import math
+from typing import Callable
 
 import numpy as np
 
 from . import graph
+from ._compile import Model as _Model
 from .graph import Tensor
 
-VJP: dict[str, "callable"] = {}
+VJP: dict[str, Callable] = {}
 
 
 def vjp(*names: str):
@@ -1198,6 +1200,7 @@ class Trainer:
     # the feature input is the non-trainable, non-target input whose per-sample
     # shape matches X (handles 2-D [B,D] MLP and N-D [B,...] CNN inputs).
     feat_shape = X.shape[1:]
+    assert isinstance(self._fwd, _Model)  # Trainer always compiles non-sdpa graphs
     xin = next(t for t in self._fwd._input_tensors
                if not t.attrs.get("trainable") and t is not getattr(self.ce, "target", None)
                and tuple(t.shape[1:]) == tuple(feat_shape))
@@ -1411,6 +1414,7 @@ class UnrolledTrainer:
       if pad:
         chunk = np.concatenate([chunk, np.zeros((pad, *chunk.shape[1:]), np.float32)])
       # eval inputs are [weight leaves..., xe]; feed masters then the chunk
+      assert isinstance(self._eval, _Model)  # UnrolledTrainer eval never uses sdpa nodes
       args = []
       for t in self._eval._input_tensors:
         args.append(feeds_w[self._ev_w.index(t)] if t in self._ev_w

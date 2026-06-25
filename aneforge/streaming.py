@@ -24,7 +24,7 @@ import numpy as np
 
 from . import autograd as _ag
 from . import graph as _g
-from ._compile import compile as _compile, compile_multi as _compile_multi
+from ._compile import Model as _Model, compile as _compile, compile_multi as _compile_multi
 
 _F16 = np.float16
 
@@ -82,6 +82,7 @@ class CheckpointedStack:
             feed = {id(self._x): x.astype(_F16),
                     **{id(t): np.asarray(v, _F16) for t, v in zip(self._p, lp)}}
             # any other input port is a baked constant (e.g. a causal mask): feed its value
+            assert isinstance(self._fwd, _Model)  # layer_fn never contains sdpa nodes
             vals = [feed[id(t)] if id(t) in feed else np.asarray(t.attrs["value"], _F16)
                     for t in self._fwd._input_tensors]
             x = np.asarray(self._fwd(*vals), np.float32)
@@ -92,7 +93,7 @@ class CheckpointedStack:
         `(param_grads, g_in)`: `param_grads[i]` is the list of gradients for layer
         `i`'s params, and `g_in` is the gradient at the stack input."""
         g = np.asarray(g_out, np.float32)
-        param_grads = [None] * len(layers_params)
+        param_grads: list[list[np.ndarray] | None] = [None] * len(layers_params)
         for i in range(len(layers_params) - 1, -1, -1):
             self._bwd.prog.set_input(self._bwd_in[id(self._gout)], g.astype(_F16))
             self._bwd.prog.set_input(self._bwd_in[id(self._xb)], checkpoints[i].astype(_F16))

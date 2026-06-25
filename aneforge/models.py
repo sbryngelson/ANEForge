@@ -13,12 +13,12 @@ import numpy as np
 
 from .graph import Tensor, conv, input, mha
 from .autograd import conv2d, conv_param, parameter
-from ._compile import Model, compile
+from ._compile import Model, SegmentedModel, compile
 
-_NORM_CACHE: dict[int, Model] = {}
+_NORM_CACHE: dict[int, Model | SegmentedModel] = {}
 
 
-def _l2_normalizer(D: int) -> Model:
+def _l2_normalizer(D: int) -> Model | SegmentedModel:
   """A tiny cached fused-ANE program that L2-normalizes a [1, D] vector over its
     last axis (the verified reduce_l2_norm + real_div path)."""
   net = _NORM_CACHE.get(D)
@@ -91,7 +91,7 @@ class Vision:
       idn = conv(x, wd, stride=stride, pad=0, bias=bd)
     return (out + idn).relu()
 
-  def _build(self) -> Model:
+  def _build(self) -> Model | SegmentedModel:
     x = input((1, 3, 224, 224))
     w, b = self._fold("conv1", "bn1")
     h = conv(x, w, stride=2, pad=3, bias=b).relu().max_pool(3, stride=2, pad=1)
@@ -147,9 +147,9 @@ class Encoder:
     self.eln_w, self.eln_b = g("embeddings.LayerNorm.weight"), g("embeddings.LayerNorm.bias")
     self.layers = [{k: g(f"encoder.layer.{i}." + v) for k, v in _BERT_KEYS.items()}
                    for i in range(self.L)]
-    self._cache: dict[int, Model] = {}
+    self._cache: dict[int, Model | SegmentedModel] = {}
 
-  def _build(self, S: int) -> Model:
+  def _build(self, S: int) -> Model | SegmentedModel:
     h = input((S, self.D))
     for w in self.layers:
       attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H)
