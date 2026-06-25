@@ -26,9 +26,7 @@ def make_encoder(seed: int = 0):
 
 
 def real_encoder():
-    """The trained whisper-tiny encoder and its numpy state dict (downloads the
-    checkpoint). Use this for performance numbers: ANE latency is weight-dependent,
-    and the trained weights run materially slower than random init."""
+    """Trained whisper-tiny encoder + numpy state dict (downloads); use for perf numbers since ANE latency is weight-dependent."""
     from transformers import WhisperForConditionalGeneration
     enc = WhisperForConditionalGeneration.from_pretrained("openai/whisper-tiny").eval().model.encoder
     sd = {k: v.detach().numpy().astype(np.float32) for k, v in enc.state_dict().items()}
@@ -48,9 +46,7 @@ def mel_input(seed: int = 0) -> np.ndarray:
 
 
 def _pad_time(x, p: int):
-    """Zero-pad the time (width) axis by `p` each side; the singleton height axis is
-    left untouched. (af.conv pads symmetrically, which a 1-D conv must avoid; the zeros
-    are a width-`p` slice of `x` multiplied by zero, concatenated on either side.)"""
+    """Zero-pad the time (width) axis by `p` each side (af.conv pads symmetrically, which a 1-D conv must avoid)."""
     w = x.shape[3]
     z = af.crop(x, 0, 0, 0, w - p) * 0.0
     return af.concat([z, x, z], axis=3)
@@ -71,15 +67,9 @@ def _attention(x, sd, p: str, kind: str):
 
 
 def build(sd, attn: str = "mha", build_dir: str | None = None):
-    """The whisper-tiny encoder as one ANEForge graph; returns the compiled model.
-
-    attn="mha" uses the decomposed multi-head attention. attn="sdpa" routes through
-    af.sdpa, which at seq=1500 also decomposes: the native fused-attention layer is
-    reliable only when the smaller attention axis is < 512, so it does not apply here.
-    Pass `build_dir` to persist model.mil + weights.bin + the compiled bundle there.
-    """
-    mel = af.input((1, MELS, 1, FRAMES))              # log-mel, created first -> fed first
-    pos = af.input((CTX, D))                          # positional embedding, fed as a constant
+    """Whisper-tiny encoder as one ANEForge graph; attn 'mha'/'sdpa' (both decompose at seq=1500), build_dir persists the bundle."""
+    mel = af.input((1, MELS, 1, FRAMES))              # log-mel, fed first
+    pos = af.input((CTX, D))                          # positional embedding
     h = _pad_time(mel, 1)
     h = af.conv(h, sd["conv1.weight"].reshape(D, MELS, 1, 3), stride=1, pad=0, bias=sd["conv1.bias"]).gelu()
     h = _pad_time(h, 1)
@@ -101,12 +91,7 @@ def _conv1x1(x, W, b):
 
 
 def _attention_cf(xn, sd, p, scale, q_tiles):
-    """Channels-first multi-head attention with query-tiling (kernel fission). Each
-    head's query positions are split into `q_tiles` chunks, so the score matrix is
-    materialized as [S, S/q_tiles] tiles instead of the full [S, S]. This is exact
-    (each query tile attends to all keys), and the smaller score tiles pipeline far
-    better on the ANE - roughly 2x on attention at the seq=1500 of every whisper size.
-    The sweet spot is ~500 query positions per tile (q_tiles=3 for S=1500)."""
+    """Channels-first MHA with query-tiling (kernel fission): split queries into q_tiles so scores are [S, S/q_tiles] tiles; exact and ~2x faster on ANE (~500 queries/tile is the sweet spot)."""
     q = _conv1x1(xn, sd[p + "self_attn.q_proj.weight"], sd[p + "self_attn.q_proj.bias"])
     k = _conv1x1(xn, sd[p + "self_attn.k_proj.weight"], None)
     v = _conv1x1(xn, sd[p + "self_attn.v_proj.weight"], sd[p + "self_attn.v_proj.bias"])
@@ -123,18 +108,7 @@ def _attention_cf(xn, sd, p, scale, q_tiles):
 
 
 def build_cf(sd, build_dir: str | None = None, q_tiles: int = 3, compress: str | None = None):
-    """The whisper-tiny encoder in the ANE-native channels-first layout: the whole
-    transformer stack stays [1, d_model, 1, S], projections are 1x1 convolutions, the
-    norm is `channel_layer_norm`, and attention is query-tiled einsum, so there are no
-    [seq, d] transposes and no full [S, S] score matrix. Faster than CoreML's own ANE
-    encoder (~2x) and the Metal GPU across whisper sizes, at the same fidelity.
-
-    q_tiles splits the attention query axis (kernel fission; 3 is the sweet spot for
-    S=1500, used when it divides S evenly). compress="int4"/"int8" streams quantized
-    weights through the ANE dequant path - a latency win for the larger models, whose
-    MLP is weight-bandwidth-bound. Inputs are (mel [1, 80, 1, 3000], positional
-    embedding [1, D, 1, S]); feed with `run_cf`. Output is [1500, 384].
-    """
+    """Whisper-tiny encoder in ANE-native channels-first layout (stack stays [1,d,1,S], 1x1-conv projections, channel_layer_norm, query-tiled attention); q_tiles=3 sweet spot for S=1500, compress int4/int8 streams quantized weights. Feed with run_cf; output [1500, 384]."""
     qt = q_tiles if q_tiles > 1 and CTX % q_tiles == 0 else 1
     mel = af.input((1, MELS, 1, FRAMES))
     pos = af.input((1, D, 1, CTX))                    # positional embedding, channels-first

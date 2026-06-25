@@ -49,7 +49,7 @@ class Cfg:
                 "s_kv": self.s_kv}
 
     def flops_per_token(self, B):
-        """2*MACs for the per-token forward of B streams (proj + attention + FFN + vocab GEMVs)."""
+        """2*MACs for the per-token forward of B streams (proj + attn + FFN + vocab GEMVs)."""
         d, L, H, dh, dff, V, s = self.d, self.L, self.H, self.dh, self.d_ff, self.vocab, self.s_kv
         per_layer = (4 * d * d) + (2 * H * s * dh) + (3 * d * dff)
         total_macs = L * per_layer + d * V
@@ -128,9 +128,7 @@ def ref_decode(cfg: Cfg, W, x, dt=np.float64):
 
 # ANE graph (aneforge) - full per-token stack, batch B
 def build_ane(cfg: Cfg, W, B, int8=False):
-    """Build the B-stream per-token decoder forward as one aneforge graph. int8=True
-    streams per-channel int8 weights. KV cache is supplied as graph inputs; returns
-    (Model, list-of-cache-arrays) so the runner feeds x + caches."""
+    """B-stream per-token decoder forward as one aneforge graph; int8=True streams per-channel int8 weights, KV cache fed as graph inputs. Returns (Model, cache-arrays)."""
     f16 = np.float16
     H, dh, s, d = cfg.H, cfg.dh, cfg.s_kv, cfg.d
     x = af.input((B, d))

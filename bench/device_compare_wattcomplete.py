@@ -38,11 +38,11 @@ if HAVE_MLX:
 _RAIL = {"ane": re.compile(r"ANE Power:\s*([\d.]+)\s*mW"),
          "cpu": re.compile(r"CPU Power:\s*([\d.]+)\s*mW"),
          "gpu": re.compile(r"GPU Power:\s*([\d.]+)\s*mW")}
-# OS-computed package total, one per sample (authoritative; avoids the GPU-rail double-print)
+# OS-computed package total, one per sample (avoids the GPU-rail double-print)
 _PKG = re.compile(r"Combined Power \(CPU \+ GPU \+ ANE\):\s*([\d.]+)\s*mW")
 
 WINDOW = 6.0          # sustained-loop seconds (overridden by --quick)
-# coarse 500ms interval so each sample averages many iters -> stable mean (avoids duty-cycle CV)
+# coarse 500ms interval so each sample averages many iters -> stable mean
 PM_INTERVAL_MS = 500
 
 # accumulate every workload's rows + per-device energy here
@@ -53,7 +53,7 @@ IDLE_PKG = 0.0                # total-package idle mW
 
 # power harness
 def _parse_pm_per_sample(txt: str) -> tuple[dict[str, list[float]], list[float]]:
-    """Per-rail lists of per-sample mW + the per-sample OS-combined package total."""
+    """Per-rail per-sample mW lists + the per-sample OS-combined package total."""
     per = {}
     for rail, rx in _RAIL.items():
         vals = [float(m) for m in rx.findall(txt)]
@@ -86,13 +86,11 @@ def sample_idle(seconds: float) -> None:
 
 
 def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None:
-    """Sustained-loop powermetrics around run_once(): idle-subtracted ACTIVE per rail +
-       total-package, median + CV + min/p90, perf-counter iter time, low-confidence flags."""
+    """Sustained-loop powermetrics around run_once(): idle-subtracted ACTIVE per rail + package, median/CV/min/p90, iter time, low-confidence flags."""
     if not HAVE_SUDO:
         return None
     for _ in range(5):              # warmup before the sampling window
         run_once()
-    # keep the workload loop running until the sampler exits, so every sample is under load
     samples = max(8, int(window / (PM_INTERVAL_MS / 1000.0)))
     log = Path(f"/tmp/pm_wattc_{tag}.log")
     pm = subprocess.Popen(
@@ -122,7 +120,7 @@ def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None
         out[f"{rail}_active_mW"] = active
         rail_active[rail] = active
 
-    # per-sample OS-combined package total; CV on raw loaded samples, idle subtracted once
+    # per-sample OS-combined package total; CV on raw loaded, idle subtracted once
     if pkg:
         arr = np.array(pkg)
         med = float(np.median(arr))
@@ -462,9 +460,7 @@ def wl_stencil(H, W, steps):
 
 
 def wl_jacobi(n, iters):
-    """Fixed-iteration Jacobi solve of a diagonally-dominant SPD system, as ONE
-    fused graph: x <- Dinv * (b - R x), R = A - diag(A). The fair iterative-solver
-    comparison (steady-state silicon, not a per-call recompile)."""
+    """Fixed-iteration Jacobi solve (diag-dominant SPD) as one fused graph: x <- Dinv*(b - R x), R = A - diag(A)."""
     wl = f"Jacobi solve (n={n}, iters={iters})"
     print(f"\n=== {wl} ===", flush=True)
     rng = np.random.default_rng(8)

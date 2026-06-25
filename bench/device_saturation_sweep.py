@@ -81,14 +81,14 @@ def sweep_gemm(ns, do_power):
         rng = np.random.default_rng(0)
         x32 = (rng.standard_normal((N, N)).astype(np.float32) / np.float32(np.sqrt(N)))
         W32 = (rng.standard_normal((N, N)).astype(np.float32) / np.float32(np.sqrt(N)))  # [out,in]
-        # fp64 reference, subsampling rows for huge N (relerr is a norm)
+        # fp64 reference, subsampling rows for huge N
         rblk = min(N, 256)
         ref_blk = x32[:rblk].astype(np.float64) @ W32.astype(np.float64).T
         row = {"N": N, "gflop": flops / 1e9, "devices": {}}
         print(f"\n N={N}  ({flops/1e9:.1f} GFLOP)")
 
         # --- CPU (fp32, numpy/Accelerate-AMX) ---
-        # feed contiguous operands; a transposed view drops Accelerate off its fast GEMM path
+        # contiguous operands; a transposed view drops Accelerate off its fast GEMM path
         Wt = np.ascontiguousarray(W32.T)
         lat = _min_lat(lambda: x32 @ Wt)
         out = x32 @ Wt
@@ -171,7 +171,7 @@ def sweep_conv(configs, do_power):
         x32 = rng.standard_normal((B, C, H, W)).astype(np.float32)
         w32 = (rng.standard_normal((C, C, k, k)).astype(np.float32)
                * np.sqrt(2.0 / (C * k * k)))
-        # fp32 numpy reference on one batch element (relerr is a norm)
+        # fp32 numpy reference on one batch element
         ref0 = dc._np_conv2d(x32[:1].astype(np.float32), w32, 1).astype(np.float64)
         row = {"C": C, "B": B, "HxW": f"{H}x{W}", "gflop": flops / 1e9, "devices": {}}
         print(f"\n C={C} B={B}  ({flops/1e9:.1f} GFLOP)")

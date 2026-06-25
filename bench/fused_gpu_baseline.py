@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fused-GPU (MLX) baseline: default-MLX vs mx.compile-fused-MLX vs ANE, to test whether fusing the GPU flips any device-map verdict. Run: PYTHONPATH=. python3 bench/fused_gpu_baseline.py"""
+"""Fused-GPU baseline: default vs mx.compile-fused MLX vs ANE; does fusing flip the device map? Run: PYTHONPATH=. python3 bench/fused_gpu_baseline.py"""
 from __future__ import annotations
 
 import argparse
@@ -35,7 +35,7 @@ RESULTS: dict[str, dict] = {}
 
 
 def _mlx_min_latency(build, reps=30, warmup=10):
-    """min wall time forcing eval each rep; returns (lat_s, np_out)."""
+    """Min wall time forcing eval each rep; returns (lat_s, np_out)."""
     def fn():
         mx.eval(build())
     lat = min_latency(fn, reps=reps, warmup=warmup)
@@ -96,11 +96,9 @@ def wl_layer_norm(shape=(197, 768), window=6.0):
             mu = mx.mean(xg, axis=-1, keepdims=True)
             var = mx.mean((xg - mu) ** 2, axis=-1, keepdims=True)
             return (xg - mu) * mx.rsqrt(var + 1e-5) * gg + bb
-        # default (unfused)
         lat, out = _mlx_min_latency(lambda: ln(xg, gg, bb))
         e = wc.measure_energy(lambda: mx.eval(ln(xg, gg, bb)), tag="ln_gpu_default", window=window) if HAVE_SUDO else None
         _record(wl, "GPU default", lat_s=lat, out=out, ref=ref, items=items, energy=e)
-        # fused via mx.compile
         cln = mx.compile(ln)
         lat, out = _mlx_min_latency(lambda: cln(xg, gg, bb))
         e = wc.measure_energy(lambda: mx.eval(cln(xg, gg, bb)), tag="ln_gpu_fused", window=window) if HAVE_SUDO else None
@@ -292,7 +290,7 @@ def wl_stencil(H=256, W=256, steps=32, window=6.0):
 
 
 def _verdict():
-    """Compare GPU default vs fused vs ANE; flag any flipped device-map verdict."""
+    """Flag any device-map verdict that GPU fusing flips."""
     print("\n" + "=" * 90)
     print(" VERDICT: did fusing the GPU change the device map?")
     print("=" * 90)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GEMV weight-stream bandwidth sweep: M=1 decode GEMV across K=N to test whether ANE effective bandwidth plateaus near the paper's ~112 GB/s. Run: PYTHONPATH=. python3 bench/gemv_bandwidth_sweep.py"""
+"""GEMV weight-stream bandwidth sweep (M=1 decode across K=N): does ANE effective BW plateau near ~112 GB/s? Run: PYTHONPATH=. python3 bench/gemv_bandwidth_sweep.py"""
 from __future__ import annotations
 
 import argparse
@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 
-import device_compare as dc            # noqa: E402  min_latency, relerr, runners
-import device_compare_wattcomplete as wc  # noqa: E402  measure_energy, sample_idle, IDLE
+import device_compare as dc            # noqa: E402
+import device_compare_wattcomplete as wc  # noqa: E402
 
 HAVE_ANE, HAVE_MLX, HAVE_SUDO = dc.HAVE_ANE, dc.HAVE_MLX, dc.HAVE_SUDO
 min_latency = dc.min_latency
@@ -32,7 +32,7 @@ if HAVE_MLX:
 
 
 def eff_bytes(K, N):
-    """Total bytes streamed for one M=1 GEMV in fp16: weight + input + output."""
+    """Bytes streamed for one M=1 GEMV in fp16: weight + input + output."""
     return K * N * 2 + K * 2 + N * 2
 
 
@@ -45,7 +45,7 @@ def gflops(K, N, lat_s):
 
 
 def sweep_gemv(K, N, *, reps, warmup, measure_pw):
-    """One GEMV point (M=1): x[1,K] @ W -> [1,N]. Returns a dict of per-device results."""
+    """One GEMV point (M=1): x[1,K] @ W -> [1,N]; per-device results dict."""
     tag = f"K{K}_N{N}"
     label = f"GEMV M=1, K={K}, N={N}"
     print(f"\n=== {label} === (weight {K*N*2/1e6:.1f} MB fp16)", flush=True)
@@ -57,7 +57,7 @@ def sweep_gemv(K, N, *, reps, warmup, measure_pw):
     res = {"K": K, "N": N, "weight_MB": K * N * 2 / 1e6,
            "eff_bytes": eff_bytes(K, N), "devices": {}}
 
-    # ANE (aneforge fused single-program, fp16)
+    # ANE (fp16)
     if HAVE_ANE:
         try:
             net = af.compile(af.input((1, K)).linear(W32.astype(np.float16)))
@@ -131,7 +131,7 @@ def sweep_gemv(K, N, *, reps, warmup, measure_pw):
             out_h["o"] = x32 @ Wt
         lat = min_latency(run, reps=max(10, reps // 2), warmup=warmup)
         out = out_h["o"]
-        # CPU fp32 moves 4 B/elem; report its own effective BW
+        # CPU fp32 moves 4 B/elem
         cpu_bytes = K * N * 4 + K * 4 + N * 4
         d = {"dtype": "fp32", "lat_ms": lat * 1e3,
              "eff_GBps": cpu_bytes / lat / 1e9, "GFLOPs": gflops(K, N, lat),
@@ -165,8 +165,7 @@ def main() -> int:
               f"GPU {wc.IDLE.get('gpu',0):.0f} / CPU {wc.IDLE.get('cpu',0):.0f})")
 
     square = [512, 1024, 2048, 4096] if args.quick else [512, 1024, 2048, 4096, 6144, 8192]
-    # power at every square point so the weight-stream tier carries a GB/s/W column
-    pw_at = set(square)
+    pw_at = set(square)  # power at every square point -> GB/s/W column
 
     sweep = []
     for KN in square:

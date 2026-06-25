@@ -18,10 +18,7 @@ import encoder as E  # noqa: E402
 
 
 def structured_mel(fe, seconds: float = 30.0) -> np.ndarray:
-    """A deterministic structured signal (formant-like tones, amplitude modulation,
-    noise) through Whisper's feature extractor: a realistic log-mel range without an
-    audio file. Real speech gives a comparable distribution (the extractor normalises
-    the same way), so the fidelity number is representative."""
+    """Deterministic structured signal (formant tones, AM, noise) through Whisper's feature extractor: a realistic log-mel range without an audio file."""
     sr = fe.sampling_rate
     t = np.arange(int(sr * seconds)) / sr
     audio = np.zeros_like(t)

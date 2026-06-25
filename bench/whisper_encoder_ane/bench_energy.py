@@ -23,8 +23,7 @@ RAILS = ("CPU", "GPU", "ANE")
 
 
 def sample(workload, seconds):
-    """Spin `workload` in a loop for ~`seconds` while powermetrics samples the rails.
-    Returns (throughput inf/s, {rail: mean mW})."""
+    """Loop `workload` ~`seconds` while powermetrics samples; returns (inf/s, {rail: mean mW})."""
     n = int(seconds * 1000 / 500) + 2
     proc = subprocess.Popen(
         ["sudo", "-n", "powermetrics", "--samplers", "cpu_power,gpu_power,ane_power",
@@ -61,7 +60,7 @@ def main():
     enc, sd = E.real_encoder() if args.real else E.make_encoder()
     print(f"weights: {'trained whisper-tiny' if args.real else 'random init'}")
     mel = E.mel_input()
-    net = E.build_cf(sd)                              # the channels-first (fast) encoder
+    net = E.build_cf(sd)                              # channels-first (fast) encoder
     mel4 = mel[:, :, None, :].astype("float16")
     pos = sd["embed_positions.weight"].T.reshape(1, E.D, 1, E.CTX).astype("float16")
     ane_call = lambda: net(mel4, pos)
