@@ -1,22 +1,6 @@
-"""Native ANE local response normalization via a hand-authored ANECIR netplist.
-
-`LocalResponseNormalization` (classic vision cross-channel LRN) running natively
-on the ANE.
-
-Computes (Channel mode):
-    y[c] = x[c] / (K + alpha_eff * sum_{j in window} x[j]^2) ^ Beta
-
-Non-obvious conventions:
-    1. `Alpha` is a fp16 *bit pattern* (ZinParseFP16Token), NOT a float.
-       A float real int-truncates to ~0 -> identity output.
-    2. ANE divides the parsed alpha by KernelChannel internally, so the
-       effective alpha is  fp16(Alpha_bits) / KernelChannel.  For a desired
-       alpha, pass  Alpha = fp16_bits(desired_alpha * KernelChannel).
-    3. Only the first KernelChannel output channels are normalized; the rest
-       are identity-copied.  Use KernelChannel = C for full-tensor LRN; C must
-       exceed KernelChannel-as-window only spatially - empirically C ==
-       KernelChannel gives full coverage (C=5/KC=5).
-"""
+"""Native ANE `LocalResponseNormalization` (cross-channel LRN) on Path A.
+`Params.Alpha` is a fp16 bit pattern (not a float) and is divided by
+KernelChannel internally. See docs/developer/bridges.md for the conventions."""
 
 from __future__ import annotations
 

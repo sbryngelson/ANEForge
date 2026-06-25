@@ -1,18 +1,7 @@
-"""Native ANE spatial-rearrange layers via hand-authored ANECIR netplists.
-
-Six fp16 spatial-rearrange layers running natively on the ANE:
-
-    PixelShuffle    [N, C*fx*fy, H, W]  -> [N, C, H*fy, W*fx]   (depth->space)
-    PixelUnshuffle  [N, C, H*fy, W*fx]  -> [N, C*fx*fy, H, W]   (space->depth)
-    ChannelToSpace  depth->space, SAME shapes as PixelShuffle
-    SpaceToChannel  space->depth, SAME shapes as PixelUnshuffle
-    SpaceToBatch    [N, C, H, W]        -> [N*fx*fy, C, H/fy, W/fx]
-    BatchToSpace    [N*fx*fy, C, H, W]  -> [N, C, H*fy, W*fx]   (inverse of S2B)
-
-PixelShuffle / PixelUnshuffle use the PyTorch (channel-major) convention;
-ChannelToSpace / SpaceToChannel use the TensorFlow space_to_depth /
-depth_to_space (block-major) convention.  They coincide only when C==1.
-"""
+"""Native ANE spatial-rearrange layers (PixelShuffle/Unshuffle, Channel<->Space,
+Space<->Batch) on Path A. Pixel* use PyTorch (channel-major); Channel<->Space use
+TensorFlow (block-major) convention; they coincide only at C==1.
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -272,9 +261,7 @@ def ref_batch_to_space(x: np.ndarray, bh: int, bw: int) -> np.ndarray:
 if __name__ == "__main__":
   results = []
 
-  # Integer-valued fp16 inputs (exactly representable) so any mismatch is a true
-  # permutation error, not fp16 rounding noise.  C>1 exercises the channel-ordering
-  # convention.
+  # Integer fp16 inputs (exact) so any mismatch is a real permutation error.
   def iota(shape):
     return np.arange(int(np.prod(shape)), dtype=np.float16).reshape(shape)
 

@@ -1,19 +1,6 @@
-"""Native ANE `FurthestPointSampling` (FPS) via a hand-authored ANECIR netplist.
-
-FPS is point-cloud downsampling: greedily pick `CentroidCount` points that are
-maximally far apart (seeded at index 0).  Entry point `fps_fused(points,
-centroid_count)`; `points` is `(N, 3)`, returns `(k, 3)` centroids.  The ANE uses
-L2 distance on this arch regardless of the `DistanceMetric` param.
-
-Schema (accepted unit dictionary)::
-
-    {"Type": "FurthestPointSampling",
-     "Bottom": ["points"],
-     "InputType": ["Float16"],
-     "OutputChannels": 3,
-     "OutputType": "Float16",
-     "Params": {"CentroidCount": k, "DistanceMetric": "L1" | "L2"}}
-"""
+"""Native ANE `FurthestPointSampling` (point-cloud downsampling) on Path A.
+The ANE uses L2 on this arch regardless of `DistanceMetric`.
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -53,11 +40,7 @@ def fps_fused(points: np.ndarray, centroid_count: int, *, metric: str = "L1") ->
 
 
 def numpy_reference(points: np.ndarray, centroid_count: int, metric: str = "L2") -> np.ndarray:
-  """Greedy FPS, seeded at index 0.
-
-    The ANE always uses L2 on this arch (see module docstring); the default
-    here is therefore L2, which matches the hardware exactly.
-    """
+  """Greedy FPS, seeded at index 0. Default L2 matches the hardware exactly."""
   P = np.asarray(points, dtype=np.float32)
   N = P.shape[0]
   sel = [0]

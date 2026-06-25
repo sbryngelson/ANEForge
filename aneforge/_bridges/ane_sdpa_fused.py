@@ -1,10 +1,6 @@
-"""Native ANE fused-attention via the 8-byte ANECSDPALayerDesc.
-
-:func:`sdpa_fused` runs SDPA end-to-end through a hand-authored ANECIR netplist
-with `Type=SDPA`, reaching the native fused-attention hardware layer instead of
-the HWX-level decomposition Apple's compiler emits.  A drop-in fused-attention
-path for `(B, heads, seq, d_head)`-layout Q/K/V at fp16.
-"""
+"""Native ANE fused-attention (`Type=SDPA`) on Path A, reaching the hardware
+fused-attention layer instead of Apple's HWX decomposition. Drop-in for
+`(B, heads, seq, d_head)` fp16 Q/K/V. See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -75,9 +71,7 @@ def _write_netplist(
 def _expected_shape(Q: np.ndarray, K: np.ndarray, V: np.ndarray) -> tuple[int, ...]:
   if Q.ndim != 4 or K.ndim != 4 or V.ndim != 4:
     raise ValueError("Q, K, V must each have shape [B, H, S, D]")
-  # K and V must share shape (same cached sequence); Q's SEQUENCE may differ from K/V's
-  # (the native SDPA validator requires only "Q,K same embedding (W)" and "K,V same seq (C)")
-  # - the KV-cache DECODE shape: seq_q query tokens attend to seq_kv cached K/V.
+  # K/V share shape; Q's seq may differ (KV-cache decode). See bridges.md.
   if K.shape != V.shape:
     raise ValueError(f"K and V must share shape (same cached sequence); got {K.shape}, {V.shape}")
   if Q.shape[0] != 1 or K.shape[0] != 1:
@@ -114,30 +108,12 @@ def sdpa_fused(
   subtract_max: bool = True,
   return_details: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
-  """Native ANE fused-attention via the 8-byte ANECSDPALayerDesc.
+  """Native ANE fused-attention over `[1, heads, seq, d_head]` fp16 Q/K/V;
+    returns Y in the same layout (or `(Y, info)` with timings if
+    `return_details`). `scale` defaults to `1/sqrt(d_head)`.
 
-    Compiles a netplist with SDPA + the constant-Scale bit set, dispatches via
-    _ANEInMemoryModel.  Bypasses Apple's MIL -> decomposition pipeline.
-
-    Args:
-        Q, K, V: fp16 arrays of shape `[1, heads, seq, d_head]`.
-        scale:   the softmax scale.  Defaults to `1 / sqrt(d_head)`.
-        repeats: number of evaluations to time (the function returns the
-                 output from the last one).
-        warmup:  number of warmup evals before timing.
-        constant_flag_spelling: which spelling of the constant-Scale
-                 flag the netplist should emit.  The default
-                 `"Constants_array"` is the only spelling that has
-                 been observed to compile + load on this host
-                 (other spellings raise `ANECCompile() FAILED`).
-        return_details: if True, also return a dict with timings and
-                 compile/load milliseconds.
-
-    Returns:
-        Y of shape `[1, heads, seq, d_head]` as fp16.
-        If `return_details=True`, returns `(Y, info)` where `info`
-        has keys `compile_ms`, `load_ms`, `eval_p10_us`,
-        `eval_p50_us`, `eval_p90_us`.
+    `constant_flag_spelling` default `"Constants_array"` is the only spelling
+    observed to compile + load on this host (others raise `ANECCompile() FAILED`).
     """
   Q = np.asarray(Q, dtype=np.float16)
   K = np.asarray(K, dtype=np.float16)
@@ -146,12 +122,8 @@ def sdpa_fused(
   Sq, Skv = Q.shape[2], K.shape[2]              # query seq vs cached K/V seq (decode: Sq < Skv)
   if scale is None: scale = 1.0 / math.sqrt(D)
 
-  # ANE's SDPA layer treats the C tensor dim as the sequence axis (the
-  # validator's "K and V must have same sequence length i.e C dim" string is
-  # literally true).  PyTorch / MIL convention puts heads in C and seq in H.
-  # Pre-transpose to swap them so the netplist sees seq-in-C, heads-in-H (the
-  # ANE-native layout).  Post-transpose to return Y in the caller's
-  # [B, heads, seq, d_head] order.
+  # ANE-native layout is seq-in-C, heads-in-H; PyTorch/MIL is the opposite, so
+  # pre-transpose here and post-transpose Y back. See bridges.md.
   Q_ane = np.ascontiguousarray(Q.transpose(0, 2, 1, 3))  # (B, S, H, D)
   K_ane = np.ascontiguousarray(K.transpose(0, 2, 1, 3))
   V_ane = np.ascontiguousarray(V.transpose(0, 2, 1, 3))
@@ -160,8 +132,7 @@ def sdpa_fused(
 
   with tempfile.TemporaryDirectory(prefix="ane_sdpa_") as workdir_str:
     workdir = Path(workdir_str)
-    # Note: `channels` is the ANE C dim (sequence after transpose),
-    # `sequence` here is the ANE H dim (heads after transpose).
+    # `channels`=ANE C dim (seq after transpose); `sequence`=ANE H dim (heads).
     netplist, weights = _write_netplist(
       workdir,
       channels=Skv,
@@ -179,11 +150,8 @@ def sdpa_fused(
               ("value", workdir / "in_value.f16")]
 
     if mask is not None or Sq != Skv:
-      # Edit the netplist for (a) the KV-cache DECODE shape - query seq Sq differs from
-      # cached K/V seq Skv, so query+output carry Sq channels while K/V carry Skv; and/or
-      # (b) the OPTIONAL additive MASK bottom ([C=S_q, H=1, W=S_kv], the validator's layout:
-      # "Mask Width axis must match K and V Channel axis or broadcastable"). Validated on M1:
-      # decode (Sq<Skv) cos ~1.0; causal mask cos 1.0 vs softmax(QKt*scale+mask)V.
+      # Patch the netplist for (a) decode shape (query carries Sq, K/V carry Skv)
+      # and/or (b) an additive mask bottom [C=Sq, H=1, W=Skv]. See bridges.md.
       pl = plistlib.loads(Path(netplist).read_bytes())
       il = pl["ProcedureList"][0]["InputList"]
       if Sq != Skv:
@@ -220,8 +188,7 @@ def sdpa_fused(
       repeats=repeats, warmup=warmup,
     )
 
-    # ANE output is (B, S, H, D) layout (its native C=seq, H=heads, W=d_head).
-    # Transpose back to the caller's (B, heads, seq, d_head) convention.
+    # ANE output is (B, S, H, D); transpose back to (B, heads, seq, d_head).
     Y_ane = np.frombuffer(
       (workdir / "out_y.f16").read_bytes(),
       dtype=np.float16,

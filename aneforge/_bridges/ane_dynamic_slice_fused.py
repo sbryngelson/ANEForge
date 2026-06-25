@@ -1,9 +1,5 @@
 """Native ANE `DynamicSlice` (runtime/parametric slice) on Path A.
-
-:func:`dynamic_slice_fused` extracts a window `x[start : start + slice_size]`
-along a tensor axis on the ANE, with `start` bound at runtime through a netplist
-constant rather than baked into the op.
-"""
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -18,13 +14,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def dynamic_slice_fused(x: np.ndarray, start: int, *, slice_size: int = 2) -> np.ndarray:
-  """Slice `x` (a length-W fp16 vector) to `x[start:start+slice_size]` on the ANE.
-
-    Uses the `dynamic_slice_const_u16` generator and overwrites the index constant
-    (weights.1) with `start` so the window is runtime-selectable.  The generator's
-    accepted variant fixes `SliceSize=2` and W=4; this function validates
-    `slice_size`/shape accordingly.
-    """
+  """Slice `x` (length-W fp16) to `x[start:start+slice_size]` on the ANE; `start`
+    is written into the index constant (weights.1) so the window is runtime-
+    selectable. Accepted variant fixes W=4, SliceSize=2."""
   from . import _netplist as g
 
   x = np.asarray(x, dtype=np.float16).reshape(-1)

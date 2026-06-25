@@ -1,23 +1,6 @@
-"""Native ANE rank-family layers via hand-authored ANECIR netplists.
-
-Four hardware-native fp16 rank layers - `Sort`, `TopK`, `ArgMinMax` and
-`GlobalArgMinMax` - running on the ANE via Path A.
-
-Per-layer `Params` schemas:
-
-  Sort             : Direction (Ascending|Descending), SortDimension,
-                     VectorDimension, SortIndices (key lane(s)),
-                     Indices (bool: output argsort instead of values).
-  TopK             : Type (Max|Min), K (int), SortDimension,
-                     VectorDimension, SortIndices, Indices (bool).
-  ArgMinMax        : Mode (SpatialArgMax|ChannelArgMax|SpatialArgMin|
-                     ChannelArgMin), KernelWidth, KernelHeight, Pad*.
-  GlobalArgMinMax  : Type (Max|Min), Dimension.
-
-Integer index outputs come back fp16-encoded in the ordinary Float16 output
-tensor; for the small index ranges these layers produce (< 2048), fp16 represents
-every integer exactly, so the indices are exact.
-"""
+"""Native ANE rank-family layers (Sort / TopK / ArgMinMax / GlobalArgMinMax)
+on Path A. Integer index outputs are fp16-encoded but exact (ranges < 2048).
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -54,7 +37,7 @@ def _ensure_invoker() -> Path:
   return _INVOKER_BIN
 
 
-# --- minimal netplist scaffolding (single op, single input x, output y) ----
+# Minimal netplist scaffolding: single op, single input x, output y.
 
 def _input_entry(unit, sym, *, width, height=1, channels=1):
   return {
@@ -101,8 +84,7 @@ def _build_plist(layer_type: str, params: dict, *, width, height, channels):
 def _run(layer_type: str, params: dict, x: np.ndarray, *,
          channels: int, width: int, height: int = 1,
          return_details: bool = False):
-  """Author netplist, run x (fp16, [channels, height, width]), return the output
-    decoded with the runtime-reported strides."""
+  """Run x ([C,H,W] fp16), decoding output with the runtime-reported strides."""
   invoker = _ensure_invoker()
   x = np.asarray(x, dtype=np.float16)
   with tempfile.TemporaryDirectory(prefix=f"ane_{layer_type.lower()}_") as ws:
@@ -139,16 +121,13 @@ def _run(layer_type: str, params: dict, x: np.ndarray, *,
     return out
 
 
-# --------------------------------------------------------------------------
-# Public per-layer entry points.  x is fp16 [channels, width] (height=1) for
-# Sort/TopK/GlobalArgMinMax, or [channels, height, width] for ArgMinMax.
-# --------------------------------------------------------------------------
+# Public per-layer entry points. x is fp16 [C, W] for Sort/TopK/GlobalArgMinMax,
+# or [C, H, W] for ArgMinMax.
 
 def sort(x: np.ndarray, *, descending: bool = False, key_lane: int = 0,
          return_indices: bool = False, **kw):
-  """Sort the Width axis of x ([channels, width]), permuting all channels
-    by the ordering of channel `key_lane` (SortIndices).  This is the ANE
-    Sort semantics: SortDimension=Width, VectorDimension=Channel."""
+  """Sort x ([C, W]) along Width, permuting all channels by channel `key_lane`
+    (SortDimension=Width, VectorDimension=Channel)."""
   x = np.atleast_2d(np.asarray(x, np.float16))
   ch, wd = x.shape
   params = {
@@ -162,8 +141,8 @@ def sort(x: np.ndarray, *, descending: bool = False, key_lane: int = 0,
 
 def topk(x: np.ndarray, k: int, *, largest: bool = True, key_lane: int = 0,
          return_indices: bool = False, **kw):
-  """Top-k along Width of x ([channels, width]) keyed by channel
-    `key_lane`.  NOTE: k in {3,4} is ARCH-GATED (ANECCompile fails)."""
+  """Top-k along Width of x ([C, W]) keyed by channel `key_lane`.
+    NOTE: k in {3,4} is ARCH-GATED (ANECCompile fails)."""
   x = np.atleast_2d(np.asarray(x, np.float16))
   ch, wd = x.shape
   params = {
@@ -176,11 +155,9 @@ def topk(x: np.ndarray, k: int, *, largest: bool = True, key_lane: int = 0,
 
 
 def argminmax(x: np.ndarray, mode: str, **kw):
-  """ArgMinMax over x ([channels, height, width]).
-
-    mode in {SpatialArgMax, SpatialArgMin, ChannelArgMax, ChannelArgMin}.
-    Spatial* -> one flattened-(H*W) index per channel.
-    Channel* -> one channel index per (h,w) spatial position."""
+  """ArgMinMax over x ([C, H, W]). mode in {Spatial,Channel}{ArgMax,ArgMin}:
+    Spatial* -> one flattened-(H*W) index per channel; Channel* -> one channel
+    index per (h, w)."""
   x = np.asarray(x, np.float16)
   if x.ndim == 2: x = x[:, None, :]   # [C, 1, W]
   ch, hh, wd = x.shape
@@ -191,8 +168,7 @@ def argminmax(x: np.ndarray, mode: str, **kw):
 
 def global_argminmax(x: np.ndarray, *, dimension: str = "Width",
                      largest: bool = True, **kw):
-  """GlobalArgMinMax: argmax/argmin index along `dimension`
-    (Width|Height|Channel) of x ([channels, width])."""
+  """GlobalArgMinMax: arg index along `dimension` (Width|Height|Channel)."""
   x = np.atleast_2d(np.asarray(x, np.float16))
   ch, wd = x.shape
   params = {"Type": "Max" if largest else "Min", "Dimension": dimension}

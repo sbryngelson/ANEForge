@@ -1,10 +1,5 @@
-"""Native ANE scaled-elementwise op via a hand-authored ANECIR netplist.
-
-`ScaledElementWise` (ANECIR Type) fuses a binary elementwise op with a
-scalar scale factor:   y = scale * (x OP z).  `Params.Type` selects the
-elementwise op (Add / Mult / Sub / ...) and `Params.Scale` is a fp16 bit
-pattern (use `fp16_bits`).
-"""
+"""Native ANE `ScaledElementWise` on Path A: y = scale * (x OP z). `Params.Type`
+selects the op; `Params.Scale` is a fp16 bit pattern. See docs/developer/bridges.md."""
 
 from __future__ import annotations
 

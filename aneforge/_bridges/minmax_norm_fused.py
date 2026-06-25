@@ -1,17 +1,6 @@
-"""Native ANE min-max normalization via a hand-authored ANECIR netplist.
-
-`MinMaxNormalization` running natively on the ANE via Path A.
-
-Computes:   y = (x - min) / (max - min + eps)   over `Params.Dimension`.
-
-Supported reduction axes:
-    Dimension="Width"   -> per-row min/max over W
-    Dimension="Height"  -> per-column min/max over H
-    Dimension="Channel" -> ARCH-GATED (ANECCompile fails on this host).
-
-Epsilon convention: `Params.Epsilon` is a fp16 bit pattern, NOT a float
-real.  Pass `fp16_bits(desired_eps)`.
-"""
+"""Native ANE `MinMaxNormalization` on Path A: y = (x-min)/(max-min+eps) over
+`Params.Dimension` (Width|Height; Channel is ARCH-GATED). `Params.Epsilon` is a
+fp16 bit pattern. See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
