@@ -29,12 +29,12 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 
 | Category | ONNX ops |
 | --- | --- |
-| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu) |
-| Elementwise | `Add`, `Sub`, `Mul`, `Div` |
+| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf` |
+| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` |
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool` |
 | Linear | `Gemm`, `MatMul` |
-| Normalization | `BatchNormalization` |
-| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat` |
+| Normalization | `BatchNormalization`, `InstanceNormalization` |
+| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat`, `SpaceToDepth` |
 | Misc | `Softmax`, `Constant`, `Identity` |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
@@ -63,5 +63,10 @@ mis-lower:
 - **Conv:** explicit `pads` only - `auto_pad` (`SAME_UPPER`/`SAME_LOWER`/`VALID`) raises.
 - **Pooling:** `ceil_mode=0` (floor) only; `AveragePool` rejects `count_include_pad=1`
   and `MaxPool` rejects `dilations != 1`.
-- **Elementwise.** `Add`/`Sub`/`Mul`/`Div` are tensor-tensor only; a constant operand
-  raises (exporters usually fold these into the adjacent `Conv`/`BatchNormalization`).
+- **Elementwise.** `Add`/`Sub`/`Mul`/`Div`/`Pow` are tensor-tensor only; a constant
+  operand raises (exporters usually fold these into the adjacent
+  `Conv`/`BatchNormalization`). A constant `Pow` exponent (`Pow(x, 2)`) raises.
+- **Gelu:** exact erf-gelu only; `approximate="tanh"` raises.
+- **PRelu:** slope is a per-channel initializer (`[C]`, `[C,1,1]`, or scalar, flattened
+  to `[C]`); input must be rank>=3 `[N,C,...]`.
+- **InstanceNormalization:** `[N,C,H,W]` input with `scale`/`B` initializers `[C]`.

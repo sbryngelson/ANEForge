@@ -5,6 +5,7 @@ from typing import Callable
 from math import prod
 import numpy as np
 from .graph import Tensor, input as _input, conv as _conv, batch_norm as _bn, concat as _concat
+from .graph import instance_norm as _instnorm, space_to_depth as _s2d
 from . import _compile
 
 _ONNX: dict[str, Callable] = {}
@@ -73,6 +74,34 @@ def _relu(node, ins, attrs, inits): return ins[0].relu()
 def _sig(node, ins, a, i): return ins[0].sigmoid()
 @onnx_op("Tanh")
 def _tanh(node, ins, a, i): return ins[0].tanh()
+@onnx_op("Erf")
+def _erf(node, ins, a, i): return ins[0].erf()
+@onnx_op("Exp")
+def _exp(node, ins, a, i): return ins[0].exp()
+@onnx_op("Log")
+def _log(node, ins, a, i): return ins[0].log()
+@onnx_op("Sqrt")
+def _sqrt(node, ins, a, i): return ins[0].sqrt()
+@onnx_op("Elu")
+def _elu(node, ins, a, i): return ins[0].elu(float(a.get("alpha", 1.0)))
+@onnx_op("LeakyRelu")
+def _lrelu(node, ins, a, i): return ins[0].leaky_relu(float(a.get("alpha", 0.01)))
+@onnx_op("Gelu")
+def _gelu(node, ins, a, i):
+  """ONNX Gelu (opset 20); exact erf-gelu only ('approximate=tanh' unsupported)."""
+  ap = a.get("approximate")
+  if ap is not None and (ap.decode() if isinstance(ap, bytes) else ap) == "tanh":
+    raise NotImplementedError("ONNX Gelu: approximate='tanh' not supported (only exact/erf)")
+  return ins[0].gelu()
+@onnx_op("PRelu")
+def _prelu(node, ins, a, i): return ins[0].prelu(np.asarray(ins[1]).reshape(-1))   # slope=ins[1], [C,1,1]->[C]
+@onnx_op("Pow")
+def _pow(node, ins, a, i): x, y = _two(ins, "Pow"); return x.pow(y)   # tensor-tensor only
+@onnx_op("InstanceNormalization")
+def _instance_norm(node, ins, a, i):
+  return _instnorm(ins[0], np.asarray(ins[1]), np.asarray(ins[2]), eps=float(a.get("epsilon", 1e-5)))
+@onnx_op("SpaceToDepth")
+def _space_to_depth(node, ins, a, i): return _s2d(ins[0], int(a["blocksize"]))
 def _two(ins, op):                                 # aneforge elementwise is tensor-tensor only
   if not isinstance(ins[0], Tensor) or not isinstance(ins[1], Tensor):
     raise NotImplementedError(f"ONNX {op}: a constant operand is not supported (tensor-tensor elementwise only)")

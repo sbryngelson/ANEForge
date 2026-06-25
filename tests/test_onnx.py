@@ -149,7 +149,7 @@ def test_dynamic_dim_raises():  # symbolic dim_param -> static-shapes-only error
   with pytest.raises(ValueError): af.onnx_to_tensor(m)
 
 def test_unsupported_op_raises():  # unregistered op type fails loudly
-  m = _model([helper.make_node("Erf", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  m = _model([helper.make_node("LRN", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
 def test_conv_non_uniform_strides_raises():
@@ -191,6 +191,66 @@ def test_maxpool_ceil_mode_raises():
   n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2], strides=[2, 2], ceil_mode=1)
   m = _model([n], [_vi("x", [1, 8, 31, 31])], [_vi("y", [1, 8, 16, 16])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_erf_builds():
+  m = _model([helper.make_node("Erf", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "erf"
+
+def test_exp_builds():
+  m = _model([helper.make_node("Exp", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "exp"
+
+def test_log_builds():
+  m = _model([helper.make_node("Log", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "log"
+
+def test_sqrt_builds():
+  m = _model([helper.make_node("Sqrt", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "sqrt"
+
+def test_elu_builds():
+  m = _model([helper.make_node("Elu", ["x"], ["y"], alpha=0.5)], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "elu"
+
+def test_leaky_relu_builds():
+  m = _model([helper.make_node("LeakyRelu", ["x"], ["y"], alpha=0.2)], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "leaky_relu"
+
+def test_gelu_builds():  # default approximate="none" -> exact erf-gelu
+  m = _model([helper.make_node("Gelu", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "gelu"
+
+def test_gelu_tanh_raises():  # tanh approximation is not implemented
+  n = helper.make_node("Gelu", ["x"], ["y"], approximate="tanh")
+  m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_prelu_builds():  # slope is the 2nd input ([C,1,1] flattened to [C])
+  slope = _init(np.ones((4, 1, 1)), "slope")
+  n = helper.make_node("PRelu", ["x", "slope"], ["y"])
+  m = _model([n], [_vi("x", [1, 4, 2, 2])], [_vi("y", [1, 4, 2, 2])], inits=[slope])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 2, 2) and out.op == "prelu"
+
+def test_pow_builds():  # tensor-tensor exponent
+  m = _model([helper.make_node("Pow", ["a", "b"], ["y"])], [_vi("a", [1, 3]), _vi("b", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "pow"
+
+def test_pow_constant_operand_raises():  # constant exponent cannot lower
+  c = _init(np.full((1, 3), 2.0), "c")
+  n = helper.make_node("Pow", ["x", "c"], ["y"])
+  m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])], inits=[c])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_instance_norm_builds():  # shape unchanged
+  s = _init(np.ones(4), "s"); b = _init(np.zeros(4), "b")
+  n = helper.make_node("InstanceNormalization", ["x", "s", "b"], ["y"])
+  m = _model([n], [_vi("x", [1, 4, 5, 5])], [_vi("y", [1, 4, 5, 5])], inits=[s, b])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 5, 5) and out.op == "instance_norm"
+
+def test_space_to_depth_builds():  # [1,3,8,8] bs=2 -> [1,12,4,4]
+  n = helper.make_node("SpaceToDepth", ["x"], ["y"], blocksize=2)
+  m = _model([n], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 12, 4, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 12, 4, 4) and out.op == "space_to_depth"
 
 @requires_ane
 def test_resnet18_onnx_matches_onnxruntime(tmp_path):
