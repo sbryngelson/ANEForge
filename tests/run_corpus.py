@@ -1,18 +1,4 @@
-"""Run the full aneforge correctness corpus on the ANE.
-
-This is the GATE for any future graph-optimizer pass: run it before and after a
-rewrite; the pass-rate and per-case relerr must not regress. Each case builds a
-graph, compiles it (``af.compile``), runs it on the M-series ANE, and asserts the
-output against a numpy golden reference within a per-category tolerance.
-
-    PYTHONPATH=. python3 tests/run_corpus.py
-
-Optimizer-diff reuse: import ALL_CASES and tests._corpus.run_case to run the same
-builds with optimization on/off and diff the two ANE outputs directly.
-
-Also pytest-compatible (the default suite skips it, so name the file):
-PYTHONPATH=. pytest tests/run_corpus.py
-"""
+"""Run the full aneforge correctness corpus on the ANE (the graph-optimizer GATE)."""
 from __future__ import annotations
 
 import sys

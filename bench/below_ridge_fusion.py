@@ -1,36 +1,5 @@
 #!/usr/bin/env python3
-"""Below-ridge fusion demo (addresses the "fusion lever is demonstrated where the
-roofline cannot prove it" objection).
-
-The paper's flagship fusion demonstration was a fused conv stack reaching 110% of
-the conv roof -- but those convs already sit far RIGHT of every ANE ridge, so the
-roofline predicts no AI-lever gain there; the 110% is dispatch/I-O amortization,
-not the arithmetic-intensity lever. To demonstrate the AI lever where the model
-actually predicts it, we need a chain whose STANDALONE operating point sits LEFT of
-the weight-path ridge (memory-bound), and show that FUSING it slides the operating
-point RIGHT, past the ridge, into the compute-bound region.
-
-Construction: a light-compute "neck" block, one small conv (cheap FLOPs) followed by
-a chain of memory-bound elementwise/normalization ops (group_norm, gelu, scale-add,
-a second gelu). Dispatched STANDALONE, each op pays full DRAM in+out traffic, so the
-block's effective AI is low (memory-bound, left of the ~71 FLOP/B weight ridge).
-Dispatched FUSED into one aneforge program, the intermediates never touch DRAM, so
-the block streams its input and weights once and its effective AI rises past the
-ridge. We measure both, compute effective AI = FLOPs / bytes-actually-moved, and
-show the fused operating point crossing the ridge AND the throughput rising.
-
-We measure the standalone path two ways:
-  (a) sum of per-op min latencies (each op compiled + dispatched separately), and
-  (b) the bytes each standalone op must move to/from DRAM (full in+out per op),
-and the fused path as one compiled program (one dispatch, intermediates on-chip).
-
-This is the AI-lever demonstration the roofline predicts, complementary to the
-amortization demonstration (the conv stack) the paper already has.
-
-Run from repo root:
-    PYTHONPATH=. python3 bench/below_ridge_fusion.py
-optionally with --window for the power pass. Writes results/below_ridge_fusion.json.
-"""
+"""Below-ridge fusion demo: fusing a memory-bound neck block slides its effective AI past the weight-path ridge. Run: PYTHONPATH=. python3 bench/below_ridge_fusion.py"""
 from __future__ import annotations
 
 import argparse
@@ -56,19 +25,15 @@ relerr = dc.relerr
 if HAVE_ANE:
     import aneforge as af
 
-# ANE weight-path ridge from the paper (FLOP/byte); the activation-path ridge is ~424.
+# ANE weight-path ridge (FLOP/byte); activation-path ridge ~424.
 WEIGHT_RIDGE = 71.0
 ACT_RIDGE = 424.0
 BYTES_FP16 = 2
 
 
 def build_block_ops(C, H, W):
-    """Return (op_specs, np_reference_fn). The block:
-        conv 1x1 (C->C, cheap)  -> group_norm -> gelu -> affine scale/shift -> gelu
-    Light compute, several memory-bound ops: standalone it is bandwidth-bound.
-    """
+    """Return (op_specs, np_reference_fn) for the conv1x1->group_norm->gelu->gelu neck block."""
     rng = np.random.default_rng(17)
-    # 1x1 conv keeps FLOPs modest: 2*C*C*H*W. (3x3 would push AI up; we want it low.)
     Wc = (rng.standard_normal((C, C, 1, 1)).astype(np.float32)
           * np.sqrt(2.0 / C))
     gn_g = (rng.standard_normal(C).astype(np.float32) * 0.1 + 1.0)
@@ -88,8 +53,6 @@ def build_block_ops(C, H, W):
         x = gelu_np(x)
         return x
 
-    # The block: conv1x1 (the only real FLOPs) -> group_norm -> gelu -> gelu.
-    # FLOP count: conv 1x1 (2 C^2 HW) + gn (~8 C HW) + 2*gelu (~10 C HW each).
     flops = 2.0 * C * C * H * W + (8 + 10 + 10) * C * H * W
     act_bytes = C * H * W * BYTES_FP16              # one CxHxW fp16 tensor
     weight_bytes = (C * C + 2 * C) * BYTES_FP16     # conv + gn gamma/beta
@@ -130,7 +93,7 @@ def run(window=0.0):
         n_ops = spec["n_ops"]
         print(f"\n=== neck block C={C} {H}x{W} ===", flush=True)
 
-        # --- fused: one program, one dispatch, intermediates on-chip ---
+        # fused: one program, one dispatch, intermediates on-chip
         try:
             xin = af.input((1, C, H, W))
             net = af.compile(fused_block(xin, spec))
@@ -141,40 +104,32 @@ def run(window=0.0):
             print(f"  fused build FAILED: {type(e).__name__}: {e}")
             results["blocks"].append({"C": C, "HW": [H, W], "error": str(e)})
             continue
-        # fused bytes moved to/from DRAM: input + weights + output (intermediates on-chip)
-        bytes_fused = act + wt + act
+        bytes_fused = act + wt + act   # input + weights + output (intermediates on-chip)
         ai_fused = flops / bytes_fused
         gf_fused = flops / lat_f / 1e9
         print(f"  fused      {lat_f*1e3:8.3f} ms  {gf_fused:8.1f} GFLOP/s  "
               f"AI_eff={ai_fused:7.1f}  relerr {err:.2e}")
 
-        # --- standalone: each op a separate compiled program (full in+out per op) ---
-        # We approximate the standalone cost by compiling each op alone and summing
-        # its min latency; bytes = sum over ops of (in + out + weights) DRAM traffic.
+        # standalone: each op a separate compiled program (full in+out per op)
         standalone_ops = []
         lat_s_total = 0.0
         try:
-            # conv alone
             n1 = af.compile(af.conv(af.input((1, C, H, W)), spec["Wc"].astype(np.float16), stride=1, pad=0))
             l1, o1 = min_latency_with_out(lambda: n1(u0.astype(np.float16)))
             lat_s_total += l1; standalone_ops.append(("conv1x1", l1))
             mid = np.asarray(o1).astype(np.float16)
-            # group_norm alone
             n2 = af.compile(af.input((1, C, H, W)).group_norm(spec["gn_g"].astype(np.float16), spec["gn_b"].astype(np.float16), spec["GROUPS"]))
             l2, o2 = min_latency_with_out(lambda: n2(mid))
             lat_s_total += l2; standalone_ops.append(("group_norm", l2))
             mid2 = np.asarray(o2).astype(np.float16)
-            # gelu alone
             n3 = af.compile(af.input((1, C, H, W)).gelu())
             l3, o3 = min_latency_with_out(lambda: n3(mid2))
             lat_s_total += l3; standalone_ops.append(("gelu", l3))
-            # second gelu as a stand-in for the affine+gelu tail (same byte profile)
             l4, _ = min_latency_with_out(lambda: n3(mid2))
             lat_s_total += l4; standalone_ops.append(("gelu2", l4))
         except Exception as e:
             print(f"  standalone chain note: {type(e).__name__}: {e}")
-        # standalone DRAM traffic: each of n_ops ops moves in+out (+ weights for conv/gn)
-        bytes_standalone = n_ops * (act + act) + wt
+        bytes_standalone = n_ops * (act + act) + wt   # each op moves in+out (+ weights)
         ai_standalone = flops / bytes_standalone
         gf_standalone = (flops / lat_s_total / 1e9) if lat_s_total else None
         print(f"  standalone {lat_s_total*1e3:8.3f} ms  "

@@ -1,8 +1,4 @@
-"""Synthetic cases for the aneforge corpus: random elementwise+activation chains,
-numpy-style broadcasts, reshape/transpose chains that cancel, reductions along
-various axes, and matmul/bmm rectangles. These stress the algebraic identities a
-graph optimizer is most likely to touch.
-"""
+"""Synthetic cases for the aneforge corpus: op-chains, broadcasts, cancelling reshapes, reductions, matmul/bmm rectangles."""
 from __future__ import annotations
 
 import numpy as np

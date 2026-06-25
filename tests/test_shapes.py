@@ -1,17 +1,4 @@
-"""Broad shape / numerical-edge corpus - fp32-golden cases that sweep the
-shape-sensitive, numerically-risky ops across a wide range (including large and
-edge shapes), so shape-dependent and fp16-cancellation bugs surface in the gate.
-
-Motivation: the native-SDPA accuracy cliff at large sequence length (relerr ~1.0
-vs fp32 at S=4096) slipped through because every existing case used small,
-moderate shapes. Each case here validates the ANE output against a numpy fp32
-golden (the TRUE answer), not a sibling ANE implementation, so a native-layer or
-accumulation breakage shows up as a relerr failure rather than hiding.
-
-Documented hardware walls are marked ``xfail=<reason>`` so they record the limit
-without turning the gate red; an unexpected pass becomes XPASS (a limit to revisit)
-and an unexpected fail is a newly-caught bug. Folded into ALL_CASES (run_corpus.py).
-"""
+"""Broad shape / numerical-edge corpus: shape-sensitive, fp16-risky ops swept across wide shapes vs fp32 goldens."""
 from __future__ import annotations
 
 import numpy as np
@@ -127,9 +114,7 @@ def _softmax_case(N):
 
 
 def _reduce_case(N):
-  # pos=True offsets the input away from 0 so the reference mean isn't ~0; a
-  # zero-centered mean of N samples is a knife-edge for *relative* error (tiny
-  # denominator), which made this case sensitive to the module rng stream position.
+  # pos=True keeps the reference mean away from 0 (a ~0 mean makes relative error a knife-edge)
   x = f16(1, N, scale=1.0, pos=True)
   return Case(f"reduce_mean_N{N}", "shape",
               lambda xt: xt.mean((1,)),

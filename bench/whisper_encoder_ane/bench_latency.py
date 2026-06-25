@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Latency: the whisper-tiny encoder on the ANE (decomposed mha, and af.sdpa) vs the
-same encoder in PyTorch on the CPU (fp32) and the Metal GPU (MPS, fp16).
-
-The ANE 'mha' and 'sdpa' rows are expected to match: at seq=1500 af.sdpa decomposes
-to the same matmul/softmax (the native fused-attention layer needs the smaller
-attention axis < 512). All four run identical weights.
-
-Run from repo root:
-    PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_latency.py [--reps 30]
-"""
+"""Whisper-tiny encoder latency (ANE vs PyTorch CPU/MPS). Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_latency.py"""
 from __future__ import annotations
 
 import argparse

@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the whisper-tiny encoder, persist its program (model.mil + weights.bin +
-the compiled bundle), and dump everything the standalone C++ runner needs: the exact
-fp16 input vectors, the port manifest (names + element counts), and the PyTorch
-reference output to score against.
-
-Run from repo root:
-    PYTHONPATH=. python3 bench/whisper_encoder_ane/export_bundle.py [--out DIR]
-"""
+"""Compile and persist the whisper-tiny encoder bundle plus the I/O the standalone C++ runner needs. Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/export_bundle.py"""
 from __future__ import annotations
 
 import argparse

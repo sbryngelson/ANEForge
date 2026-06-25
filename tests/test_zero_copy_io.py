@@ -1,8 +1,4 @@
-"""Zero-copy I/O views (Program/Model.input_view/output_view) must produce identical
-results to the copy path (__call__/eval), while skipping the per-call host<->device
-memcpy. The win scales with I/O size (negligible for tiny tensors, ~30% for large ones);
-this test pins only the correctness invariant.
-"""
+"""Zero-copy I/O views (input_view/output_view) produce identical results to the copy path (__call__/eval)."""
 import warnings
 
 import numpy as np

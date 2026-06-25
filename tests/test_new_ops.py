@@ -1,5 +1,4 @@
-"""New forward ops (floor/ceil/round/sign/pow/comparisons/logical_not/reverse/tile/
-reduce_log_sum_exp) + their vjps. All confirmed native on M1 (h13)."""
+"""New forward ops (floor/ceil/round/sign/pow/comparisons/reverse/tile/reduce_log_sum_exp) + their vjps."""
 from __future__ import annotations
 import numpy as np
 import pytest

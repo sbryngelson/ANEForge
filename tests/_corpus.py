@@ -1,21 +1,4 @@
-"""Shared harness for the aneforge correctness corpus.
-
-This is the GATE infrastructure: a graph-optimizer pass must keep the whole
-corpus green. Each test is a ``Case`` record::
-
-    Case(name, category, build_fn, ref_fn, inputs, tol, ...)
-
-where
-  - ``build_fn(*input_tensors) -> af.Tensor`` builds the graph (the ANE output),
-  - ``ref_fn(*input_arrays_fp32) -> np.ndarray`` is the numpy golden reference,
-  - ``inputs`` is a list of fp16 numpy arrays (also the af.input shapes), and
-  - ``tol`` is the per-case relative-error tolerance (or abs/exact mode).
-
-The key reuse hook is ``run_case(case, int8=False) -> np.ndarray``: it builds the
-graph, compiles it on the ANE, runs it on the case inputs, and returns the ANE
-output. A future optimizer can call ``run_case`` with optimization on/off and diff
-the two outputs against THIS corpus - same builds, same inputs, same goldens.
-"""
+"""Shared harness for the aneforge correctness corpus (the green-gate infrastructure)."""
 from __future__ import annotations
 
 import sys

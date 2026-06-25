@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Fidelity on the real checkpoint: whisper-tiny's trained encoder weights and a real
-log-mel from Whisper's own feature extractor, ANEForge vs the PyTorch reference. This
-complements fidelity.py, which uses a randomly-initialised encoder.
-
-The trained encoder on real audio reaches cosine ~0.998 (vs ~1.0000 for random init):
-the ANE's gelu LUT and fp16 lose more on the sharp, high-dynamic-range activations a
-trained encoder produces on real log-mel. The drop needs both real weights and real
-input; neither alone shows it.
-
-Downloads openai/whisper-tiny (needs network). Run from repo root:
-    PYTHONPATH=. python3 bench/whisper_encoder_ane/validate_real.py
-"""
+"""Fidelity on the real checkpoint: trained whisper-tiny weights + real log-mel, ANEForge vs PyTorch reference. Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/validate_real.py"""
 from __future__ import annotations
 
 import os

@@ -1,11 +1,4 @@
-"""2-D FFT on the ANE - aneforge.fft.fft2/ifft2 as ONE fused program per transform.
-
-The 2-D DFT of an [M,N] complex field is F_M @ X @ F_N^T - a handful of real GEMMs,
-so it fuses into a single e5rt program instead of host-looping the 1-D plan over
-M rows + N columns (M+N dispatches).
-
-Run: PYTHONPATH=. .venv/bin/python -m pytest tests/test_fft2.py -q
-"""
+"""2-D FFT on the ANE: aneforge.fft.fft2/ifft2 as one fused program per transform."""
 from __future__ import annotations
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -31,7 +24,7 @@ def test_fft2_matches_numpy(shape):
 
 
 def test_fft2_real_field():
-  # real input (imag fed as zeros) - the PDE/Poisson use case
+  # real input (imag fed as zeros): the PDE/Poisson use case
   rng = np.random.default_rng(3)
   f = rng.standard_normal((32, 32)).astype(np.float32)
   Xr, Xi = agfft.fft2(f, np.zeros_like(f))
@@ -40,7 +33,7 @@ def test_fft2_real_field():
 
 
 def test_ifft2_roundtrip():
-  # ifft2(fft2(x)) ~ x, which also pins the 1/(M*N) normalization
+  # ifft2(fft2(x)) ~ x; also pins the 1/(M*N) normalization
   rng = np.random.default_rng(7)
   xr = rng.standard_normal((32, 32)).astype(np.float32)
   xi = rng.standard_normal((32, 32)).astype(np.float32)
@@ -59,14 +52,13 @@ def test_ifft2_matches_numpy():
 
 
 def test_ifft2_large_magnitude_spectrum():
-  # A real PDE spectrum is LARGE (O(N^2) at the dominant modes): the inverse's
-  # 1/(M*N) scaling must be folded INTO the per-axis twiddles, or the intermediate
-  # after the first axis transform overflows fp16 (max 65504).
+  # large PDE spectrum: 1/(M*N) scaling must fold into the per-axis twiddles or the
+  # intermediate after the first axis overflows fp16 (max 65504).
   N = 64
   x = np.linspace(0.0, 2 * np.pi, N, endpoint=False)
   X, Y = np.meshgrid(x, x, indexing="ij")
   u = np.sin(X) * np.cos(2 * Y) + 0.3 * np.cos(2 * X) * np.cos(2 * Y)
-  spec = np.fft.fft2(u) * 8.0          # |values| up to ~1.6e4 - inside fp16 range
+  spec = np.fft.fft2(u) * 8.0          # |values| up to ~1.6e4, inside fp16 range
   br, bi = agfft.ifft2(spec.real.astype(np.float32), spec.imag.astype(np.float32))
   ref = np.fft.ifft2(spec)
   assert np.all(np.isfinite(br)) and np.all(np.isfinite(bi))
@@ -77,4 +69,4 @@ def test_fft2_plan_is_one_program_and_cached():
   p1 = agfft.fft2_plan(32, 32)
   p2 = agfft.fft2_plan(32, 32)
   assert p1 is p2                       # plan cache, like fft_plan
-  assert p1.model.n_ops > 0             # ONE compiled e5rt program, not a host loop
+  assert p1.model.n_ops > 0             # one compiled e5rt program, not a host loop

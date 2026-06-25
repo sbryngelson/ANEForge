@@ -1,8 +1,4 @@
-"""compile() warns (DispatchFloorWarning) when a program is dispatch-floor-bound - its
-predicted ANE time is dominated by the fixed per-call dispatch/firmware round-trip, so the
-user knows to amortize via batching or op-chaining rather than looping per-sample. Must NOT
-fire for compute-bound programs, and must be filterable.
-"""
+"""compile() warns (DispatchFloorWarning) for dispatch-floor-bound programs, not compute-bound; filterable."""
 import warnings
 
 import numpy as np

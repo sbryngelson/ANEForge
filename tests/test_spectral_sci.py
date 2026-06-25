@@ -1,45 +1,4 @@
-"""Spectral / signal / statistical scientific-kernel corpus for aneforge.
-
-The marquee probe: **can the Apple Neural Engine do an FFT?** The ANE has NO complex
-dtype - compute is fp16 real only. So every complex kernel here is emulated as a PAIR
-of real tensors ``(real, imag)`` with hand-expanded complex arithmetic
-``(a+bi)(c+di) = (ac-bd) + (ad+bc)i``. The question is whether that emulation is
-(1) *expressible* as an aneforge graph and (2) *numerically usable* in fp16, and if so,
-**to what transform size N** before fp16 precision (not structure) becomes the wall.
-
-Five families, each built as an aneforge graph, compiled + run on the ANE, validated
-against a numpy/scipy fp32 golden at an fp16-appropriate tolerance:
-
-1. SPECTRAL (the headline) - the DFT as a twiddle-matrix matmul (X = x @ W_N^T over
-   real/imag pairs) swept across N, plus a fully-unrolled radix-2 (DIT) butterfly FFT.
-   The verdict block at the end answers "is FFT viable on the ANE, and where/why does
-   it break?".
-2. SIGNAL - a FIR filter (1D conv) and autocorrelation (the cracked CrossCorrelation
-   bridge + a conv-based variant).
-3. MONTE CARLO - an MC integral and on-line mean/variance over a large sample
-   (host-drawn samples fed as inputs; see the RANDOMNESS NOTE below).
-4. N-BODY - pairwise forces among N points via a broadcast diff
-   ([N,1,3]-[1,N,3]) + reduction; small N.
-5. QUADRATURE - Simpson and Gauss-Legendre integration as a weighted reduction
-   (cumsum is unsupported on the ANE - a documented boundary).
-
-RANDOMNESS NOTE: aneforge's public API exposes NO RandomGenerator op (the e5rt
-``random_uniform`` surface is RE'd in the reverse-engineering corpus
-but is only promoted as a *fused backend consumer pattern*, not a callable frontend
-op). So the Monte-Carlo kernels draw their samples on the HOST (numpy) and feed them
-as graph inputs; the reference uses the SAME samples, making the comparison exact
-(deterministic), not a statistical tolerance. The ANE does the reduction/transform.
-
-Two tags per case beyond the harness ``Case`` fields (mirrors test_numerical.py):
-  - cost character: floor/fusion | bandwidth | compute | reduction | mixed
-  - feasibility:    works | arch-limited | fp16-limited
-
-We reuse the shared harness (Case, eval_case) verbatim and keep the tag side-table +
-spectral verdict block in our own runner, so we don't touch _corpus.py.
-
-Run:
-    PYTHONPATH=. python3 tests/test_spectral_sci.py
-"""
+"""Spectral / signal / statistical scientific-kernel corpus for aneforge (the 'can the ANE do an FFT?' probe), vs fp32 goldens."""
 from __future__ import annotations
 
 import sys
@@ -489,8 +448,7 @@ def _gauss_legendre(n: int, tol: float):
 
 # corpus assembly + runner
 
-# SPECTRAL: tolerances track the measured fp16 floor (flat ~3e-4..6e-4 in N because the
-# wide accumulator does not compound the twiddle sum). We give a little headroom per N.
+# SPECTRAL: tolerances track the measured fp16 floor (flat in N; wide accumulator)
 SPECTRAL = [
   _dft_matmul(8,    tol=0.004),
   _dft_matmul(16,   tol=0.004),

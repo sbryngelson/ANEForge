@@ -1,10 +1,4 @@
-"""Layer-streamed (gradient-checkpointed) training: aneforge/streaming.py.
-
-The whole point is that the per-layer forward/backward are compiled ONCE and reused for
-every layer, so an arbitrarily deep stack of identical layers trains with compile work
-that does not grow with depth. The gradients must stay bit-exact versus a monolithic
-backward, which is what these tests check.
-"""
+"""Layer-streamed (gradient-checkpointed) training (aneforge/streaming.py): streamed grads match a monolithic backward."""
 import numpy as np
 
 import aneforge as af

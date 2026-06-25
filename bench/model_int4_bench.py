@@ -1,53 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end int4 / auto weight-compression benchmark for real-model graphs.
-
-QUESTION
---------
-The per-matmul finding was that 4-bit LUT weight streaming gives a 1.3-1.8x
-latency win over fp16 on weight-bandwidth-bound matmuls at batch 1. This script
-asks whether that win CARRIES to whole models, where norms, attention, residuals
-and the fixed per-program dispatch floor dilute the weight-bandwidth fraction
-(exactly as int8's per-GEMV win did NOT carry to end-to-end LLM decode).
-
-WHAT IT MEASURES
-----------------
-For each model we build the full forward graph (correct ImageNet / ViT-B/16 /
-MiniLM-L6 architecture and shapes) and compile it THREE ways through the public
-``af.compile`` knob:
-
-    compress=None     fp16 baseline (byte-identical to the historical path)
-    compress="int4"   per-tensor 4-bit LUT, accuracy-gated (falls back int8/fp16)
-    compress="auto"   per-weight: sparse -> int4 -> int8 -> fp16 (most-aggressive
-                      encoding that stays within the accuracy budget)
-
-and reports, end-to-end (the WHOLE program, not a single matmul):
-
-  * latency  : median of `REPS` timed evals after `WARMUP` (ms) + the speedup
-               vs the fp16 baseline,
-  * cosine   : cosine similarity of the compressed output vs the fp16 baseline
-               output (accuracy retention of the end-to-end forward),
-  * size     : on-disk `weights.bin` bytes + fraction of the fp16 baseline.
-
-WEIGHT SOURCE
--------------
-This host has numpy + aneforge + the ANE dylib but NOT torch / torchvision /
-transformers, so the pretrained loaders (af.load_resnet18 / af.load / the ViT
-demo) cannot fetch real trained weights here. We therefore build each model's
-EXACT architecture and tensor shapes with deterministic random weights
-(seeded, He/Xavier-scaled). This is a faithful test of the latency + footprint
-question (those depend on op mix + shapes, not weight values) and of cosine
-RETENTION (compressed-vs-fp16 of the same graph). The one caveat is the int4
-ACCURACY GATE: random near-Gaussian weights are close to worst-case for 4-bit
-LUT palettization (no low-rank / clustered structure for the 16-entry codebook
-to exploit), so the int4 fallback-to-fp16 rate measured here is PESSIMISTIC
-relative to real trained weights. We report the realized cosine and footprint
-so the gate behaviour is visible either way. compress_atol is left at the
-library default (0.05 relative-L2 per tensor).
-
-Run:
-    PYTHONPATH=<repo> \
-      python3 bench/model_int4_bench.py
-"""
+"""End-to-end int4 / auto weight-compression benchmark: does the per-matmul 4-bit win carry to whole-model latency, cosine, and footprint? Run: PYTHONPATH=<repo> python3 bench/model_int4_bench.py"""
 from __future__ import annotations
 
 import json
@@ -72,8 +24,7 @@ def _rng():
 
 
 def W(rng, *shape, fan_in=None):
-    """Xavier-ish weight: scale by 1/sqrt(fan_in) so activations stay O(1) and the
-    fp16 baseline forward does not overflow (matters for the cosine reference)."""
+    """Xavier-ish weight: scale by 1/sqrt(fan_in) so activations stay O(1)."""
     fan = fan_in if fan_in is not None else shape[-1]
     return (rng.standard_normal(shape) / np.sqrt(fan)).astype(np.float32)
 
@@ -84,9 +35,7 @@ def B(rng, n):
 
 # model graph builders (full architecture, deterministic random weights)
 def build_resnet18(rng):
-    """torchvision ResNet-18 forward (ImageNet): conv-dominated. BatchNorm is folded
-    into the preceding conv (as the real loader does), so the graph is pure
-    conv/relu/pool/add/fc. Input [1,3,224,224] -> logits [1,1000]."""
+    """torchvision ResNet-18 forward (ImageNet): conv-dominated, BN folded into conv. [1,3,224,224] -> [1,1000]."""
     def conv_w(cout, cin, k):
         return W(rng, cout, cin, k, k, fan_in=cin * k * k)
 
@@ -111,9 +60,7 @@ def build_resnet18(rng):
 
 
 def build_vit_b16(rng, n_layers=12):
-    """ViT-B/16 encoder forward (12 layers x 768 dim x 12 heads, 197 tokens):
-    patch-embed conv + attention + MLP matmuls -> logits [1,1000]. Mixed conv +
-    matmul, matmul-dominated by parameter count (the MLP 768<->3072 projections)."""
+    """ViT-B/16 encoder forward (12 layers x 768 dim x 12 heads, 197 tokens) -> [1,1000]; matmul-dominated."""
     DIM, HEADS, PATCH, IMG = 768, 12, 16, 224
     NP = (IMG // PATCH) ** 2          # 196
     SEQ = NP + 1                       # 197
@@ -136,7 +83,7 @@ def build_vit_b16(rng, n_layers=12):
         seq = seq + y
 
     seq = seq.layer_norm(W(rng, DIM), B(rng, DIM), eps=1e-6)
-    # classifier on row 0 (CLS) via a one-hot picker matmul (same trick as vit_demo)
+    # classifier on CLS row via one-hot picker matmul
     sel = np.eye(1, SEQ, dtype=np.float32)
     cls_row = seq.transpose([1, 0]).linear(sel).transpose([1, 0])    # [1,768]
     out = cls_row.linear(W(rng, 1000, DIM), B(rng, 1000))
@@ -146,10 +93,7 @@ def build_vit_b16(rng, n_layers=12):
 
 
 def build_minilm(rng, S=64, L=6, DIM=384, HEADS=12, ff=1536):
-    """all-MiniLM-L6-v2 encoder (BERT-family) transformer stack: 6 post-norm layers
-    of MHA + LayerNorm + (Linear-GELU-Linear) MLP. Pure matmul + layer_norm (the
-    embedding lookup is host-side in the real loader; we feed the post-embed [S,DIM]
-    activation as the input, which is what runs on the ANE). Matmul-DOMINATED."""
+    """all-MiniLM-L6-v2 encoder: 6 post-norm MHA+LayerNorm+(Linear-GELU-Linear) layers; matmul-dominated."""
     eps = 1e-12
     h = af.input((S, DIM))
     for _ in range(L):
@@ -170,19 +114,14 @@ MODELS = {
 
 # bench harness
 def _encoding_tally(build_dir):
-    """Count which weight encodings the emitter actually chose, by scanning the
-    generated MIL. This makes the int4 accuracy-gate fallback VISIBLE: a request for
-    compress='int4' that finds a weight too lossy for the 16-entry LUT falls back to
-    int8 (constexpr_affine_dequantize) or fp16 (const). SegmentedModels write several
-    model.mil files (one per region); we sum across all of them under build_dir."""
+    """Count weight encodings from the generated MIL (makes the int4 gate fallback visible), summed across model.mil files."""
     counts = {"int4_lut": 0, "sparse": 0, "int8": 0, "fp16": 0}
     for mil in Path(build_dir).rglob("model.mil"):
         txt = mil.read_text()
         counts["int4_lut"] += txt.count("constexpr_lut_to_dense")
         counts["sparse"] += txt.count("constexpr_sparse_to_dense")
         counts["int8"] += txt.count("constexpr_affine_dequantize")
-        # fp16 weight constants are BLOBFILE-backed const() ops (exclude the many
-        # tiny inline const() scalars, which have no BLOBFILE).
+        # fp16 weight constants are BLOBFILE-backed const() ops
         counts["fp16"] += sum(1 for ln in txt.splitlines()
                               if "= const()" in ln and "BLOBFILE" in ln)
     return counts
@@ -206,7 +145,7 @@ def median_ms(net, inputs):
 
 def run_model(name, kind, builder):
     print(f"\n=== {name} ({kind}) ===")
-    # build inputs once (deterministic) so all three variants see identical feeds
+    # build inputs once so all variants see identical feeds
     rng = _rng()
     built = builder(rng)
     in_shapes = built[1]
@@ -217,17 +156,11 @@ def run_model(name, kind, builder):
 
     res = {"kind": kind, "n_ops": None, "fp16_ms": None, "variants": {}}
     fp16_out = None
-    # (label, compress, compress_atol). "int4_forced" loosens the accuracy gate to
-    # 0.30 so the 4-bit LUT actually FIRES on these random weights (the default 0.05
-    # gate rejects near-Gaussian weights -> falls back to int8/fp16, so plain "int4"
-    # here measures the FALLBACK, not the LUT). The forced row is the genuine
-    # int4-encoding end-to-end latency/footprint datapoint; its cosine shows the
-    # accuracy cost of accepting the lossy LUT.
+    # (label, compress, atol); int4_forced loosens the gate to 0.30 so the LUT fires on random weights
     plan = [("fp16", None, 0.05), ("int4", "int4", 0.05),
             ("int4_forced", "int4", 0.30), ("auto", "auto", 0.05)]
     for label, variant, atol in plan:
-        # rebuild the graph fresh per variant from the SAME seed: weight values are
-        # identical across variants, only the encoding differs.
+        # rebuild graph fresh per variant from the same seed; only the encoding differs
         rng_v = _rng()
         b = builder(rng_v)
         out_v = b[0]
@@ -244,7 +177,7 @@ def run_model(name, kind, builder):
         ms = median_ms(net, arrays)
         wb = os.path.getsize(os.path.join(d, "weights.bin"))
         n_ops = getattr(net, "n_ops", None)
-        enc = _encoding_tally(d)        # which weight encodings the emitter actually chose
+        enc = _encoding_tally(d)
         net.release()
 
         if variant is None:

@@ -1,15 +1,4 @@
-"""The compile-failure backoff rate-limiter (aneforge/_circuit.py).
-
-A defensive backstop for the autotuner's burst of variant compiles: after a
-compile FAILURE, pace the next compile by a short interval (~15 s) so consecutive
-failures stay apart. The guard is a per-process rate limiter on consecutive
-failures; no failure-count cap is needed.
-
-These are pure unit tests (no ANE): a fake clock replaces _monotonic/_sleep so no
-real time passes.
-
-Run: PYTHONPATH=. python3 -m pytest tests/test_compile_breaker.py -q
-"""
+"""The compile-failure backoff rate-limiter (aneforge/_circuit.py)."""
 import warnings
 
 import pytest
@@ -32,7 +21,7 @@ class _Clock:
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-  # fresh breaker state + a fake clock for every test
+  # fresh breaker state + fake clock per test
   clock = _Clock()
   monkeypatch.setattr(_circuit, "_monotonic", clock.now)
   monkeypatch.setattr(_circuit, "_sleep", clock.sleep)

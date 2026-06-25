@@ -33,8 +33,7 @@ def test_causal_llama_block_matches_numpy(S, D, H, Dff):
 
 @requires_ane
 def test_kv_cache_decode_step():
-  # one autoregressive DECODE step: the new token attends to cached K/V (+ its own new k/v)
-  # via the decode-shape SDPA (seq_q=1, seq_kv=cache+1), in a full LLaMA block.
+  # one autoregressive decode step: new token attends to cached K/V via decode-shape SDPA
   rng = np.random.default_rng(0); D, H, Dff, Sc = 16, 2, 32, 5; dh = D // H
   W = {k: (rng.standard_normal(s) * 0.1).astype(np.float32) for k, s in
        {"Wq": (D, D), "Wk": (D, D), "Wv": (D, D), "Wo": (D, D),
@@ -75,7 +74,7 @@ def test_kv_cache_decode_step():
 
 @requires_ane
 def test_ane_generate_matches_numpy():
-  # end-to-end autoregressive generation on the ANE == a numpy reference (token-for-token).
+  # end-to-end autoregressive generation on the ANE == numpy reference (token-for-token)
   from examples.gpt_generate_ane import TinyDecoderANE
   m = TinyDecoderANE(seed=0)
   rms = lambda z, g, e=1e-5: z / np.sqrt((z ** 2).mean(-1, keepdims=True) + e) * g
@@ -103,7 +102,7 @@ def test_ane_generate_matches_numpy():
 
 @requires_ane
 def test_generate_fixed_cache_matches_per_step():
-  # fixed-max cache (ONE decode compile + runtime position mask) == per-step growing cache.
+  # fixed-max cache (one decode compile + runtime position mask) == per-step growing cache
   from examples.gpt_generate_ane import TinyDecoderANE
   m = TinyDecoderANE(seed=0)
   assert m.generate_fixed([3, 7, 1], 4, max_len=12) == m.generate([3, 7, 1], 4)
@@ -111,9 +110,7 @@ def test_generate_fixed_cache_matches_per_step():
 
 @requires_ane
 def test_generate_resident_matches_per_step():
-  # RESIDENT KV-cache (share_buffer: the masked positional write is in-graph and the cache
-  # output is aliased onto its own input, so the cache never round-trips to the host) ==
-  # the per-step growing cache. Productizes the zero-copy KV-cache crack.
+  # resident KV-cache (share_buffer: cache aliased onto its own input, no host round-trip)
   from examples.gpt_generate_ane import TinyDecoderANE
   m = TinyDecoderANE(seed=0)
   assert m.generate_resident([3, 7, 1], 4, max_len=12) == m.generate([3, 7, 1], 4)

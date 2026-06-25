@@ -1,19 +1,4 @@
-"""Conv per-channel int8 weights - round-9 fix.
-
-Round-8 found that ``af.conv`` emitted its weight with ``allow_int8=False``, so
-``compile(int8=True)`` / ``compress='int8'`` on a conv graph was a SILENT no-op
-(byte-identical fp16). Measured on h13/M1: per-channel int8 (``constexpr_affine_
-dequantize``) DOES route as a conv weight operand (no +0 bridge needed, unlike
-``constexpr_blockwise_shift_scale``), compiles+runs at cos~1.0 vs fp16 with the
-expected ~0.5-0.7% per-channel quant error, and ~halves the conv DRAM weight bytes.
-The fix enables it (``allow_int8=True``) and extends the auto-rewriter to conv.
-
-These tests lock in: (1) the conv int8 weight branch emits affine_dequantize and
-~halves the weight bytes; (2) compress=None stays byte-identical at opt=0 (the int8
-branch is gated on the compress knob, so enabling allow_int8 changes nothing there);
-(3) the per-node int8 override (auto-rewriter) tags conv; (4) on device, int8 conv
-runs cos~1.0 vs fp16 and within the per-channel int8 error vs an fp32 reference.
-"""
+"""Conv per-channel int8 weights - round-9 fix (allow_int8 on conv + auto-rewriter)."""
 from __future__ import annotations
 import numpy as np
 import pytest
@@ -59,8 +44,7 @@ def _npconv(x, w, pad):
 
 # MIL-level (no device): the int8 branch fires for conv and ~halves the bytes
 def test_conv_int8_emits_affine_dequantize():
-  """compress='int8' on a conv weight emits constexpr_affine_dequantize (the fix);
-    previously allow_int8=False fell through to a plain fp16 const (silent no-op)."""
+  """compress='int8' on a conv weight emits constexpr_affine_dequantize (the fix)."""
   W = (rng.standard_normal((64, 32, 3, 3)) * 0.2).astype(np.float16)
   em = C._Emitter(int8=False, compress="int8")
   em.weight("c_w", W, allow_int8=True, int8=None, allow_int4=True, allow_sparse=True)
@@ -69,8 +53,7 @@ def test_conv_int8_emits_affine_dequantize():
 
 
 def test_conv_int8_halves_weight_bytes():
-  """Per-channel int8 ~halves the conv DRAM weight bytes vs fp16 (residual = the
-    per-output-channel fp16 scale vector + blob descriptors)."""
+  """Per-channel int8 ~halves the conv DRAM weight bytes vs fp16."""
   W = (rng.standard_normal((64, 32, 3, 3)) * 0.2).astype(np.float16)
   fp16 = C._Emitter(int8=False, compress=None)
   fp16.weight("c_w", W, allow_int8=True, int8=None, allow_int4=True, allow_sparse=True)
@@ -81,9 +64,7 @@ def test_conv_int8_halves_weight_bytes():
 
 
 def test_conv_compress_none_byte_identical_at_opt0():
-  """Enabling allow_int8 must NOT change the compress=None (opt=0) lowering: the int8
-    branch is gated on the compress knob (use_int8), which compress=None never sets, so
-    the emitted MIL and blob bytes are byte-identical to the historical fp16 path."""
+  """Enabling allow_int8 must NOT change the compress=None (opt=0) lowering (byte-identical)."""
   W = (rng.standard_normal((32, 16, 3, 3)) * 0.2).astype(np.float16)
   new = C._Emitter(int8=False, compress=None)     # conv now passes allow_int8=True
   new.weight("c_w", W, allow_int8=True, int8=None, allow_int4=True, allow_sparse=True)
@@ -94,8 +75,7 @@ def test_conv_compress_none_byte_identical_at_opt0():
 
 
 def test_auto_rewriter_includes_conv():
-  """The per-node int8 auto-rewriter now treats conv as a weight-bearing candidate:
-    list_weight_nodes finds it and set_node_int8 tags it with int8=True."""
+  """The per-node int8 auto-rewriter treats conv as a weight-bearing candidate."""
   from aneforge._rewrite import set_node_int8, list_weight_nodes
   from aneforge._compile import _topo
   from aneforge._optimize import _has_weights, _int8_candidates

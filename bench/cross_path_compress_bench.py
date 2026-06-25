@@ -1,15 +1,4 @@
-"""Cross-path speed comparison for compressed weight streaming: ANEForge (ANE,
-fp16 + int4-LUT) versus MLX (GPU, fp16 + 4-bit group-affine quant), same matmul
-y = x @ W (x = [B, K], W = [K, N]). Latency only (no power), median of timed
-evals after warmup; each path's result is cosine-checked against the fp32
-reference so a wrong quantize/transpose convention cannot silently skew timing.
-
-This answers "how does ANEForge compressed streaming compare to the GPU's own
-int4 path", the cross-path companion to compress_speedup_bench.py (which is
-ANE-internal). Run: PYTHONPATH=<repo> python3 bench/cross_path_compress_bench.py
-(needs python3 with both aneforge and mlx; on this box that is the 3.14 interp).
-Writes: bench/results/cross_path_compress_bench.json
-"""
+"""Cross-path compressed-matmul speed: ANEForge (ANE fp16/int4-LUT) vs MLX (GPU fp16/4-bit). Run: PYTHONPATH=<repo> python3 bench/cross_path_compress_bench.py"""
 from __future__ import annotations
 
 import json

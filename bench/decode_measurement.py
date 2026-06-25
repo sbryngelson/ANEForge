@@ -1,64 +1,5 @@
 #!/usr/bin/env python3
-"""Real autoregressive LLM-DECODE measurement - ANE (aneforge) vs GPU (MLX) vs CPU.
-
-WHY THIS EXISTS. The paper reasons extensively about LLM *decode* - "GEMV AI ~ 1,
-decode is bandwidth/GPU territory", the device ordering inferred from a single
-synthetic GEMV roofline point (ANE 112 / GPU 75 / CPU 81 GFLOP/s; ANE winning at
-B=1 up to K~4096; batched shifting toward the GPU). But the paper never MEASURES
-an actual decode loop. This harness measures one and states plainly whether the
-measured decode CONFIRMS or CONTRADICTS that inference.
-
-WHAT IS MEASURED. The per-token compute of a small transformer decoder in the
-canonical decode regime: seq position = 1 (the M=1 / GEMV / skinny-GEMM regime),
-with a fixed-length KV cache. One "token" = one forward of the full L-layer stack
-plus the vocab projection. We run:
-
-  * B=1   single-stream decode (the canonical on-device case), AND
-  * B=BATCH (default 32) batched decode (the serving case),
-
-for each device {ANE (aneforge fp16), GPU (MLX fp16), CPU (numpy/Accelerate fp32)}.
-
-Per device per batch we report: tokens/s, latency/token (ms), tokens/s/W and
-energy/token (mJ/token) - using the idle-subtracted total-package ACTIVE power
-from the device_compare_wattcomplete harness (imported, not reimplemented) - and
-relerr of one token's logits vs an fp32 numpy reference (sanity).
-
-THE PER-TOKEN LAYER. A decoder block in the decode regime:
-    h  = x
-    a  = attn(rmsnorm(h))          # QKV proj GEMVs + scores vs KV cache + out proj
-    h  = h + a
-    f  = ffn(rmsnorm(h))           # gate/up GEMVs + SiLU + down proj GEMV
-    h  = h + f
-then after L blocks: logits = rmsnorm(h) @ Wvocab  (the big vocab GEMV).
-
-The attention here uses a FIXED, PRE-FILLED KV cache of length S_KV: the query is
-the single new token (seq=1), scores are q @ Kcache^T  -> softmax -> @ Vcache. This
-is the faithful per-token decode shape - the projections are genuine M=1 GEMVs and
-dominate the FLOPs, which is exactly why decode is memory-bound. The KV cache is a
-constant baked into the graph (we measure steady-state per-token compute, not the
-cache-append bookkeeping, which is a memcopy on every backend and not the compute
-the roofline argument is about).
-
-ANE NOTE / PROXY LABELLING. aneforge fuses the whole block into e5rt program(s).
-af.sdpa requires equal-shape q,k,v so it can't express seq=1-query-vs-S_KV-cache;
-we therefore build attention from primitives (bmm scores + softmax + bmm context),
-which is the decomposed-SDPA route the ANE fuses natively anyway. This is a
-FULL-STACK decode forward (not a primitives-only proxy) - every per-token op of the
-block + vocab head is present and measured end-to-end as one compiled program per
-batch size. The only decode-loop element not measured is the KV-cache *append*
-(a memcopy, identical cost on every backend).
-
-CONFIG (default, TinyLlama/GPT-small class):
-    d_model=2048, n_layers=8, n_heads=16, FFN=4x (d_ff=8192), vocab=32000,
-    KV cache length S_KV=256.
-
-Run from repo root (energy needs passwordless sudo for powermetrics):
-
-    PYTHONPATH=. python3 bench/decode_measurement.py
-
-Writes bench/results/decode_measurement_results.json. --quick shrinks the model
-(d=1024,L=4) and the power window for a smoke test. Devices run SEQUENTIALLY.
-"""
+"""Real autoregressive LLM-decode measurement (full per-token stack + vocab head, fixed KV cache) - ANE vs GPU (MLX) vs CPU. Run: PYTHONPATH=. python3 bench/decode_measurement.py"""
 from __future__ import annotations
 
 import argparse
@@ -77,8 +18,7 @@ if str(REPO) not in sys.path:
 
 import numpy as np
 
-# Reuse the rigorous power harness (idle-subtracted total-package active W) - import,
-# do NOT reimplement. measure_energy/sample_idle live in device_compare_wattcomplete.
+# Reuse the wattcomplete power harness (measure_energy/sample_idle).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare_wattcomplete as wc  # noqa: E402
 import device_compare as dc                # noqa: E402
@@ -109,9 +49,7 @@ class Cfg:
                 "s_kv": self.s_kv}
 
     def flops_per_token(self, B):
-        """2*MACs for the per-token forward of B streams: per layer = 4 proj GEMVs
-        (QKV=3*d*d, out=d*d) + attention (2 * H * s_kv * dh for scores+context) +
-        FFN (gate+up = 2*d*d_ff, down = d_ff*d); plus the vocab GEMV d*vocab."""
+        """2*MACs for the per-token forward of B streams (proj + attention + FFN + vocab GEMVs)."""
         d, L, H, dh, dff, V, s = self.d, self.L, self.H, self.dh, self.d_ff, self.vocab, self.s_kv
         per_layer = (4 * d * d) + (2 * H * s * dh) + (3 * d * dff)
         total_macs = L * per_layer + d * V
@@ -164,8 +102,7 @@ def ref_decode(cfg: Cfg, W, x, dt=np.float64):
         qh = q.reshape(B, H, dh)                       # [B, H, dh]
         Kc = w["Kc"].astype(dt)                        # [H, s, dh]
         Vc = w["Vc"].astype(dt)
-        # append the new token's k,v to the cache for this single decode step
-        # scores for the new query against (cache + self): [B,H,1,s+1]
+        # scores for the new query against (cache + self)
         kh = k.reshape(B, H, dh)
         vh = v.reshape(B, H, dh)
         out = np.empty((B, H, dh), dtype=dt)
@@ -191,22 +128,9 @@ def ref_decode(cfg: Cfg, W, x, dt=np.float64):
 
 # ANE graph (aneforge) - full per-token stack, batch B
 def build_ane(cfg: Cfg, W, B, int8=False):
-    """Build the B-stream per-token decoder forward as one aneforge graph.
-
-    ``int8=True`` compiles the linear weights as per-output-channel symmetric int8
-    streamed at half the bytes (dequantised during the tile DMA) - the verified
-    int8 weight-streaming path. Decode is the AI~1 memory-bound regime, so halving
-    the weight bytes is the one lever that can move decode THROUGHPUT, not just
-    energy; this row tests whether it does, or whether decode stays dispatch-bound.
-
-    aneforge has no constant-tensor leaf node, and a bmm (activation@activation) needs
-    Tensor operands - so the per-layer KV cache is supplied as GRAPH INPUTS (fed each
-    call). That's the only correct way to express a cache here; the cache bytes are
-    constant data the caller passes in, exactly like a real decode loop reads its cache
-    from memory. Returns (Model, list-of-cache-arrays) so the runner feeds x + caches.
-
-    Attention is per (batch*head): scores = concat(q@Kc^T, q@k_self) -> softmax ->
-    @ concat(Vc, v_self). Projections are the M=1 GEMVs that dominate; fp16 weights."""
+    """Build the B-stream per-token decoder forward as one aneforge graph. int8=True
+    streams per-channel int8 weights. KV cache is supplied as graph inputs; returns
+    (Model, list-of-cache-arrays) so the runner feeds x + caches."""
     f16 = np.float16
     H, dh, s, d = cfg.H, cfg.dh, cfg.s_kv, cfg.d
     x = af.input((B, d))
@@ -221,7 +145,7 @@ def build_ane(cfg: Cfg, W, B, int8=False):
         qh = q.reshape(B * H, 1, dh)
         kh = k.reshape(B * H, 1, dh)
         vh = v.reshape(B * H, 1, dh)
-        # KV cache as graph inputs (broadcast across batch): Kc_T [B*H,dh,s], Vc [B*H,s,dh]
+        # KV cache as graph inputs (broadcast across batch)
         Kc_T_arr = np.ascontiguousarray(
             np.tile(w["Kc"][None], (B, 1, 1, 1)).reshape(B * H, s, dh).transpose(0, 2, 1).astype(f16))
         Vc_arr = np.ascontiguousarray(
@@ -312,8 +236,7 @@ def min_latency(fn, reps, warmup):
 
 
 def measure_device(name, run_once, *, B, cfg, ref, window, reps, warmup, get_out):
-    """One device/batch point: min latency/token, throughput, energy via the
-    wattcomplete harness, relerr vs fp32 ref. get_out() returns the logits as np."""
+    """One device/batch point: min latency/token, throughput, energy, relerr vs fp32 ref."""
     row = {"device": name, "batch": B, "status": "ok"}
     try:
         lat = min_latency(run_once, reps=reps, warmup=warmup)   # s per token-step (B streams)
@@ -342,7 +265,6 @@ def measure_device(name, run_once, *, B, cfg, ref, window, reps, warmup, get_out
             row["energy_iter_ms"] = e.get("iter_ms")
             row["flags"] = e.get("flags")
             if apw == apw and apw > 0:
-                # throughput from the energy loop's own iter time (sustained), B streams
                 tok_s_energy = B / (e["iter_ms"] / 1e3)
                 row["tokens_per_s_sustained"] = tok_s_energy
                 row["tokens_per_s_per_W"] = tok_s_energy / apw
@@ -381,7 +303,7 @@ def main():
 
     W = make_weights(cfg)
 
-    # idle baseline ONCE (the wattcomplete harness subtracts it)
+    # idle baseline once (subtracted by the harness)
     if HAVE_SUDO:
         print("sampling idle baseline...", flush=True)
         wc.sample_idle(3.0)

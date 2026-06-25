@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Energy: the whisper-tiny encoder on the ANE vs the Metal GPU (MPS), whole-package,
-idle-subtracted, via powermetrics. Same methodology as the project's headline numbers
-(bench/device_compare_wattcomplete.py): sample CPU+GPU+ANE rails at 500 ms, subtract a
-per-rail idle baseline, report milliJoules per encode.
-
-Needs passwordless sudo for powermetrics. Run from repo root:
-    PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_energy.py [--window 8]
-"""
+"""Whisper-tiny encoder energy (ANE vs Metal GPU), idle-subtracted via powermetrics. Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/bench_energy.py"""
 from __future__ import annotations
 
 import argparse

@@ -1,54 +1,5 @@
 #!/usr/bin/env python3
-"""Memory-bandwidth roofline - ANE (aneforge fp16) vs GPU (MLX) vs CPU.
-
-The compute-bound primitives (GEMM, conv) are covered by the saturation sweep
-(``device_saturation_sweep.py``). But those are the MINORITY of aneforge's op set.
-The large majority - elementwise activations, binaries, reductions, softmax, the
-norm family, data-movement (reshape/transpose/concat/upsample/pixel_shuffle) - are
-**memory-bandwidth-bound at size**, not compute-bound. For those, GFLOP/s is the
-wrong metric: the meaningful number is **achieved memory bandwidth (GB/s)** and
-**GB/s per watt**, and they all collapse onto one roofline. This script measures
-that roofline.
-
-KEY METHODOLOGY (a crude probe gave low/noisy numbers - done right here):
-
-  * SIZE TO SATURATION. At small N the ~70 us ANE / dispatch floor dominates and
-    HIDES bandwidth (you measure dispatch, not memory). We scale N until the
-    achieved GB/s CLIMBS and PLATEAUS - that plateau is the bandwidth ceiling. We
-    report the plateau AND the full climb curve as the evidence. If a device stays
-    dispatch-bound at all feasible sizes for an archetype, we say so.
-
-  * BYTES MODEL (stated, not hidden).  Bandwidth = bytes_moved / min_latency.
-      - streaming unary (x*s / relu):  read N + write N  = 2*N*dtbytes
-      - light-compute unary (gelu/silu): same traffic    = 2*N*dtbytes
-      - reduction (sum over all):      read N, write ~1  = 1*N*dtbytes
-      - softmax (last axis):           read N, write N    = 2*N*dtbytes
-        (max+exp/sum+div is read-once/write-once at the framework level; the two
-         logical passes are fused, so 2N is the actual external traffic)
-      - layer_norm (last axis):        read N, write N    = 2*N*dtbytes
-    dtbytes = 2 (fp16) for GPU/ANE, 4 (fp32) for CPU. The CPU bandwidth proxy uses
-    a genuinely memory-bound op (a*2.0 / a.sum), NOT a transcendental - a tanh-heavy
-    gelu is COMPUTE-bound in numpy and would understate CPU bandwidth.
-
-  * POWER at the saturating size. Reuses the rigorous energy harness from
-    ``device_compare_wattcomplete`` verbatim (idle-subtracted ACTIVE total-package
-    power from powermetrics' own ``Combined Power`` line, median + CV%, sustained
-    loop driven to sampler-exit). GB/s/W = peak GB/s / active-package-W.
-
-  * ACCURACY. relerr vs fp32 numpy reference where meaningful (the activations,
-    softmax, norm). Pure-copy/reduction relerr is ~0 by construction.
-
-PART 2 (op coverage): classifies EVERY op in aneforge's live ``_EMIT`` (50) and
-``NETPLIST_OPS`` (19) into a roofline class, driven off the live dicts so it can't
-silently omit an op. Emitted as a table to the JSON + printed.
-
-Run from repo root (energy needs passwordless sudo for powermetrics):
-
-    PYTHONPATH=. python3 bench/device_bandwidth_roofline.py
-
---quick runs a reduced window + a coarser size sweep for a smoke test.
-Writes bench/results/device_bandwidth_roofline_results.json alongside the tables.
-"""
+"""Memory-bandwidth roofline (achieved GB/s + GB/s/W for the BW-bound op archetypes) + op-coverage classification - ANE vs GPU (MLX) vs CPU. Run: PYTHONPATH=. python3 bench/device_bandwidth_roofline.py"""
 from __future__ import annotations
 
 import argparse
@@ -66,7 +17,6 @@ if str(REPO) not in sys.path:
 
 import numpy as np
 
-# Reuse the rigorous harnesses - do NOT reinvent the power methodology.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare as dc            # noqa: E402
 import device_compare_wattcomplete as wc  # noqa: E402  (energy harness + idle sampling)
@@ -81,20 +31,15 @@ if HAVE_ANE:
 if HAVE_MLX:
     import mlx.core as mx
 
-# size sweep: element counts (per archetype we pick a 2D shape with this many elems).
-# The climb-to-plateau evidence lives in this sweep; the largest size is the ceiling.
+# size sweep: element counts (largest size is the bandwidth ceiling)
 SIZES = [1 << 18, 1 << 20, 1 << 22, 1 << 23, 1 << 24, 1 << 25, 1 << 26]  # 256K .. 64M
 QUICK_SIZES = [1 << 20, 1 << 23, 1 << 25]
 
 RESULTS: dict = {"roofline": {}, "coverage": {}}
 
 
-# archetypes: each returns (ane_net_builder, mlx_run, cpu_run, bytes_per_elem_factor,
-# ref_fn) for a given element count. shape is 2D [R, Dlast] chosen near-square but with
-# a real last axis for the reductions/softmax/norm.
 def _shape_for(nelem: int, dlast: int = 4096) -> tuple[int, int]:
-    """A [R, D] shape with ~nelem elements and a sizeable last axis D for the
-    reduction/softmax/norm archetypes (so the reduced axis is non-trivial)."""
+    """A [R, D] shape with ~nelem elements and a sizeable last axis D."""
     d = dlast
     r = max(1, nelem // d)
     return (r, d)
@@ -184,8 +129,7 @@ def build_archetypes():
     """Return the archetype spec list. Each entry drives run_archetype."""
     specs = []
 
-    # 1. PURE STREAMING - relu (read+write, ~zero arithmetic). Cleanest BW probe.
-    #    bytes = 2*N*dt
+    # 1. streaming - relu (read+write, ~zero arithmetic); bytes = 2*N*dt
     def ane_relu(x, R, D):
         net = af.compile(af.input((R, D)).relu())
         return net, x.astype(np.float16)
@@ -195,14 +139,14 @@ def build_archetypes():
             mx.eval(mx.maximum(xg, 0))
         return fn, (lambda: np.array(mx.maximum(xg, 0), copy=False))
     def cpu_stream(x, R, D):
-        # genuinely memory-bound: scalar multiply (NOT a transcendental)
+        # memory-bound proxy: scalar multiply (not a transcendental)
         def fn():
             _ = x * 2.0
         return fn, None
     specs.append(("streaming (relu / x*2)", 2, ane_relu, mlx_relu, cpu_stream,
                   (lambda x: np.maximum(x, 0)), True))
 
-    # 2. LIGHT-COMPUTE ELEMENTWISE - gelu (a few flops/elem; still BW-bound at size)
+    # 2. light-compute elementwise - gelu (still BW-bound at size)
     def ane_gelu(x, R, D):
         net = af.compile(af.input((R, D)).gelu())
         return net, x.astype(np.float16)
@@ -214,20 +158,19 @@ def build_archetypes():
             mx.eval(gel(xg))
         return fn, (lambda: np.array(gel(xg), copy=False))
     def cpu_gelu_bw(x, R, D):
-        # CPU proxy stays memory-bound (copy), NOT the transcendental gelu - see header.
+        # CPU proxy stays memory-bound (copy), not the transcendental gelu
         def fn():
             _ = x.copy()
         return fn, None
     def ref_gelu(x):
         from scipy.special import erf  # noqa
         return x * 0.5 * (1 + erf(x / np.sqrt(2.0)))
-    # scipy may be absent; fall back to a numpy erf approximation for the ref.
     def ref_gelu_np(x):
         return x * 0.5 * (1.0 + np.tanh(np.sqrt(2/np.pi) * (x + 0.044715 * x**3)))
     specs.append(("gelu (light compute)", 2, ane_gelu, mlx_gelu, cpu_gelu_bw,
                   ref_gelu_np, True))
 
-    # 3. REDUCTION - sum over last axis (read N, write R). bytes ~ 1*N*dt
+    # 3. reduction - sum over last axis; bytes ~ 1*N*dt
     def ane_sum(x, R, D):
         net = af.compile(af.input((R, D)).sum(-1))
         return net, x.astype(np.float16)
@@ -243,7 +186,7 @@ def build_archetypes():
     specs.append(("reduction (sum)", 1, ane_sum, mlx_sum, cpu_sum,
                   (lambda x: x.sum(-1)), True))
 
-    # 4. SOFTMAX over last axis. bytes = 2*N*dt (read+write the full tensor)
+    # 4. softmax over last axis; bytes = 2*N*dt
     def ane_softmax(x, R, D):
         net = af.compile(af.input((R, D)).softmax(-1))
         return net, x.astype(np.float16)
@@ -265,7 +208,7 @@ def build_archetypes():
     specs.append(("softmax", 2, ane_softmax, mlx_softmax, cpu_softmax,
                   ref_softmax, True))
 
-    # 5. LAYER_NORM over last axis (the real-model primitive). bytes = 2*N*dt
+    # 5. layer_norm over last axis; bytes = 2*N*dt
     def make_ln(R, D):
         rng = np.random.default_rng(13)
         g = (rng.standard_normal(D).astype(np.float32) * 0.1 + 1.0)
@@ -365,13 +308,9 @@ def measure_peak_power(specs, sizes):
 
 
 # PART 2 - op -> roofline-class coverage (driven off live _EMIT / NETPLIST_OPS)
-# class -> set of op names. We classify by op semantics. Driven against the LIVE
-# dicts below so a missing op raises, not silently drops.
 COMPUTE_BOUND = {
     "matmul", "bmm", "conv", "conv_transpose",
 }
-# bandwidth-bound: activations, elementwise binaries, reductions, softmax, norms,
-# data-movement / shape ops.
 BANDWIDTH_BOUND = {
     # activations / elementwise unary (transcendental or cheap)
     "relu", "relu6", "leaky_relu", "elu", "gelu", "silu", "sigmoid", "tanh",
@@ -390,23 +329,18 @@ BANDWIDTH_BOUND = {
     "pixel_shuffle", "pixel_unshuffle",
 }
 # dispatch/latency-bound: scalar / tiny ops where the dispatch floor dominates
-# (covered by the floor finding - CPU wins tiny).
 DISPATCH_BOUND = {
-    "adds", "muls",  # scalar-broadcast ops, trivially tiny arithmetic
+    "adds", "muls",  # scalar-broadcast ops
 }
 
-# NETPLIST bridge ops. has_worker => persistent worker => fairly raceable silicon.
-# without => subprocess-per-call: dispatch-bound ARTIFACT, not a fair speed race.
+# NETPLIST bridge ops with a persistent worker are raceable silicon; the rest are subprocess artifacts.
 WORKER_OPS = {"sdpa", "argmax", "topk"}   # the persistent-worker op set
 
-# Map a bridge op to its measurement story.
 BRIDGE_CLASS = {
-    # has a persistent worker -> can benchmark silicon time
     "sdpa": "bridge:worker (raceable - covered as attention class)",
     "argmax": "bridge:worker (raceable silicon via persistent worker)",
     "topk": "bridge:worker (raceable silicon via persistent worker)",
 }
-# everything else in NETPLIST_OPS without a worker -> subprocess artifact, not raceable.
 
 
 def build_coverage():

@@ -1,13 +1,4 @@
-"""group_norm rank-4 tiling (Direction C): the SD-1.5 large-feature-map wall.
-
-The native group_norm now lowers to [1,G,C/groups,H*W] and reduces the trailing two
-axes (instead of flattening to [1,G,(C/groups)*H*W]), so every internal axis stays under
-the ANE per-axis cap. This lets SD-1.5's 640ch@64 and 512ch@128 maps compile + run where
-the flattened extent (81920 / 262144) overflowed. These tests pin small-shape correctness,
-big-shape correctness vs fp32, and the relaxed construction guard.
-
-    PYTHONPATH=. python3 -m pytest tests/test_group_norm_tiling.py -q
-"""
+"""group_norm rank-4 tiling: keeps each internal axis under the ANE per-axis cap (SD-1.5 maps)."""
 from __future__ import annotations
 
 import numpy as np
@@ -63,8 +54,7 @@ def test_group_norm_small_shapes(C, H, W, G):
 @requires_ane
 @pytest.mark.parametrize("C,H,W,G", [(640, 64, 64, 32), (512, 128, 128, 32)])
 def test_group_norm_sd15_large_maps_run(C, H, W, G):
-  # flat per-group (C/G)*H*W = 81920 / 262144 used to overflow the per-axis cap; the
-  # rank-4 tiling keeps max(C/G, H*W) under it so these compile + run in fp16.
+  # flat (C/G)*H*W = 81920 / 262144 used to overflow the cap; rank-4 tiling keeps it under.
   got, ref = _run(C, H, W, G)
   assert np.abs(got - ref).max() < 0.03
 
@@ -73,11 +63,11 @@ def test_group_norm_sd15_large_maps_run(C, H, W, G):
 def test_group_norm_guard_allows_large_product_small_axes():
   # 640ch@64/G32: product 81920 > 65536 (old guard rejected) but max(C/G,H*W)=4096 fits.
   af.input((1, 640, 64, 64)).group_norm(np.ones(640, np.float16), np.zeros(640, np.float16), 32)
-  # 512ch@128/G32: product 262144, tiled axes D=16 / H*W=16384 both fit.
+  # 512ch@128/G32: product 262144 but tiled axes D=16 / H*W=16384 both fit.
   af.input((1, 512, 128, 128)).group_norm(np.ones(512, np.float16), np.zeros(512, np.float16), 32)
 
 
 def test_group_norm_guard_rejects_oversize_single_axis():
-  # A single tiled axis above 65536 still raises: H*W = 257*257 = 66049 > 65536.
+  # single tiled axis above 65536 still raises: H*W = 257*257 = 66049 > 65536
   with pytest.raises(ValueError, match="largest tiled axis"):
     af.input((1, 4, 257, 257)).group_norm(np.ones(4, np.float16), np.zeros(4, np.float16), 1)

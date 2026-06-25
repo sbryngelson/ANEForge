@@ -1,6 +1,4 @@
-"""Native ANE causal SDPA: the fused-attention layer's optional additive-mask (5th) bottom.
-Validated against softmax(QK^T*scale + mask)*V at the bridge entry. The high-level af.sdpa
-is_causal path is not wired yet (it raises), so it is asserted to fail loudly, not silently."""
+"""Native ANE causal SDPA + additive-mask bottom and query-tiled decomposition, vs softmax(QK^T*scale + mask)*V."""
 from __future__ import annotations
 import math
 import numpy as np

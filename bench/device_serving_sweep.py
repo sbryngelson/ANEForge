@@ -1,59 +1,5 @@
 #!/usr/bin/env python3
-"""Batched SERVING sweep - ANE (aneforge fp16) vs GPU (MLX fp16) across BATCH SIZE.
-
-The serving-regime complement to the single-stream device map
-(``device_compare_wattcomplete.py``). That harness answers "which device per op at
-B=1". This one answers the serving question: *as you batch, where does the GPU's
-throughput (and its throughput/watt) overtake the ANE's?* - the crossover that
-decides which accelerator a serving deployment should target at a given batch size.
-
-METHODOLOGY - reused verbatim from device_compare_wattcomplete (see that file's
-docstring for the full rationale); this script imports its energy harness so the
-numbers are produced by the SAME code:
-
-  * idle-subtracted ACTIVE power; headline = total-package power from powermetrics'
-    own ``Combined Power (CPU + GPU + ANE)`` line (NOT a hand-summed rail total -
-    the GPU rail prints twice per sample block);
-  * median + CV% over the per-sample package totals (CV>35% is FLAGGED low-confidence);
-  * sustained loop driven until the sampler process EXITS (the fix that got CV to
-    1-25%); warmup before the window;
-  * accuracy (relerr vs an fp32/fp64 numpy reference) reported alongside; fp16 both
-    sides; forced device sync (compiled-net call on ANE, ``mx.eval`` on GPU).
-
-TRUE BATCHING ON BOTH SIDES: each workload is ONE compiled program with a real
-batch dimension B (NOT multi-stream). The ANE true-batches - dispatch amortizes
-over B - so a real batch dim is the fair apples-to-apples vs GPU batching. We sweep
-B in {1, 4, 16, 64, 256}; if an ANE workload fails to compile / OOMs at some B we
-report the cap as a finding (we do NOT silently drop it or fall back to multi-stream).
-
-WORKLOADS (4, serving-relevant):
-  1. vision    - a 3x3 conv stack -> GAP -> FC, image-classifier serving (N=B images,
-                 conv's native batch dim).
-  2. encoder   - a transformer-encoder block (attn + MLP + 2 layernorms) at S=128,
-                 batched over B sequences; embedding serving. Batched as a rank-3/4
-                 graph (layernorm folds B into rows [B*S, D]).
-  3. attention - the self-attention block alone at S=128, batched over B (rank-4
-                 q@k / softmax / @v). The decomposed-SDPA route, true-batched.
-  4. gemm      - the batched GEMM [B,M,K] @ [K,N] underlying serving, the throughput
-                 primitive.
-
-METRICS per (workload, B, device):
-  * throughput = items/s (images or sequences per second) and latency/call (ms);
-  * total-package ACTIVE power (idle-subtracted, median + CV%), sustained loop;
-  * throughput/watt = items/s / active_W;  energy/item = active_W * call_ms / B (mJ);
-  * accuracy = relerr vs fp32 reference.
-
-DELIVERABLE = the two crossovers per workload: the B where GPU THROUGHPUT overtakes
-ANE, and the B where GPU THROUGHPUT/WATT overtakes ANE (typically a larger B - the
-ANE's watt advantage persists past its throughput advantage). Printed explicitly.
-
-Run from repo root (energy needs passwordless sudo for powermetrics)::
-
-    PYTHONPATH=. python3 bench/device_serving_sweep.py
-
-Writes bench/results/device_serving_sweep_results.json. --quick = short window;
---batches "1,4,16" overrides the sweep; --window N overrides the per-loop seconds.
-"""
+"""Batched serving sweep: finds the batch size where GPU throughput / throughput-per-watt overtakes the ANE, across 4 serving workloads - ANE vs GPU (MLX). Run: PYTHONPATH=. python3 bench/device_serving_sweep.py"""
 from __future__ import annotations
 
 import argparse
@@ -93,25 +39,18 @@ RESULTS: dict[str, dict] = {}
 
 # one measured point: latency (min over reps) + sustained-loop energy
 def measure_point(wl, device, B, run_once, *, items_per_call, relerr_val, tag):
-    """Time one (device,B) point and run the reused energy harness on it.
-
-    items_per_call = the number of serving items processed by one run_once() call
-    (= B here, since the whole batch is one call). throughput = items/s, perf/watt
-    and energy/item are derived from the sustained-loop active package power."""
+    """Time one (device,B) point + run the energy harness. items_per_call = B."""
     lat, _out = min_latency_with_out(run_once, reps=20, warmup=6)
     thr = items_per_call / lat                                    # items/s
     point = {"device": device, "B": B, "latency_ms": lat * 1e3,
              "throughput_items_s": thr, "relerr": relerr_val}
-    # reuse the wattcomplete sustained-loop power harness verbatim
     e = wc.measure_energy(run_once, tag=tag, window=wc.WINDOW)
     if e is not None:
         apw = e.get("active_pkg_W", float("nan"))
         sane = apw == apw and apw > 0
-        # plausibility guard, same as wattcomplete's _attach_energy
         if device == "ANE" and e.get("ane_active_mW", 0.0) < 5.0 and not e["flags"]:
             e["flags"].append("ANE rail ~0 mW during ANE workload - likely a 100ms sampling miss")
-        # the loop's own per-iter time is the steady-state call time; throughput/watt
-        # and energy/item use it (the min-latency above is the headline call time).
+        # steady-state call time from the loop's per-iter time
         loop_items_s = items_per_call / (e["iter_ms"] / 1e3)
         if sane:
             e["throughput_items_s"] = loop_items_s
@@ -200,8 +139,7 @@ def wl_vision(batches):
 
 def _build_encoder_ane(B, S, D, H, Wq, bq, Wk, bk, Wv, bv, Wo, bo, W1, b1, W2, b2,
                        g1, bn1, g2, bn2):
-    """One batched transformer-encoder block as an aneforge graph (rank-4 attn,
-    layernorms folded to [B*S, D]). Returns the compiled Model. fp16 weights."""
+    """One batched transformer-encoder block as an aneforge graph; returns the compiled Model."""
     dh = D // H
     x = af.input((B, S, D))
     # pre-LN attention
@@ -438,8 +376,7 @@ def _series(points, device, key):
 
 
 def _crossover(ane, gpu):
-    """First B where GPU >= ANE (linear-interpolated in log2 B). Returns
-    (crossover_B or None, verdict_string)."""
+    """First B where GPU >= ANE (log2-B interpolated). Returns (crossover_B or None, verdict)."""
     ad = dict(ane); gd = dict(gpu)
     common = sorted(set(ad) & set(gd))
     if not common:
@@ -453,7 +390,6 @@ def _crossover(ane, gpu):
     for i in range(1, len(diffs)):
         b0, d0 = diffs[i - 1]; b1, d1 = diffs[i]
         if d0 < 0 <= d1:
-            # log2-B interpolation of the crossover point
             l0, l1 = np.log2(b0), np.log2(b1)
             frac = -d0 / (d1 - d0) if (d1 - d0) != 0 else 0.0
             bx = 2 ** (l0 + frac * (l1 - l0))

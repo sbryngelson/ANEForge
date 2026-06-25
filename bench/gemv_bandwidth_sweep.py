@@ -1,34 +1,5 @@
 #!/usr/bin/env python3
-"""GEMV weight-stream bandwidth sweep (corroborates the ~112 GB/s).
-
-Peer-review blocker: the paper's "~112 GB/s ANE weight-stream bandwidth" (the
-*second* bandwidth, distinct from the choked ~24 GB/s standalone-activation path)
-is inferred from a SINGLE GEMV point (M=1, K=N=4096, 466% of the drawn ~24 GB/s
-roof) with no climb-to-plateau. The same evidence standard the paper applies to
-the 24 GB/s elementwise number (flat-with-size plateau) must be applied here.
-
-This script sweeps the decode GEMV (M=1) on the ANE across K=N in
-{512,1024,2048,4096,6144,8192} (plus a few rectangular K!=N), and for each computes
-the ACHIEVED EFFECTIVE WEIGHT-STREAM BANDWIDTH:
-
-    eff_BW = (weight_bytes + input_bytes + output_bytes) / min_latency
-
-with weight_bytes = K*N*2 (fp16), input = K*2, output = N*2. The weight matrix
-dominates at M=1, so this is the weight-DMA bandwidth the decode GEMV actually
-drives. We report GB/s per K and ask: does it plateau ~112 GB/s (supporting the
-two-bandwidth claim) or vary (undermining it)?
-
-The same GEMV sweep is run on GPU (MLX fp16) and CPU (numpy/Accelerate fp32) for
-context. Power (idle-subtracted total-package, median + CV) is measured at the
-4096 and 8192 points via the rigorous harness imported from
-device_compare_wattcomplete.
-
-Run from repo root (energy needs passwordless sudo for powermetrics):
-
-    PYTHONPATH=. python3 bench/gemv_bandwidth_sweep.py
-
-Writes bench/results/gemv_bandwidth_sweep_results.json. --quick caps sizes.
-"""
+"""GEMV weight-stream bandwidth sweep: M=1 decode GEMV across K=N to test whether ANE effective bandwidth plateaus near the paper's ~112 GB/s. Run: PYTHONPATH=. python3 bench/gemv_bandwidth_sweep.py"""
 from __future__ import annotations
 
 import argparse
@@ -79,14 +50,14 @@ def sweep_gemv(K, N, *, reps, warmup, measure_pw):
     label = f"GEMV M=1, K={K}, N={N}"
     print(f"\n=== {label} === (weight {K*N*2/1e6:.1f} MB fp16)", flush=True)
     rng = np.random.default_rng(0)
-    # well-scaled so fp16 is meaningful; aneforge linear wants W as [out,in]=[N,K]
+    # aneforge linear wants W as [out,in]=[N,K]
     x32 = (rng.standard_normal((1, K)).astype(np.float32) / np.sqrt(K))
     W32 = (rng.standard_normal((N, K)).astype(np.float32) / np.sqrt(K))  # [out,in]
     ref = x32.astype(np.float64) @ W32.astype(np.float64).T              # [1,N]
     res = {"K": K, "N": N, "weight_MB": K * N * 2 / 1e6,
            "eff_bytes": eff_bytes(K, N), "devices": {}}
 
-    # ANE (aneforge fused single-program, fp16) ----------------------------- #
+    # ANE (aneforge fused single-program, fp16)
     if HAVE_ANE:
         try:
             net = af.compile(af.input((1, K)).linear(W32.astype(np.float16)))
@@ -118,7 +89,7 @@ def sweep_gemv(K, N, *, reps, warmup, measure_pw):
             res["devices"]["ANE"] = {"error": f"{type(e).__name__}: {e}"}
             print(f"  ANE  FAILED: {type(e).__name__}: {e}")
 
-    # GPU (MLX fp16) -------------------------------------------------------- #
+    # GPU (MLX fp16)
     if HAVE_MLX:
         try:
             xg = mx.array(x32.astype(np.float16))
@@ -151,7 +122,7 @@ def sweep_gemv(K, N, *, reps, warmup, measure_pw):
             res["devices"]["GPU"] = {"error": f"{type(e).__name__}: {e}"}
             print(f"  GPU  FAILED: {type(e).__name__}: {e}")
 
-    # CPU (numpy / Accelerate fp32) ----------------------------------------- #
+    # CPU (numpy / Accelerate fp32)
     try:
         Wt = W32.T.copy()    # [K,N]
         out_h = {}
@@ -160,7 +131,7 @@ def sweep_gemv(K, N, *, reps, warmup, measure_pw):
             out_h["o"] = x32 @ Wt
         lat = min_latency(run, reps=max(10, reps // 2), warmup=warmup)
         out = out_h["o"]
-        # CPU fp32 moves 4 B/elem for the weight; report its own effective BW
+        # CPU fp32 moves 4 B/elem; report its own effective BW
         cpu_bytes = K * N * 4 + K * 4 + N * 4
         d = {"dtype": "fp32", "lat_ms": lat * 1e3,
              "eff_GBps": cpu_bytes / lat / 1e9, "GFLOPs": gflops(K, N, lat),
@@ -194,10 +165,7 @@ def main() -> int:
               f"GPU {wc.IDLE.get('gpu',0):.0f} / CPU {wc.IDLE.get('cpu',0):.0f})")
 
     square = [512, 1024, 2048, 4096] if args.quick else [512, 1024, 2048, 4096, 6144, 8192]
-    # power measured at EVERY square point so the weight-stream tier carries a
-    # GB/s/W column (the only sweep that previously lacked one - closes the
-    # "watt-complete" asymmetry: the 24 GB/s activation path has GB/s/W in
-    # Table 4, the weight path did not). Each point adds one power window.
+    # power at every square point so the weight-stream tier carries a GB/s/W column
     pw_at = set(square)
 
     sweep = []
@@ -205,13 +173,13 @@ def main() -> int:
         sweep.append(sweep_gemv(KN, KN, reps=args.reps, warmup=args.warmup,
                                 measure_pw=(KN in pw_at)))
 
-    # a couple of rectangular K!=N points (same M=1 decode shape)
+    # rectangular K!=N points (same M=1 decode shape)
     rect = [] if args.quick else [(8192, 2048), (2048, 8192), (4096, 11008)]
     rect_res = []
     for (K, N) in rect:
         rect_res.append(sweep_gemv(K, N, reps=args.reps, warmup=args.warmup, measure_pw=False))
 
-    # -------- plateau analysis on the ANE square sweep -------------------- #
+    # plateau analysis on the ANE square sweep
     print("\n" + "=" * 90)
     print(" ANE WEIGHT-STREAM BANDWIDTH (square M=1 GEMV)")
     print("=" * 90)
@@ -232,7 +200,7 @@ def main() -> int:
     verdict = {}
     if ane_bw:
         bws = np.array([b for _, b in ane_bw])
-        # plateau = the large-K tail (>=2048), where small-size dispatch overhead is amortized
+        # plateau = large-K tail (>=2048), dispatch overhead amortized
         tail = np.array([b for k, b in ane_bw if k >= 2048])
         verdict = {
             "ane_bw_all_GBps": {str(k): round(b, 1) for k, b in ane_bw},

@@ -1,14 +1,4 @@
-"""Build-time guards on the graph builders (aneforge/graph.py).
-
-Invalid inputs should fail at graph BUILD time with a clear ValueError, not
-deep in the backend compiler: rms_norm requires a 2D [M,D] input (its lowering
-reshapes to [M,D,1,1]), and conv/conv_transpose share the ANE kernel-width
-tiling limit (kW <= 15).
-
-These are pure graph-construction tests (no ANE): nothing is compiled or run.
-
-Run: PYTHONPATH=. python3 -m pytest tests/test_builder_guards.py -q
-"""
+"""Build-time guards on the graph builders (rms_norm rank, conv/conv_transpose kW<=15)."""
 import numpy as np
 import pytest
 

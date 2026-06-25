@@ -1,9 +1,4 @@
-"""Ops that M1 (A13) cannot run but newer Macs can. On M1 hardware we test the
-TWO things that are testable: (1) the op catalog correctly declares each op's
-cross-chip availability (walled/bridge on M1, native on the supporting family),
-and (2) aneforge GUARDS them on M1 - it refuses (clear arch-gate error) rather
-than silently miscompiling, and the same graph compiles when targeting a chip
-that supports it. The op cannot actually EXECUTE here (that needs the newer silicon)."""
+"""Cross-chip ops M1 can't run: catalog declares availability and aneforge guards them on M1."""
 from __future__ import annotations
 import pytest
 import aneforge as af
@@ -39,7 +34,7 @@ def test_catalog_declares_cross_chip(op):
 
 
 def test_catalog_capability_grows_m1_to_m5():
-  # M5 (family 5) runs at least as many native ops as M1 (family 2) - capability is a ladder.
+  # capability is a ladder: M5 native ops >= M1 native ops
   m1 = set(oc.ops_on("m1", "native"))
   m5 = set(oc.ops_on("m5", "native"))
   assert m1 <= m5, f"M1-native ops not all M5-native: {sorted(m1 - m5)}"
@@ -53,9 +48,7 @@ def test_catalog_capability_grows_m1_to_m5():
     ("sort", lambda: af.compile(af.sort(af.input((1, 16))))),          # compile-time family guard
 ])
 def test_m1_refuses_gated_op(name, mk, monkeypatch):
-  # Pin the M1 (h13) target so this asserts "M1 refuses" regardless of the host
-  # chip: on an M5 host the same ops compile, so relying on host detection would
-  # make the test pass only when run on M1.
+  # pin M1 (h13) so this asserts "M1 refuses" regardless of host chip
   monkeypatch.setenv("ANEFORGE_TARGET", "h13"); TG._cpu_brand.cache_clear()
   try:
     with pytest.raises(Exception) as ei:
@@ -80,14 +73,10 @@ def test_sort_compiles_for_m5_not_m1(monkeypatch):
 
 
 # --- regression: last-axis gather routes off the width axis (A13/A14 crop-DMA quirk) -----
-# The composed gather (slice_by_size + concat) returns WRONG ELEMENTS for a nonzero WIDTH
-# (last-axis) begin on A13/A14; gather transposes the axis off the last position so it is
-# exact on every family. Guards the M2/A14 gather-axis-1 fix (master 41ca47b).
 @requires_ane
 def test_gather_last_axis_matches_numpy():
   import numpy as np
-  # fp16-EXACT integer inputs (distinct values, well under 2048) so array_equal tests
-  # element SELECTION precisely - a wrong element is an integer mismatch fp16 can't mask.
+  # fp16-exact integer inputs so array_equal tests element selection precisely
   x2 = np.arange(8 * 16, dtype=np.float32).reshape(8, 16)
   idx2 = [3, 0, 15, 7, 7, 1]
   got2 = af.compile(af.gather(af.input((8, 16)), idx2, axis=1))(x2)
@@ -103,11 +92,6 @@ def test_gather_last_axis_matches_numpy():
 
 
 # --- regression: the width-slice hazard guard targets the confirmed patterns -------------
-# Two silicon-pinned modes (a2a323a refined the wrong-element mode; M2 silicon corrected the
-# saturation family bound): (1) WRONG ELEMENTS only when >=2 width-offset slices are
-# CONCATENATED (single slices select correctly - 180-config M2 sweep is exact); (2) magnitude
-# SATURATION (|v|>4094 -> inf) on a single width slice, confirmed on A13 AND A14 (M2 probe);
-# A15 pending M3. A16/M5 unaffected.
 def test_width_slice_guard_modes():
   import warnings
   from aneforge import _compile

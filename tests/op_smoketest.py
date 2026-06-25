@@ -1,11 +1,4 @@
-"""Smoke test for aneforge's op surface: build a one-op graph for each operation,
-compile it into an ANE program, run it, and check against a numpy reference.
-
-Covers the ops added from the e5rt conformance sweep
-(the reverse-engineering corpus). Run:
-
-    PYTHONPATH=. python3 tests/op_smoketest.py
-"""
+"""Smoke test for aneforge's op surface: one-op graph per op, compiled/run vs numpy."""
 import math
 import sys
 from pathlib import Path

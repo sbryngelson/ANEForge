@@ -1,10 +1,4 @@
-"""Per-chip ANE target capability core (aneforge._targets).
-
-Host-independent: every fact here is the measured per-family capability data from the
-M1/M5 reverse-engineering (MinimumFamily op floors + the ZinIrHalParameters numeric limits +
-the "MIL is only supported for H13+ ANE architectures" hard floor). No hardware needed
-to run these - family is passed explicitly. Detection + cross-compile are separate.
-"""
+"""Per-chip ANE target capability core (aneforge._targets): host-independent per-family op gating + numeric limits."""
 import pytest
 
 from aneforge import _targets as T

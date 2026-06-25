@@ -1,21 +1,4 @@
-"""Measure the eval-latency win of compressed weight streaming (int4-LUT, sparse)
-versus fp16, on the ANE via aneforge. This is the perf companion to the
-correctness/size results in tests/test_compress.py: it shows that compressed
-weights STREAM (dequant-during-DMA), giving a real per-matmul inference speedup
-on weight-bandwidth-bound ops, not just a smaller file.
-
-Methodology (latency only; no power, by project directive):
-  - one fused single-matmul program per (shape, batch, encoding)
-  - WARMUP warmup evals, then a timed block of ITERS evals -> median latency
-  - repeat the timed block REPS times (re-warming between) -> report median and
-    sample SD across the REPS block-medians, plus the speedup vs the fp16 median
-  - int4 uses a per-tensor LUT (compress_atol high enough that random-normal
-    weights pass the accuracy gate); sparse uses a ~68%-zero weight (|w|<1.0)
-  - weights.bin size is recorded per encoding (the on-disk/load win)
-
-Run: python3 bench/compress_speedup_bench.py
-Writes: bench/results/compress_speedup_bench.json
-"""
+"""Eval-latency win of compressed weight streaming (int4-LUT, sparse) vs fp16 on the ANE. Run: python3 bench/compress_speedup_bench.py"""
 from __future__ import annotations
 
 import json

@@ -1,3 +1,5 @@
+"""On-device autograd: VJP grad-checks, optimizers, and end-to-end training runs."""
+
 from pathlib import Path
 
 import numpy as np
@@ -23,15 +25,12 @@ def test_vjp_registry_and_topo():
 
 
 def _ane_grad(loss, params, loss_scale=1.0):
-  """Compile the backward graph (concatenated param grads), eval on ANE, return
-    a list of numpy grads (one per param) in fp32."""
+  """Compile concatenated param grads, eval on ANE, return per-param fp32 grads."""
   grads = agrad.backward(loss, params, loss_scale=loss_scale)
   flat = [grads[p].reshape(1, int(np.prod(p.shape))) for p in params]
   out = af.concat(flat, axis=1) if len(flat) > 1 else flat[0]
   net = af.compile(out)
   feed = []
-  # inputs in creation order: data inputs need values; here params are the only inputs
-  # (the harness builds graphs whose only inputs are the params)
   import aneforge._compile as _c
   order = [t for t in _c._topo(out) if t.op == "input"]
   order.sort(key=lambda t: t.attrs.get("idx", 0))
@@ -39,7 +38,6 @@ def _ane_grad(loss, params, loss_scale=1.0):
     feed.append(t.attrs["value"].astype(np.float16))
   res = net(*feed).reshape(-1) / loss_scale
   net.release()
-  # split by param sizes
   sizes = [int(np.prod(p.shape)) for p in params]
   outg, k = [], 0
   for p, s in zip(params, sizes):
@@ -56,7 +54,7 @@ def test_muls_grad():
 
 
 def _check(build, params, ref_grads, loss_scale=1.0, atol=3e-2):
-  """build() -> scalar loss using params; ref_grads: list of numpy fp32 grads."""
+  """Grad-check: build() -> scalar loss; compare ANE grads to ref_grads."""
   loss = build()
   ane = _ane_grad(loss, params, loss_scale)
   for ga, gr in zip(ane, ref_grads):
@@ -143,11 +141,7 @@ def _eval_grad_tensor(gt, params):
   return res
 
 
-# grad-checks for the conv/attention coverage vjps (transpose, reshape, concat, #
-# slice_by_size, relu, conv-grad-input, avg_pool, trainable conv2d, mha). Each  #
-# compares the on-ANE analytic gradient to a numpy/finite-difference reference  #
-# (torch is unavailable on this interpreter; numpy FD is the agreed reference). #
-# Require cos > 0.99 and relerr in the fp16 band.                               #
+# ---- conv/attention coverage vjp grad-checks (vs numpy/FD, cos > 0.99) ----
 
 def _ane_grad_shaped(loss, params, loss_scale=1.0):
   """Eval each param's analytic gradient on the ANE in its natural shape."""
@@ -323,11 +317,7 @@ def test_avg_pool_grad():
 
 
 def test_max_pool_grad():
-  # max_pool backward routes g to the argmax of each window, built without
-  # gather/scatter (upsample the pooled max back over each k*k block, mask the
-  # cells equal to it via greater+select). Non-overlapping windows (stride==k,
-  # pad==0). On random continuous inputs ties are rare; matches a numpy/torch
-  # max-pool backward within the fp16 band (cos > 0.99).
+  # max_pool backward routes g to each window's argmax (non-overlapping, stride==k)
   rng = np.random.default_rng(58)
   N, C, H, W, k = 2, 3, 8, 8, 2
   xv = rng.standard_normal((N, C, H, W)).astype(np.float32)
@@ -457,15 +447,11 @@ def test_adam_minimizes_quadratic():
 
 
 def test_cnn_trains_on_subset():
-  # conv -> relu -> avg_pool -> flatten -> linear -> softmax-CE, forward+backward
-  # on the ANE. The conv weight is a trainable parameter (built from primitives).
+  # conv -> relu -> avg_pool -> flatten -> linear -> softmax-CE, fwd+bwd on ANE
   d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
   Xtr = d["Xtr"].astype(np.float32) / 255.0; ytr = d["ytr"].astype(np.int64)
   Xte = d["Xte"].astype(np.float32) / 255.0; yte = d["yte"].astype(np.int64)
-  # Cap the full-batch size: aneforge's trainable-conv im2col tensors grow with the
-  # batch, so the COMPILE cost scales with B - B=1000 hangs the M1/h13 compiler for
-  # minutes (it compiles fine on M5). 64 keeps the compile fast and is host-independent
-  # (identical on M1 and M5); we trade the headline accuracy for a quick, portable check.
+  # cap batch: trainable-conv compile cost scales with B; 64 keeps it fast/portable
   N = min(Xtr.shape[0], 64)
   Xtr = Xtr[:N]; ytr = ytr[:N]
   Xtr_img = Xtr.reshape(N, 1, 28, 28); Xte_img = Xte.reshape(-1, 1, 28, 28)
@@ -486,20 +472,16 @@ def test_cnn_trains_on_subset():
     tr.step()
   l1 = tr.loss(); acc1 = tr.accuracy(Xte_img, yte)
   tr.release()
-  # At the small batch the model can't reach the full-data ~0.95; assert it clearly
-  # LEARNS (loss collapses, test accuracy jumps well above its starting point).
+  # small batch can't hit ~0.95; assert it clearly LEARNS (loss drops, acc jumps)
   assert l1 < 0.4 * l0 and acc1 > acc0 + 0.3, (l0, l1, acc0, acc1)
 
 
 def test_cnn_maxpool_trains_on_subset():
-  # the avg_pool CNN with the pool swapped to max_pool: conv -> relu -> max_pool
-  # -> flatten -> linear -> softmax-CE, forward+backward on the ANE. Exercises the
-  # max_pool vjp (argmax routing via upsample + greater + select) in a full train.
+  # avg_pool CNN with pool swapped to max_pool; exercises the max_pool vjp in a train
   d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
   Xtr = d["Xtr"].astype(np.float32) / 255.0; ytr = d["ytr"].astype(np.int64)
   Xte = d["Xte"].astype(np.float32) / 255.0; yte = d["yte"].astype(np.int64)
-  # Same 64-sample batch cap as the avg_pool test above: keeps the compile fast and
-  # host-independent, trading headline accuracy for a quick portable check.
+  # same 64-sample batch cap as the avg_pool test above (fast/portable compile)
   N = min(Xtr.shape[0], 64)
   Xtr = Xtr[:N]; ytr = ytr[:N]
   Xtr_img = Xtr.reshape(N, 1, 28, 28); Xte_img = Xte.reshape(-1, 1, 28, 28)
@@ -520,14 +502,12 @@ def test_cnn_maxpool_trains_on_subset():
     tr.step()
   l1 = tr.loss(); acc1 = tr.accuracy(Xte_img, yte)
   tr.release()
-  # At the small batch the model can't reach the full-data ~0.95; assert it clearly
-  # LEARNS (loss collapses, test accuracy jumps well above its starting point).
+  # small batch can't hit ~0.95; assert it clearly LEARNS (loss drops, acc jumps)
   assert l1 < 0.4 * l0 and acc1 > acc0 + 0.3, (l0, l1, acc0, acc1)
 
 
 def test_transformer_block_trains():
-  # mha + residual + MLP + residual, forward+backward on the ANE; attention is
-  # differentiable end to end. Loss drops well below the initial value on a toy task.
+  # mha + residual + MLP + residual, fwd+bwd on ANE; attention diff'able end to end
   rng = np.random.default_rng(0)
   S, D, n_heads = 8, 16, 4; dh = D // n_heads
   Xv = (rng.standard_normal((S, D)) * 0.5).astype(np.float32)
@@ -555,8 +535,7 @@ def test_transformer_block_trains():
 
 
 def test_layer_norm_trainable_affine_forward_matches_baked():
-  # passing parameter Tensors for gamma/beta composes normalize + learnable affine;
-  # the forward must equal the native baked-affine layer_norm with the same values.
+  # parameter gamma/beta forward must equal native baked-affine layer_norm
   rng = np.random.default_rng(70); M, D = 8, 16
   xv = rng.standard_normal((M, D)).astype(np.float32)
   gv = (rng.standard_normal(D) * 0.5 + 1.0).astype(np.float32)
@@ -613,9 +592,7 @@ def test_rms_norm_affine_param_trains():
 
 
 def test_charlm_trains_and_predicts():
-  # A small multi-layer causal char-LM trains end to end on the engine: one-hot
-  # embedding (matmul, not gather), causal-masked attention, RMSNorm + SwiGLU, and a
-  # next-token cross-entropy objective. Loss falls and next-char accuracy reaches ~1.0.
+  # small causal char-LM (one-hot embed, masked attn, RMSNorm+SwiGLU, next-tok CE)
   text = "ane trains a tiny language model. " * 2
   chars = sorted(set(text)); V = len(chars)
   stoi = {c: i for i, c in enumerate(chars)}
@@ -659,9 +636,7 @@ def test_charlm_trains_and_predicts():
 
 
 def test_charlm_generalizes_on_corpus():
-  # Trained on random windows of a structured corpus's TRAIN split, the char-LM
-  # predicts held-out VAL windows it never trained on, well above the unigram
-  # baseline - generalization (transferable structure), not memorization.
+  # char-LM predicts held-out VAL windows above the unigram baseline (generalizes)
   from collections import Counter
   rng = np.random.default_rng(0)
   animals, verbs, advs = ["cat", "dog", "bird"], ["runs", "jumps", "sleeps"], ["fast", "slow"]
@@ -717,10 +692,7 @@ def test_charlm_generalizes_on_corpus():
 
 
 def test_prenorm_transformer_block_trains():
-  # Pre-norm transformer block (layer_norm before attention and before the MLP),
-  # forward+backward on the ANE. The gradient flows THROUGH layer_norm to the
-  # trainable projections/MLP; norm affine (gamma/beta) is fixed at unit init.
-  # This is the end-to-end proof that layer_norm no longer blocks backprop.
+  # pre-norm transformer block; gradient flows THROUGH layer_norm (affine fixed)
   rng = np.random.default_rng(0)
   S, D, n_heads = 8, 16, 4; dh = D // n_heads
   Xv = (rng.standard_normal((S, D)) * 0.5).astype(np.float32)
@@ -750,9 +722,7 @@ def test_prenorm_transformer_block_trains():
 
 
 def test_llama_block_trains():
-  # LLaMA-style block: rms_norm (pre-norm) + attention + rms_norm + SwiGLU
-  # (silu gate). Exercises rms_norm and silu gradients end to end; trainable
-  # projections + the three SwiGLU weights. Norm affine (gamma) fixed at unit.
+  # LLaMA-style block: rms_norm + attention + rms_norm + SwiGLU (silu gate)
   rng = np.random.default_rng(1)
   S, D, n_heads = 8, 16, 4; dh = D // n_heads; FF = 4 * D
   Xv = (rng.standard_normal((S, D)) * 0.5).astype(np.float32)
@@ -822,9 +792,7 @@ def test_classifier_trains_synthetic():
 
 
 def test_mnist_mlp_trains():
-  # 784->128->10 GELU MLP, full-batch (N=1000), softmax-CE + Adam, forward+backward
-  # on the ANE. Train==test==1000 so the one forward-logits program serves both the
-  # train loss and the test accuracy (no different-shape recompile; Task 5/7 scope).
+  # 784->128->10 GELU MLP, full-batch, softmax-CE + Adam; train==test==1000 (no recompile)
   d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
   Xtr = d["Xtr"].astype(np.float32) / 255.0; ytr = d["ytr"].astype(np.int64)
   Xte = d["Xte"].astype(np.float32) / 255.0; yte = d["yte"].astype(np.int64)
@@ -916,8 +884,7 @@ def test_on_ane_adam_update_matches_numpy():
 
 
 def test_on_ane_stack3_update_returns_three_arrays():
-  # The STACK multi-output path: a [3,n] update program returns the 3 correct
-  # arrays on the ANE after a host row-wise split (no _compile.py change).
+  # STACK multi-output path: [3,n] program -> 3 arrays after host row-wise split
   rng = np.random.default_rng(41)
   shp = (8, 6)
   wv, mv, vv, gv = [rng.standard_normal(shp).astype(np.float32) for _ in range(4)]
@@ -1007,8 +974,7 @@ def test_mlp_trains():
 
 
 def test_compile_multi_two_outputs():
-  # compile_multi lowers a graph with N output Tensors into ONE program with N
-  # named output ports; __call__ returns them by name, matching a numpy reference.
+  # compile_multi lowers N output Tensors into ONE program with N named output ports
   from aneforge import _compile as _c
   rng = np.random.default_rng(3)
   N, D = 8, 5
@@ -1029,8 +995,7 @@ def test_compile_multi_two_outputs():
 
 
 def test_resident_sgd_matches_host_reference():
-  # A fused fwd+bwd+SGD step holds both weights RESIDENT on-device across steps
-  # (host feeds only x,y,lr); the resident weights match a host SGD reference.
+  # fused fwd+bwd+SGD step keeps weights RESIDENT on-device; matches host SGD ref
   from aneforge import _compile as _c
   rng = np.random.default_rng(1)
   D, H, N, STEPS, LR = 6, 4, 12, 40, 0.02
@@ -1085,8 +1050,7 @@ def test_resident_adam_trains_subset_and_state_stays_resident():
   tr = agrad.Trainer(agrad.softmax_cross_entropy(logits, target), [P1, b1, P2, b2],
                      lr=0.01, loss_scale=1024.0, optimizer="adam", resident_state=True,
                      data_inputs={x: np.zeros((B, Dn), np.float32), target: np.zeros((B, K), np.float32)})
-  # the per-step feed touches ONLY data + lr -- no param/moment port is fed each
-  # step (state stays resident on-device). Verify structurally.
+  # structural: per-step feed touches ONLY data + lr; state stays resident
   state_ids = set()
   for e in tr._res_state:
     state_ids.add(id(e["p"]))
@@ -1101,17 +1065,11 @@ def test_resident_adam_trains_subset_and_state_stays_resident():
 
 
 def test_resident_cnn_trains_subset():
-  # the resident-state path (previously MLP-validated) also compiles + trains for
-  # a CNN: the whole step (primitive-built trainable-conv forward + backward +
-  # per-param Adam) is ONE fused multi-output program with state aliased
-  # on-device. Host feeds only the minibatch + lr each step.
+  # resident-state path for a CNN: whole step is ONE fused program, state aliased on-device
   d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
   Xtr = d["Xtr"].astype(np.float32) / 255.0; ytr = d["ytr"].astype(np.int64)
   Xte = d["Xte"].astype(np.float32) / 255.0; yte = d["yte"].astype(np.int64)
-  # The resident path compiles ONE program at the fixed batch B below, so its compile
-  # cost is governed by B (modest, ~B=100), not the dataset size N. Unlike the
-  # full-batch CNN tests, N must stay >= B here (minibatches of B are sampled from N),
-  # so it is not capped - capping it below B would yield zero training steps.
+  # N not capped: resident compile cost is governed by fixed B, and N must stay >= B
   N = Xtr.shape[0]
   Xtr_img = Xtr.reshape(N, 1, 28, 28); Xte_img = Xte.reshape(-1, 1, 28, 28)
   K, Cout, k, pk = 10, 8, 3, 2
@@ -1143,9 +1101,7 @@ def test_resident_cnn_trains_subset():
 
 
 def test_resident_transformer_block_trains():
-  # the resident-state path also compiles + trains for a transformer block:
-  # mha + residual + MLP + residual, the whole step (forward + backward + eight-
-  # param Adam) is ONE fused multi-output program with state aliased on-device.
+  # resident-state path for a transformer block: whole step is ONE fused program
   rng = np.random.default_rng(0)
   S, D, n_heads = 8, 16, 4; dh = D // n_heads
   Xv = (rng.standard_normal((S, D)) * 0.5).astype(np.float32)
@@ -1173,7 +1129,7 @@ def test_resident_transformer_block_trains():
 
 
 def test_unrolled_trainer_resident_trains_and_state_stays_resident():
-  # K Adam steps unrolled into ONE program, optimizer state RESIDENT on-device.
+  # K Adam steps unrolled into ONE program, optimizer state RESIDENT on-device
   d = np.load(Path(__file__).resolve().parent.parent / "examples" / "data" / "mnist_subset.npz")
   Xtr = d["Xtr"].astype(np.float32) / 255.0; ytr = d["ytr"].astype(np.int64)
   Xte = d["Xte"].astype(np.float32) / 255.0; yte = d["yte"].astype(np.int64)
@@ -1187,8 +1143,7 @@ def test_unrolled_trainer_resident_trains_and_state_stays_resident():
   xs = [af.input((B, DIN)) for _ in range(K)]; ts = [af.input((B, C)) for _ in range(K)]
   tr = af.UnrolledTrainer(P, fwd, "ce", xs, ts, (Xtr, oh), lr=0.01, loss_scale=1024.0,
                           resident=True)
-  # structural: the per-dispatch feed touches ONLY data + lr ports; the param/m/v
-  # state ports are never fed (they stay resident on-device, aliased out->in).
+  # structural: per-dispatch feed touches ONLY data + lr; state ports stay resident
   assert tr.resident
   data_names = {n for n, _, _ in tr._res_data} | set(tr._res_lr_names)
   state_names = {tr._res_inm[id(t)] for t in (P + tr._m_in + tr._v_in)}
@@ -1200,8 +1155,7 @@ def test_unrolled_trainer_resident_trains_and_state_stays_resident():
 
 
 def test_unrolled_trainer_resident_matches_nonresident():
-  # resident and host-shuttle paths must produce the SAME trained weights (the only
-  # difference is WHERE state lives, not the math).
+  # resident and host-shuttle paths must produce the SAME trained weights
   rng = np.random.default_rng(1)
   B, K, DIN, H, C, N = 16, 4, 12, 10, 3, 256
   X = (rng.standard_normal((N, DIN)) * 0.5).astype(np.float32)

@@ -1,11 +1,4 @@
-"""Tests for af.image_input - uint8 image input dequantised to fp16 ON the engine.
-
-Camera/decoded-video bytes feed the model directly; the uint8->fp16 cast + the
-``scale*x + bias`` normalisation run as in-graph ANE ops. Each test compiles+runs a
-real graph fed a uint8 array and checks it against a host-fp16 reference.
-
-    PYTHONPATH=. python3 -m pytest tests/test_image_input.py -q
-"""
+"""af.image_input - uint8 image input dequantised to fp16 on the engine."""
 from __future__ import annotations
 
 import numpy as np
