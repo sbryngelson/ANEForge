@@ -1,13 +1,4 @@
-"""DEMO: native attention (SDPA) on the ANE's dedicated attention hardware layer.
-
-Exercises:
-  - af.sdpa(q, k, v, is_causal=...) - the native ANECSDPALayerDesc hardware layer, a layer
-    the public MIL toolchain does not emit, reached from unentitled user space
-  - causal scaled-dot-product attention checked against a numpy reference (cos ~1)
-  - the KV-cache decode shape (seq_q=1 query over cached K/V) that autoregressive decode uses
-
-Run:  python3 examples/demos/llm_attention_kvcache.py
-"""
+"""Native attention (SDPA) on the ANE's dedicated attention hardware layer. Run: python3 examples/demos/llm_attention_kvcache.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,7 +37,7 @@ def main() -> int:
     # KV-cache decode shape: one new query token attends over S cached keys/values
     qd, kc, vc = af.input((1, H, 1, D)), af.input((1, H, S, D)), af.input((1, H, S, D))
     dec = af.compile(af.sdpa(qd, kc, vc), opt=0)
-    Qd = Q[:, :, :1, :].copy()                        # the single new-token query [1,H,1,D]
+    Qd = Q[:, :, :1, :].copy()
     out_shape = np.asarray(dec(Qd, K, V)).shape
     print(f"KV-cache decode shape (seq_q=1 over {S} cached): compiles + runs -> out {out_shape}")
     dec.release()

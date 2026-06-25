@@ -1,33 +1,4 @@
-"""aneforge showpiece: a reaction-diffusion system grown on the Apple Neural Engine.
-
-The Gray-Scott model is two chemicals diffusing and reacting on a periodic grid:
-
-    dU/dt = Du * lap(U) - U*V^2 + F*(1 - U)
-    dV/dt = Dv * lap(V) + U*V^2 - (F + k)*V
-
-U is fed in and consumed where V is present; V breeds on U and decays. For the
-right F (feed) and k (kill) the two settle into Turing patterns - coral, mazes,
-mitosis - the same mechanism that pigments seashells and animal coats. The word
-"ANEForge" is seeded as V and blooms into a branching labyrinth as it reacts.
-
-The whole update is ONE fused e5rt program: the Laplacian is a 3x3 stencil run as
-a native ANE conv, the reaction terms are elementwise ops in the same graph, and
-the periodic boundary is built in-graph by wrapping the field's own edges (so the
-pattern tiles without a seam). The program is compiled ONCE and re-dispatched every
-step; the host only shuttles the two fields in and out. Companion to the fluid
-demo (examples/fluid_vorticity.py): that solves a PDE spectrally (FFTs on the
-engine), this one with a real-space stencil (a conv on the engine).
-
-CAVEAT (fp16). The ANE computes in fp16, but the Gray-Scott fields live in [0, 1],
-so no range rescaling is needed (unlike the unnormalized spectral transforms in the
-fluid demo). The run is gated on the fields staying finite, in range, and forming
-structure.
-
-    python3 examples/reaction_diffusion.py
-
-Writes docs/assets/reaction_diffusion.png as an APNG (the pattern emerging, full
-24-bit colour) if Pillow is installed; the simulation runs either way.
-"""
+"""aneforge showpiece: Gray-Scott reaction-diffusion as one fused conv-stencil program per step on the ANE, growing "ANEForge" into Turing patterns. Run: python3 examples/reaction_diffusion.py"""
 import sys
 import time
 from pathlib import Path
@@ -188,8 +159,7 @@ def main():
     return 0 if ok else 1
 
 
-# rendering                                                                   #
-
+# rendering
 def colormap(c):
     vs = np.array([p[0] for p in _CMAP]); cs = np.array([p[1] for p in _CMAP], float)
     v = np.clip(c, 0.0, 1.0) ** 0.85

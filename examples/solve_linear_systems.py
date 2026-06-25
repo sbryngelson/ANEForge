@@ -1,16 +1,4 @@
-"""Solve A x = b on the ANE - conjugate gradient, K iterations as ONE fused program.
-
-The ANE has no in-graph loop, but a FIXED-iteration Krylov solver is static dataflow:
-every GEMV and dot product of all K CG iterations unrolls into a single on-engine
-program (the matrix folds in as a constant, so the program size is iteration-bound,
-not n-bound - the same solve runs unchanged at n=512). GMRES (general systems) and
-LSQR (least squares) follow the same pattern; see aneforge.linalg.
-
-Envelope (docs/api/math.md): fp16, clean to ~1e-3 at cond 1e2, then the
-fp16 iterates stall.
-
-    python3 examples/solve_linear_systems.py
-"""
+"""Solve A x = b on the ANE: conjugate gradient, K iterations unrolled into one fused program. Run: python3 examples/solve_linear_systems.py"""
 import sys
 
 from _common import head, f16, relerr, spd   # sets env + repo-root path; import before aneforge

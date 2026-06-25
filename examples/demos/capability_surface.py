@@ -1,12 +1,4 @@
-"""DEMO: the ANE capability surface - what the hardware can and can't do.
-
-Exercises:
-  - af.OP_CATALOG (the machine-checked op registry) and af.op_info(name)
-  - af.is_native / af.device_status / af.min_native_family (per-op, per-chip gating)
-  - af.ops_on(chip, status) and af.walled_everywhere() (ops no chip runs natively)
-
-Run:  python3 examples/demos/capability_surface.py
-"""
+"""The ANE capability surface: what the hardware can and can't do. Run: python3 examples/demos/capability_surface.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

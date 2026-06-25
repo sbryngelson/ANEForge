@@ -1,26 +1,4 @@
-"""aneforge compression demo - int4-LUT / sparse / int8 weight streaming on the ANE.
-
-``af.compile(out, compress=...)`` chooses how each weight is encoded in the single
-packed BLOBFILE. The compressed encodings STREAM: the weight is dequantised during
-the tile DMA, so a bandwidth-bound matmul moves fewer bytes per tile and runs
-faster, not just smaller on disk. ``compress=None`` is byte-identical fp16.
-
-  None      fp16, the deployed baseline
-  "int8"    per-channel int8           (half the weight bytes)
-  "int4"    4-bit LUT palettization    (per-tensor, accuracy-gated -> int8 -> fp16)
-  "sparse"  unstructured bitmask       (emitted when a weight is >=50% zeros)
-  "auto"    per-weight: sparse if sparse, else int4 if accurate, else int8, else fp16
-
-This demo shows the two halves of the story:
-
-  PART A  accuracy x size  on a real ImageNet ResNet-18 (logit cosine vs the
-          torchvision fp32 reference, top-1 match, and the packed weights.bin size).
-  PART B  the streaming SPEEDUP on a big bandwidth-bound matmul (4096x4096, B=1),
-          where compressed weights move fewer bytes per tile. (Compression is a
-          slight LOSS on sub-megabyte weights; the win is on big weights.)
-
-    python3 examples/compress_weights.py
-"""
+"""aneforge compression demo: int4-LUT / sparse / int8 weight streaming (accuracy x size, then streaming speedup). Run: python3 examples/compress_weights.py"""
 import sys, time, statistics, tempfile
 from pathlib import Path
 
@@ -54,8 +32,7 @@ def part_a_resnet18():
         ref = m(torch.from_numpy(img)).numpy()[0].astype(np.float64)
     ref_top1 = int(ref.argmax())
 
-    # (compress, compress_atol, label) - last row loosens the int4 accuracy gate to
-    # FORCE more int4 adoption, trading a little cosine for a real size drop.
+    # last row loosens the int4 accuracy gate to force more int4 adoption.
     rows = [(m, 0.05, m if m else "None") for m in MODES]
     rows.append(("int4", 0.5, "int4@0.5"))
 
@@ -98,11 +75,8 @@ def part_b_streaming_speedup():
     K = N = 4096
     x = rng.standard_normal((1, K)).astype(np.float16)
 
-    # dense weight: fp16 / int8 / int4 all encode the SAME weight (int4 needs a
-    # generous accuracy budget so random-normal weights clear the gate).
-    Wd = rng.standard_normal((K, N)).astype(np.float16)
-    # sparse weight: ~68% zeros so the sparse encoding is emitted.
-    Ws = Wd.copy(); Ws[np.abs(Ws) < 1.0] = 0.0
+    Wd = rng.standard_normal((K, N)).astype(np.float16)   # dense; int4 needs a generous gate
+    Ws = Wd.copy(); Ws[np.abs(Ws) < 1.0] = 0.0            # ~68% zeros -> sparse encoding emitted
 
     print(f"\n{'compress':>9} | {'weight':>7} | {'latency (ms)':>12} | {'speedup':>8} | "
           f"{'weights.bin':>12}")

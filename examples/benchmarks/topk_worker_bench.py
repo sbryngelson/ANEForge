@@ -1,22 +1,4 @@
-"""Per-call latency benchmark for aneforge's A2 persistent Path-A workers.
-
-Measures steady-state per-call latency for topk (the per-row-tiled op), plus
-sdpa and argmax as controls. topk's per-call cost is set by per-row tiling: the
-native TopK keys all channels by one lane, so each of the C rows is its own
-1-channel program and gets its own ANE evaluateWithQoS dispatch.
-
-The A2 worker protocol is batched (a single request can carry N input sets and
-run N evals in ONE pipe round-trip; see _netplist_worker.eval_batch). For topk,
-however, the pipe round-trip is NOT the bottleneck: a single trip+eval is
-~0.08 ms and the C sequential ANE dispatches dominate. Batching all C rows into
-one round-trip removes only the (near-free) trips and actually regresses the
-median (the worker's back-to-back eval loop loses the pipe pacing). So topk
-keeps the per-call eval() dispatch. To see the batched path's effect directly:
-
-    --batch   route topk through eval_batch (one round-trip) instead of per-call
-
-    PYTHONPATH=. python3 examples/benchmarks/topk_worker_bench.py
-"""
+"""Per-call latency for the A2 persistent worker: topk (per-row-tiled) plus sdpa/argmax controls; --batch routes topk through eval_batch. Run: PYTHONPATH=. python3 examples/benchmarks/topk_worker_bench.py"""
 import sys
 import time
 from pathlib import Path
@@ -49,8 +31,7 @@ def main():
     ref = np.sort(xt.astype(np.float32), 1)[:, ::-1][:, :k]
 
     if use_batch:
-        # Drive the worker through eval_batch (all C rows in ONE round-trip) to
-        # measure the batched-eval path directly.
+        # drive the worker through eval_batch (all C rows in one round-trip)
         from aneforge import _netplist_worker as nw
         worker, _ = nw.build_worker("topk", (C, W), {"k": k, "largest": True})
         xa = np.ascontiguousarray(xt.reshape(C, W))

@@ -1,19 +1,4 @@
-"""Train a character-level language model on a corpus on the Apple Neural Engine, and
-show it GENERALIZES - held-out next-character accuracy well above the unigram baseline,
-not memorization of a single window.
-
-This is the data-scale companion to `train_charlm.py` (which overfits one window as a
-sanity check). Here the 4-layer causal LLaMA-style model trains on random windows drawn
-from the training split of a structured corpus and is evaluated on a disjoint validation
-split it never trains on. Forward, backward, and the optimizer step all run on the engine.
-
-Same reachable-surface choices as `train_charlm.py`: one-hot matmul embedding (the
-embedding gradient is then a matmul gradient, sidestepping the gather/scatter wall), and
-an additive causal mask before softmax. Each window is re-based to absolute positions
-0..S-1, so the learned positional embeddings apply to every sampled window.
-
-    python3 examples/train_charlm_corpus.py
-"""
+"""Train a char-LM on a corpus on the ANE and show it generalizes (held-out accuracy above the unigram baseline). Run: python3 examples/train_charlm_corpus.py"""
 import sys
 from collections import Counter
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
@@ -26,9 +11,7 @@ STEPS, LR = 600, 0.003
 
 
 def make_corpus(rng):
-    # a small structured grammar: "the <animal> <verb> <adverb>." The word choices are
-    # random, so the model cannot memorize a single sequence; it must learn the grammar
-    # to predict the deterministic parts (articles, spaces, word completions, period).
+    # structured grammar "the <animal> <verb> <adverb>." with random word choices
     animals, verbs, advs = ["cat", "dog", "bird"], ["runs", "jumps", "sleeps"], ["fast", "slow"]
     out = []
     for _ in range(120):

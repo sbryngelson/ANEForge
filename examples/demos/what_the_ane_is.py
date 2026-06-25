@@ -1,15 +1,7 @@
-"""DEMO: what the ANE is - a real matrix engine you can target directly.
-
-Exercises:
-  - building a graph (af.input + matmul) and compiling it to ONE ANE program
-  - dispatching to real ANE silicon and checking the result against a numpy fp32 reference
-  - confirming the op runs natively on the ANE (af.device_status / af.is_native)
-
-Run:  python3 examples/demos/what_the_ane_is.py
-"""
+"""What the ANE is: a real matrix engine you can target directly. Run: python3 examples/demos/what_the_ane_is.py"""
 import sys, warnings
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # examples/ -> _common
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import _common  # noqa: F401
 import numpy as np
 import aneforge as af

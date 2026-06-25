@@ -1,15 +1,4 @@
-"""Eigenvalues and singular values on the ANE - the full spectral decompositions.
-
-The full symmetric eigendecomposition runs as fixed-sweep cyclic Jacobi, every
-rotation a fixed slice+combine - one unrolled program (caps near n=20), or with
-``eigh(iterate=True)`` one compiled sweep host-looped to reach n~48. On top of it:
-the full SVD (Jacobi on the Gram matrix), the generalized symmetric problem
-A x = lambda B x (LAPACK sygv: chol + trinv + eigh, composed on-engine), and the
-NONSYMMETRIC eigenvalues (LAPACK geev) as unrolled unshifted QR iteration. Top-k
-singular values of a large matrix use a randomized sketch - every step on-engine.
-
-    python3 examples/eigenvalues_svd.py
-"""
+"""Eigenvalues and singular values on the ANE: full eig/SVD, generalized eig, nonsymmetric eig, top-k. Run: python3 examples/eigenvalues_svd.py"""
 import sys
 
 from _common import head, f16, relerr, spd, general, sym   # sets env + repo-root path
@@ -26,8 +15,7 @@ def main():
     ev = eigh(f16(As))
     print(f"\n  eigh (all 8 eigenvalues)  relerr vs np.eigh  = {relerr(ev, np.sort(np.linalg.eigvalsh(As))):.2e}")
 
-    # iterate=True: ONE compiled sweep host-looped - same rotations, same result,
-    # but the per-sweep graph is O(n^2), so it scales past the unrolled cap (n~48).
+    # iterate=True: one compiled sweep host-looped, scales past the unrolled cap.
     evi = eigh(f16(As), iterate=True)
     print(f"  eigh(iterate=True)        relerr vs unrolled  = {relerr(evi, ev):.2e}   (reaches n~48)")
 

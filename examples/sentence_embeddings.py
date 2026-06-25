@@ -1,14 +1,4 @@
-"""aneforge embedding demo - a real sentence encoder on the ANE in ~5 lines.
-
-Loads all-MiniLM-L6-v2 (HF weights), runs the transformer layers on the Apple
-Neural Engine via the clean aneforge frontend, and does a tiny semantic search.
-
-Embeddings match the fp32 reference to cosine 1.0000 (fp16) / 0.9996 (int8) - the
-encoder is the case the LLM decoder could never be: one forward, no autoregressive
-accumulation, error-tolerant output, squarely in the ANE's niche.
-
-    python3 examples/sentence_embeddings.py
-"""
+"""all-MiniLM-L6-v2 sentence encoder on the ANE with a tiny semantic search, validated vs fp32. Run: python3 examples/sentence_embeddings.py"""
 import sys
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

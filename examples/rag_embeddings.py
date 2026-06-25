@@ -1,14 +1,4 @@
-"""Use ANEForge embeddings in a RAG pipeline: a LangChain `Embeddings` adapter.
-
-The embedding model runs on the Apple Neural Engine - `af.load` fuses the encoder's
-transformer layers into one e5rt program - about 4-5x faster than the PyTorch GPU
-path on Apple Silicon, at ~9x lower energy, and cosine 1.0000 against the fp32
-reference. The adapter is a standard `langchain_core.embeddings.Embeddings`, so it
-drops into any LangChain retriever or vector store.
-
-    pip install "aneforge>=0.1.3" "transformers[torch]" langchain-core
-    python3 examples/rag_embeddings.py
-"""
+"""ANEForge embeddings as a LangChain `Embeddings` adapter for RAG, running on the ANE. Run: python3 examples/rag_embeddings.py"""
 from __future__ import annotations
 
 import numpy as np

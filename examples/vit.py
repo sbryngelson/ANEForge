@@ -1,34 +1,4 @@
-"""Vision Transformer (ViT-B/16) forward on the Apple Neural Engine via aneforge.
-
-Builds the full ViT encoder forward (patch-embed conv -> CLS token + positional
-embedding -> N pre-norm transformer blocks -> final layer_norm -> classifier head)
-in aneforge from REAL torchvision pretrained weights, fuses it into ONE e5rt program,
-and validates the 1000-way logits against the torchvision fp32 reference (logit
-cosine + top-k). ViT is squarely in the ANE's niche: a single encoder forward, no
-autoregressive accumulation; conv + attention + matmul are the workloads it wins.
-
-The optimizer tie-in: ViT attention is the natural target for aneforge's lossless
-SDPA *route rewrite*. We rebuild one real ViT attention layer (q/k/v proj ->
-af.sdpa -> out-proj) and run af.tune on it. The tuner enumerates the legal
-variants (native fused-attention layer vs decomposed matmul/softmax/matmul),
-MEASURES them on the ANE, VALIDATES each is faithful to the opt=0 baseline, and
-returns the fastest CORRECT one. We report opt=0 vs tune latency, the route the
-tuner chose, and the maxdiff (lossless route -> ~0).
-
-WEIGHT SOURCE / CONFIG: torchvision.models.vit_b_16 IMAGENET1K_V1 (12 layers x
-768 dim x 12 heads, patch 16, 224x224 -> 197 tokens, 1000 classes; ~86M params).
-We attempt the full 12-layer model as a single fused program first; if that is too
-large to compile as one e5rt program, we fall back to the first K layers and
-validate against a torch forward truncated to the SAME K layers (real pretrained
-weights either way - never random, never faked). The chosen path is printed.
-
-The CLS token and per-position positional embedding are constants of the model;
-aneforge has no constant-tensor literal op, so we feed them as two extra graph
-inputs (fed the fixed pretrained arrays at every call) - the cheapest legal route
-(an alternative, building them with ~200 row constants, balloons the op count).
-
-    python3 examples/vit.py
-"""
+"""ViT-B/16 forward as one fused ANE program from real torchvision weights, validated vs fp32, plus an af.tune SDPA route rewrite on one attention layer. Run: python3 examples/vit.py"""
 import sys, time
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
@@ -52,16 +22,9 @@ def load_vit_weights():
     return m, sd
 
 
-# ViT graph (aneforge public ops). Inputs (in creation order):                  #
-#   x   [1,3,224,224]  image                                                   #
-#   cls [1,768]        CLS-token constant                                      #
-#   pos [197,768]      positional-embedding constant                           #
+# ViT graph. Inputs (creation order): x [1,3,224,224], cls [1,768], pos [197,768].
 def build_vit(sd, n_layers):
-    """aneforge graph for ViT-B/16 forward -> logits [1,1000].
-
-    Ops: conv (patch embed), reshape/transpose (patchify), concat (CLS prepend),
-    add (pos-embed + residuals), layer_norm, mha (attention), linear + gelu (MLP),
-    and a constant-picker matmul to read the CLS row for the classifier head."""
+    """aneforge graph for ViT-B/16 forward -> logits [1,1000]."""
     g = lambda k: sd[k]
     L = "encoder.layers.encoder_layer_"
 
@@ -69,11 +32,7 @@ def build_vit(sd, n_layers):
     cls = af.input((1, DIM))
     pos = af.input((SEQ, DIM))
 
-    # patch embed: [1,3,224,224] -> [1,768,14,14]. A direct strided 16x16 conv is WALLED
-    # on the ANE (kernel WIDTH kW>=16 fails ANECCompile; graph.py guards it), so route the
-    # identical math as space_to_depth(16) + 1x1 conv: s2d emits (bh,bw,c)-major channels
-    # (verified numerically vs the strided conv on A14), so the [768,3,16,16] weight
-    # flattens as (kh,kw,c) -> [768, 768, 1, 1].
+    # patch embed via space_to_depth(16) + 1x1 conv (a strided 16x16 conv is walled on the ANE)
     w_pe = np.ascontiguousarray(g("conv_proj.weight").transpose(0, 2, 3, 1)).reshape(DIM, -1, 1, 1)
     h = af.conv(af.space_to_depth(x, PATCH), w_pe, bias=g("conv_proj.bias"))
     # patchify: [1,768,14,14] -> [1,768,196] -> [196,768] (matches torch reshape+permute)
@@ -107,9 +66,7 @@ def build_vit(sd, n_layers):
 
 
 def _row0(h):
-    """Pick row 0 of h [M,D] -> [1,D] via a constant one-hot picker matmul:
-    out = sel @ h with sel=[1,M]=e0. Expressed with the available ops as
-    ((h^T) @ sel^T)^T = sel @ h (linear is x@W.T, so W=sel)."""
+    """Pick row 0 of h [M,D] -> [1,D] via a constant one-hot picker matmul."""
     M, D = h.shape
     sel = np.eye(1, M, dtype=np.float32)          # [1,M], picks row 0
     return h.transpose([1, 0]).linear(sel).transpose([1, 0])   # [D,1] -> [1,D]
@@ -131,9 +88,7 @@ def torch_ref(m, img, n_layers):
 
 # optimizer tie-in: one real ViT attention layer via af.sdpa (route rewrite)   #
 def attn_layer_graph(sd, layer=0):
-    """ViT layer-`layer` self-attention as q/k/v proj -> af.sdpa -> out-proj, with
-    the REAL pretrained weights. Input is the [SEQ,DIM] post-ln_1 activation. Built
-    with af.sdpa so af.tune has the native<->decomposed SDPA route to choose from."""
+    """ViT layer-`layer` self-attention as q/k/v proj -> af.sdpa -> out-proj (real weights), so af.tune can pick the SDPA route."""
     p = f"encoder.layers.encoder_layer_{layer}."
     Wqkv = sd[p + "self_attention.in_proj_weight"]; bqkv = sd[p + "self_attention.in_proj_bias"]
     Wq, Wk, Wv = Wqkv[:DIM], Wqkv[DIM:2 * DIM], Wqkv[2 * DIM:]

@@ -1,12 +1,4 @@
-"""DEMO: ANE numerics - fp16 compute, and the cancellation pitfall + mitigation.
-
-Exercises:
-  - fp16 is the ANE compute/accumulator type: results track fp32 to ~1e-3, not bit-exact
-  - the catastrophic-cancellation hazard (variance of a large-mean signal in fp16)
-  - aneforge's structural precision check (PrecisionWarning) and a paired-fp16 mitigation
-
-Run:  python3 examples/demos/numerics_fp16.py
-"""
+"""ANE numerics: fp16 compute, the cancellation pitfall + mitigation. Run: python3 examples/demos/numerics_fp16.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,7 +8,7 @@ import aneforge as af
 
 
 def main() -> int:
-    warnings.filterwarnings("ignore")          # quiet the floor warning; we trigger PrecisionWarning below
+    warnings.filterwarnings("ignore")
     rng = np.random.default_rng(0)
 
     # 1) ordinary fp16 op tracks fp32 closely
@@ -28,8 +20,7 @@ def main() -> int:
     print(f"gelu fp16 vs fp32: relerr = {_common.relerr(got, ref):.2e}  (fp16-close, not exact)")
     net.release()
 
-    # 2) the cancellation hazard: a signed reduce_sum over a long axis uses the narrow fp16
-    #    accumulator -> aneforge flags it structurally at compile time (PrecisionWarning)
+    # 2) the cancellation hazard: signed reduce_sum over a long axis -> PrecisionWarning
     big = af.input((1, 4096))
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")

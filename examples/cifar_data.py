@@ -1,7 +1,4 @@
-"""CIFAR-10 loading for the on-ANE training demo. Uses torchvision to download the
-dataset once into examples/data/cifar10 (the [models] extra). Returns normalized
-fp32 NCHW arrays + integer labels, plus a deterministic mini-batch iterator. No
-training logic here."""
+"""CIFAR-10 loading for the on-ANE training demo: normalized fp32 NCHW arrays + labels + batch iterator."""
 from pathlib import Path
 import numpy as np
 

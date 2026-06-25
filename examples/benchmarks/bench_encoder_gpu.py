@@ -1,13 +1,4 @@
-"""Batched-GPU encoder baseline - the fair counterpart to the aneforge ANE batched
-encoder (bench_encoder_batched.py: ~3978 embeds/sec @ B=16).
-
-Runs the same MiniLM encoder on the Apple GPU (torch MPS), batched at the same B and
-S, measuring embeds/sec + power, so encoder serving can be compared ANE-vs-GPU on
-both throughput and efficiency (the LLM-decode question, asked for the workload the
-ANE should actually win).
-
-    python3 examples/benchmarks/bench_encoder_gpu.py
-"""
+"""Batched-GPU (torch MPS) MiniLM encoder baseline measuring embeds/sec + power, the counterpart to bench_encoder_batched.py. Run: python3 examples/benchmarks/bench_encoder_gpu.py"""
 import os, re, subprocess, sys, time
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")

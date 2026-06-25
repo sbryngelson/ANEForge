@@ -1,21 +1,4 @@
-"""Train a transformer block (multi-head self-attention + residual + MLP) FULLY on the
-Apple Neural Engine, with K Adam steps UNROLLED into ONE fused program.
-
-Attention is differentiable end to end on the engine - the gradient flows through
-softmax, the batched score/value matmuls, and the head split/merge transposes, all of
-which have vjps. The projections are trainable `af.parameter` weights (not `af.mha`,
-which bakes const weights). The task is a fixed full-batch sequence regression, so this
-uses the `af.adam_step` helper to unroll the steps directly (the minibatch
-`af.UnrolledTrainer` fits the classification demos; this one trains one sequence).
-
-Because the data is full-batch (fixed), this goes one step further than the classifier
-demos: the data, the learning rate, AND the optimizer state all live on-device, so after
-seeding once the training loop is just `prog.execute()` - the host feeds NOTHING per
-dispatch (non-aliased input buffers persist across execute; state is share_buffer-aliased
-output->input). The host's only per-dispatch action is issuing the dispatch itself.
-
-    python3 examples/train_transformer.py
-"""
+"""Train a transformer block (MHA + residual + MLP) fully on the ANE with K Adam steps unrolled into one program; data + lr + optimizer state all resident on-device, so the loop is just prog.execute(). Run: python3 examples/train_transformer.py"""
 import sys
 from _common import f16   # sets env + repo-root path; import before aneforge
 import numpy as np
@@ -67,14 +50,7 @@ def main():
     inm = {id(t): n for t, n in net.input_ports}
     om = dict(net.output_ports)
 
-    # SEED ONCE, then the host does nothing but press "go". Everything the program
-    # needs lives on-device across dispatches:
-    #   - optimizer state (params, m, v): each updated output is share_buffer-aliased
-    #     onto its own input port (resident across dispatches), seeded once;
-    #   - the fixed full-batch data (x, y) and the learning rate: plain inputs SET ONCE
-    # - non-aliased input buffers persist across execute(), so they need no re-feed.
-    # (Full-batch is what makes this host-free: a shuffled MINIBATCH would change each
-    # step, so its data would be the one thing the host must still feed.)
+    # Seed once: optimizer state is share_buffer-aliased output->input; data + lr are plain inputs set once.
     for out_t, in_t in (list(zip(P, P0)) + list(zip(M, m_in)) + list(zip(V, v_in))):
         prog.share_buffer(0, om[out_t], 0, inm[id(in_t)])
     for p, mi, vi in zip(P0, m_in, v_in):

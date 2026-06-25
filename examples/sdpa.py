@@ -1,18 +1,4 @@
-"""Native fused attention on the ANE via aneforge's af.sdpa().
-
-af.sdpa(q, k, v) runs scaled-dot-product attention on the Apple Neural Engine's
-*native* fused-attention hardware layer (ANECSDPALayerDesc) - a path Apple's own
-user-space MIL compiler never emits (it always decomposes SDPA into matmul/softmax/
-matmul). aneforge reaches it, unentitled, via a graph-cut hybrid: the surrounding
-graph runs as e5rt program(s), the SDPA node runs as a separate native-SDPA ANE
-sub-program, tensors threaded between them.
-
-    python3 examples/sdpa.py
-
-Note: this is the correctness-first integration (host-array handoff, per-call
-netplist dispatch). A persistent IOSurface worker is the throughput follow-up.
-is_causal is unsupported - the native layer has no mask parameter.
-"""
+"""Native fused attention on the ANE via af.sdpa() (the hardware SDPA layer Apple's MIL compiler never emits). Run: python3 examples/sdpa.py"""
 import sys
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
@@ -38,9 +24,7 @@ def main():
     Q, K, V = (rng.standard_normal((1, H, S, D)).astype(np.float16) for _ in range(3))
     ok = []
 
-    # (1) standalone native SDPA. opt=0 pins the NATIVE layer (the point of this
-    # demo); the default opt='routes' cost model would rewrite short-S SDPA to the
-    # proven-equivalent fused decomposition, where it is faster.
+    # (1) standalone native SDPA; opt=0 pins the native layer (default would rewrite short-S to fused decomposition)
     net = af.compile(af.sdpa(af.input((1, H, S, D)), af.input((1, H, S, D)), af.input((1, H, S, D))), opt=0)
     out = net(Q, K, V)
     r = ref_sdpa(Q, K, V, scale)

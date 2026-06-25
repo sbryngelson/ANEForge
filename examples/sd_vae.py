@@ -1,15 +1,4 @@
-"""Stable-Diffusion VAE decoder on the ANE - real diffusers weights.
-
-Builds the AutoencoderKL decode path (post_quant_conv -> conv_in -> mid block
-[resnet, spatial self-attention, resnet] -> up blocks [resnets + nearest-upsample
-+ conv] -> group_norm + silu + conv_out) in aneforge, fuses it into one ANE
-program, and validates the decoded image against diffusers.
-
-The VAE is the missing half of a text->image pipeline (the UNet is in
-sd_unet.py). Tiny config, same architecture as SD-1.5.
-
-    python3 examples/sd_vae.py
-"""
+"""SD AutoencoderKL decoder as one ANE program from real diffusers weights (tiny config), validated vs diffusers. Run: python3 examples/sd_vae.py"""
 import sys
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

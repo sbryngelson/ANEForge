@@ -1,14 +1,4 @@
-"""Multi-layer GPT decode on the Apple Neural Engine with EVERY layer's KV-cache resident.
-
-Extends the single-layer ``TinyDecoderANE.generate_resident`` (the zero-copy resident KV-cache crack)
-to an L-layer decoder: each layer keeps its own K/V cache resident on the ANE across decode steps via
-``share_buffer`` (output buffer aliased onto its own input), and writes the step's K/V with a masked
-positional update (``Kout = Kin*(1-oh) + k*oh``). The whole L-layer step is ONE fused program
-(``compile_multi`` over the final hidden state + every layer's K/V output port). The host feeds only
-the token embedding + a position one-hot + the attention mask each step - NONE of the 2L caches ever
-round-trips. Decode attention is decomposed (matmul->softmax->matmul) since ``compile_multi`` cannot
-take the native-SDPA netplist cut; for seq_q=1 that is cheap. Validated token-for-token vs numpy.
-"""
+"""Multi-layer GPT decode on the ANE with every layer's KV-cache resident on-device via share_buffer."""
 from __future__ import annotations
 import numpy as np
 import aneforge as af

@@ -1,23 +1,4 @@
-"""Paired-fp16 ("double-fp16") on the ANE - extended precision, NO fp32 anywhere.
-
-Validates aneforge's ``af.paired`` / :class:`Paired` capability on-device (compile +
-run on the Apple Neural Engine via e5rt) against an fp32/fp64 numpy reference:
-
-  (1) CFG-style compensated SUBTRACT - two vectors whose true difference is a tiny
-      fraction of their magnitude (the SD-1.5 classifier-free-guidance case). When
-      the values arrive as paired-fp16 (carrying their sub-ulp lo), the compensated
-      subtract recovers the difference where plain fp16 is ~100%+ broken.
-
-  (2) Cancellation-heavy compensated DOT - a signed contraction whose true value is
-      small vs the product magnitudes. The compensated (TwoProduct + matmul-accum)
-      dot beats plain fp16.
-
-Each on-device number is checked against numpy-fp16 (proves the win is algorithmic,
-not a device artifact) AND against fp32 truth (proves the accuracy recovered). The
-demo also asserts the compiled MIL is fp16-only - no fp32 op sneaks in.
-
-    python3 examples/paired_fp16.py
-"""
+"""Paired-fp16 extended precision on the ANE (fp16-only): compensated subtract + cancellation-heavy dot. Run: python3 examples/paired_fp16.py"""
 import re
 import sys
 from pathlib import Path
@@ -32,7 +13,6 @@ f16 = np.float16
 
 
 # data generators (fp32/fp64 ONLY for reference + reporting)
-
 def make_cfg_pair(D, ratio, seed):
     """Two vectors whose TRUE difference is `ratio` * magnitude, returned as
     paired-fp16 (hi, lo) limbs plus the fp64 true difference."""
@@ -65,20 +45,16 @@ def make_downproj(K, cancel, seed):
 
 
 # fp16-only guard: the compiled MIL must declare/emit no fp32 type
-
 def assert_fp16_only(build_dir):
     mil = (Path(build_dir) / "model.mil").read_text()
     bad = sorted(set(re.findall(r"\b(?:fp32|float32)\b", mil)))
     if bad:
-        # `bias` weights are stored fp32 by the matmul emitter, but the paired graphs
-        # use raw `@ ones` with no bias, so any fp32 here is a real leak.
         raise AssertionError(f"fp32 leaked into the compiled MIL: {bad}")
     n_fp16 = len(re.findall(r"\bfp16\b", mil))
     return n_fp16
 
 
 # (1) compensated SUBTRACT - on device
-
 def demo_subtract():
     head("(1) CFG-style compensated SUBTRACT - paired-fp16 (hi,lo) inputs, on the ANE")
     print("    true diff = ratio * magnitude;  plain fp16 vs af.paired compensated subtract")
@@ -135,7 +111,6 @@ def _np_comp_sub(chi, clo, uhi, ulo):
 
 
 # (2) compensated DOT - on device
-
 def demo_dot():
     print()
     print("(2) Cancellation-heavy compensated DOT - TwoProduct + matmul-accum, on the ANE")
@@ -186,7 +161,6 @@ def demo_dot():
 
 
 # op-cost report
-
 def op_cost():
     print()
     head("OP COST (fp16 ops/element - counted from the compiled graph)")

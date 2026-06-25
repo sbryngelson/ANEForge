@@ -1,13 +1,4 @@
-"""Full Stable-Diffusion UNet forward on the ANE - real diffusers weights.
-
-Builds the complete UNet2DConditionModel forward (conv_in -> down blocks -> mid ->
-up blocks with skip-concat -> conv_out) in aneforge from REAL diffusers weights,
-fuses it into one ANE program, and validates the output against diffusers.
-
-Tiny SD config (same architecture as SD-1.5, small weights for fast iteration).
-
-    python3 examples/sd_unet.py
-"""
+"""Full SD UNet2DConditionModel forward as one ANE program from real diffusers weights (tiny config), validated vs diffusers. Run: python3 examples/sd_unet.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np, torch

@@ -1,13 +1,4 @@
-"""DEMO: dispatch is single-in-flight per die - threads don't amortize one die.
-
-Reverse-engineering finding (kernel decode): the ANEScheduler dispatches one firmware
-command in-flight per die, so two threads submitting to the SAME die serialize (~1x). The
-multi-die load balancer (M1 Max/Ultra) does dynamic least-busy steering, but only within a
-program's eligible-die mask - so the real multi-die lever is making programs all-die-eligible.
-This demo shows the single-die serialization (sequential vs 2-thread ~= same wall time).
-
-Run:  python3 examples/demos/single_in_flight.py
-"""
+"""Dispatch is single-in-flight per die: threads don't amortize one die. Run: python3 examples/demos/single_in_flight.py"""
 import sys, time, threading, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

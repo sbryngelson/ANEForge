@@ -1,29 +1,4 @@
-"""aneforge N-body demo - one gravitational force + integration step on the ANE.
-
-This is "an N-body step on the ANE". For N point masses we compute the pairwise
-inverse-square (gravity/Coulomb) acceleration via a broadcast outer-difference and a
-reduction - the kernel shape behind any N-body solver:
-
-    d_ij   = p_j - p_i                      # [N,N,3] broadcast outer difference
-    a_i    = G * sum_{j != i} m_j * d_ij / (|d_ij|^2 + eps)^(3/2)
-
-The self term j=i is removed by adding a large value on the diagonal of the squared
-distance (a folded constant mask), so 1/r^3 -> ~0 there. We then take ONE explicit
-leapfrog/Euler kick-drift step:  v += a*dt;  p += v*dt.
-
-The whole force computation (broadcast diff, squared distance, rsqrt^3, masked sum)
-is compiled into ONE fused e5rt program. We validate the resulting accelerations AND
-the advanced positions against the SAME computation in fp32 numpy.
-
-CAVEAT: 1/r^3 is fp16-sensitive when two bodies get close (the denominator is a
-small number raised to the 3/2 power), so we seed well-separated bodies and use a
-softening eps (standard in collisionless N-body) to keep r in fp16 range. With that,
-the accelerations match numpy to ~1e-2. The intermediate [N,N,3] grows O(N^2), so
-this is the small-N direct-summation regime (no tree/Barnes-Hut, which needs the
-data-dependent control flow the feed-forward ANE lacks).
-
-    python3 examples/nbody.py
-"""
+"""aneforge N-body demo: pairwise inverse-square force + one kick-drift step as one fused ANE program. Run: python3 examples/nbody.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np
@@ -91,9 +66,7 @@ def main():
     v1_ref = v0.astype(np.float32) + a_ref * DT
     p1_ref = p0.astype(np.float32) + v1_ref * DT
     p_relerr = float(np.linalg.norm(p1_ane - p1_ref) / np.linalg.norm(p1_ref))
-    # the displacement is the part that actually depends on the ANE accel (the
-    # advanced position is dominated by the identical fp16 p0, so its relerr is tiny
-    # by construction - report the velocity-update relerr too, which isolates accel).
+    # velocity-update relerr isolates the ANE accel (position is dominated by p0).
     v_relerr = float(np.linalg.norm(v1_ane - v1_ref) / np.linalg.norm(v1_ref))
     print(f"  updated-velocity relerr vs fp32 numpy:  {v_relerr:.3e} (isolates the accel)")
     print(f"  advanced-position relerr vs fp32 numpy: {p_relerr:.3e} (dominated by p0)")

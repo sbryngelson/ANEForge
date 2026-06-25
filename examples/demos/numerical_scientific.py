@@ -1,13 +1,4 @@
-"""DEMO: numerical / scientific compute on the ANE - a DFT as two matmuls.
-
-Exercises:
-  - expressing a scientific kernel (the discrete Fourier transform) as ANE matmuls
-    (real part via a cosine basis, imaginary via a sine basis)
-  - recovering the magnitude spectrum and checking it vs numpy's FFT (cosine ~1, right peaks)
-  - the ANE as a general fp16 array processor, not just a neural-net accelerator
-
-Run:  python3 examples/demos/numerical_scientific.py
-"""
+"""Numerical/scientific compute on the ANE: a DFT as two matmuls. Run: python3 examples/demos/numerical_scientific.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -28,7 +19,7 @@ def main() -> int:
     Wsin = (-np.sin(2*np.pi*jk/n)).astype(np.float32)
 
     x = af.input((1, n))
-    net = af.compile((x @ Wcos).square() + (x @ Wsin).square())   # |DFT|^2, all on the ANE
+    net = af.compile((x @ Wcos).square() + (x @ Wsin).square())   # |DFT|^2
     mag2 = np.asarray(net(sig.reshape(1, n))).reshape(-1).astype(np.float64)
     mag = np.sqrt(np.maximum(mag2, 0))
     ref = np.abs(np.fft.fft(sig.astype(np.float64)))

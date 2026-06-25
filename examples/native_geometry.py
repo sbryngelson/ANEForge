@@ -1,15 +1,4 @@
-"""Native ANE geometry + matching ops - cross_product / cross_correlation /
-cost_volume / fps / radius_search.
-
-All are native hardware layers Apple's public MIL/CoreML pipeline never emits
-(CrossProduct, CrossCorrelation, CostVolume, FurthestPointSampling, RadiusSearch);
-each runs as a native-ANE netplist-bridge sub-program (a graph cut, like af.sdpa).
-FPS and radius_search are the point-cloud primitives - see examples/pointcloud.py
-for them composed into a PointNet++-style sample/group step. The bridges in
-aneforge/_bridges/ must be reachable on disk.
-
-    python3 examples/native_geometry.py
-"""
+"""Native ANE geometry/matching ops via netplist bridges: cross_product / cross_correlation / cost_volume / fps / radius_search. Run: python3 examples/native_geometry.py"""
 import sys
 
 from _common import report   # sets env + repo-root path; import before aneforge

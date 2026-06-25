@@ -1,13 +1,4 @@
-"""Native ANE normalization ops - l2_norm / minmax_norm / lrn / scaled_elementwise.
-
-l2_norm fuses as plain e5rt MIL (reduce_l2_norm + real_div - no graph cut). The
-rest are native hardware layers Apple's public MIL/CoreML pipeline never emits
-(MinMaxNormalization, LocalResponseNormalization, ScaledElementWise); each runs
-as a netplist-bridge sub-program (a graph cut, like af.sdpa). The bridges in
-aneforge/_bridges/ must be reachable on disk.
-
-    python3 examples/native_norms.py
-"""
+"""Native ANE normalization ops: l2_norm (fused MIL) / minmax_norm / lrn / scaled_elementwise (bridges). Run: python3 examples/native_norms.py"""
 import sys
 
 from _common import report   # sets env + repo-root path; import before aneforge

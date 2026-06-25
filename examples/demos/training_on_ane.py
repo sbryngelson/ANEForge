@@ -1,12 +1,4 @@
-"""DEMO: training ON the ANE - forward, backward, and the optimizer all on-device.
-
-Exercises:
-  - af.parameter (trainable tensors) + af.mse loss
-  - af.Trainer(device_optimizer=True): forward + backward + the Adam update run on the ANE
-  - a real fit: recover a known linear map from data, watching the loss fall
-
-Run:  python3 examples/demos/training_on_ane.py
-"""
+"""Training on the ANE: forward, backward, and the optimizer all on-device. Run: python3 examples/demos/training_on_ane.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

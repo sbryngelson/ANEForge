@@ -1,12 +1,4 @@
-"""DEMO: resident on-device state via share_buffer - no host re-feed between steps.
-
-Reverse-engineering finding: output->input buffer aliasing (share_buffer) keeps a tensor
-resident on the ANE across execute() calls. This is the chaining lever for autoregressive
-decode (zero-copy KV-cache) and unrolled training (resident optimizer state): the host feeds
-only new data, never the carried state. Here a counter accumulates entirely on-device.
-
-Run:  python3 examples/demos/resident_state.py
-"""
+"""Resident on-device state via share_buffer: no host re-feed between steps. Run: python3 examples/demos/resident_state.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,14 +10,13 @@ import aneforge as af
 def main() -> int:
     warnings.simplefilter("ignore")
     s = af.input((1, 8))
-    y = s.adds(1.0)                       # y = state + 1
+    y = s.adds(1.0)
     net = af.compile(y)
     prog = net._prog
     in_name = net._inputs[0][0]
     out_name = net._out_name
 
-    # alias the state INPUT to read the program's OWN OUTPUT buffer: the result of step k
-    # becomes the input of step k+1 - state stays on-device, never re-fed from the host.
+    # alias state INPUT to the program's OWN OUTPUT buffer: step k's result feeds step k+1
     prog.share_buffer(0, out_name, 0, in_name)
 
     print("execute() repeatedly, feeding NOTHING - state accumulates on-device:")

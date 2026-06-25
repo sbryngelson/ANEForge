@@ -1,15 +1,4 @@
-"""ANEForge hero demo: a small transformer that writes about itself, on the ANE.
-
-A small causal char-level transformer (multi-head attention, SwiGLU, RMSNorm)
-trains end to end on the Apple Neural Engine - forward, backward, and the Adam
-update are all ANE graph programs - then generates text from the trained model,
-one character per on-engine forward pass. No CoreML, no GPU.
-
-    python3 examples/demo.py
-
-This is the script recorded for the README animation (docs/assets/demo.tape). It is
-a real run on real ANE silicon; the only thing staged is the typewriter pacing.
-"""
+"""ANEForge hero demo: a small char transformer trains and generates entirely on the ANE. Run: python3 examples/demo.py"""
 import sys
 import threading
 import time
@@ -120,8 +109,7 @@ def main():
             time.sleep(0.45)
     out()
 
-    # complete the prompt on the engine, one character per on-engine forward pass.
-    # the given prompt is dimmed; the model's continuation streams in bright teal.
+    # complete the prompt, one character per on-engine forward pass.
     def complete(seed, n):
         buf = [stoi[c] for c in seed]
         out(f"  {GREY}prompt{R}      {RUST}>{R} {DIM}{seed}{R}")

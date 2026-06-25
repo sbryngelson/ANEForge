@@ -1,14 +1,4 @@
-"""aneforge super-resolution demo - ESPCN sub-pixel upscaler on the Apple Neural Engine.
-
-A small ESPCN-style super-resolution network - three convs with ReLU feature
-extractors followed by a sub-pixel convolution that upscales by ``r`` via
-``af.pixel_shuffle`` (depth-to-space). The whole network, including the
-PixelShuffle, fuses into ONE e5rt program: PixelShuffle runs as fused e5rt-MIL,
-so there is no graph cut. Output is validated against a numpy reference of the
-same forward pass (relative L2 error).
-
-    python3 examples/superres_espcn.py
-"""
+"""ESPCN sub-pixel super-resolution (3 convs + pixel_shuffle) fused into one ANE program, validated vs numpy. Run: python3 examples/superres_espcn.py"""
 import sys
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

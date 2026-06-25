@@ -1,14 +1,4 @@
-"""Native ANE pixel-rearrange + layout ops - every lossless data-movement layer.
-
-pixel_shuffle / pixel_unshuffle fuse as plain e5rt MIL (no graph cut). The rest
-are native hardware layers Apple's public MIL/CoreML pipeline never emits
-(SpaceToChannel, ChannelToSpace, SpaceToBatch, BatchToSpace, Flatten, InputView,
-DynamicSlice); each runs as a netplist-bridge sub-program (a graph cut, like
-af.sdpa). Inputs are integer-valued fp16 so any mismatch is a true permutation
-error, not rounding. The bridges in aneforge/_bridges/ must be reachable on disk.
-
-    python3 examples/native_pixel_ops.py
-"""
+"""Native ANE pixel-rearrange + layout ops: pixel_shuffle/unshuffle (fused MIL) + space/channel/batch reshapes, flatten, slice (bridges). Run: python3 examples/native_pixel_ops.py"""
 import sys
 
 from _common import report   # sets env + repo-root path; import before aneforge

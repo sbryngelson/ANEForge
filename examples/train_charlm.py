@@ -1,20 +1,4 @@
-"""Train a multi-layer character-level language model on the Apple Neural Engine - a 4-layer causal LLaMA-style transformer, forward AND backward AND the optimizer step
-all on the engine, then generate from it.
-
-This is the "at scale" training demonstration: not a single block but a stacked,
-causally-masked transformer with token and positional embeddings, RMSNorm + SwiGLU
-blocks, a tied-shape output projection, and a next-token cross-entropy objective. Every
-parameter trains on the ANE, including the RMSNorm gains.
-
-Two notes on what makes this fit the engine's reachable surface:
-  - Token embedding is a one-hot matmul (`onehot @ W_emb`), not a `gather`: the
-    embedding gradient is then an ordinary matmul gradient, sidestepping the gather/
-    scatter wall while being mathematically identical to a lookup.
-  - Causal masking is an additive bias (a fixed upper-triangular `-1e4` matrix) added to
-    the attention scores before softmax, so position i attends only to positions <= i.
-
-    python3 examples/train_charlm.py
-"""
+"""Train a 4-layer causal LLaMA-style char-LM on the ANE (forward + backward + optimizer) and generate from it. Run: python3 examples/train_charlm.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np
@@ -81,16 +65,12 @@ def main():
     lf = tr.loss()
     print(f"\ncross-entropy {l0:.4f} -> {lf:.4f}; the model trained end to end on the engine")
 
-    # Next-token accuracy on the training window (the trained logits, argmax per position).
+    # Next-token accuracy on the training window
     logit = np.asarray(tr._fwd(*tr._feed(tr._fwd)))
     acc = float((logit.argmax(-1) == ids[1:S + 1]).mean())
     print(f"next-char accuracy over the {S} positions: {acc*100:.1f}%")
 
-    # Greedy autoregressive generation. The model uses absolute positional embeddings
-    # over a fixed S-position context, so generation reconstructs the sequence at its
-    # true positions: place the prefix at positions 0..k-1, right-pad, and read the
-    # logit at the last real position (which predicts the next character). Reuses the
-    # trained forward program by feeding each window through its `x` input.
+    # Greedy autoregressive generation: prefix at positions 0..k-1, right-pad, read last real position.
     def generate(seed):
         buf = [stoi[c] for c in seed]
         while len(buf) < S:

@@ -1,17 +1,4 @@
-"""A LLaMA-style decoder transformer block with NATIVE CAUSAL attention, on the ANE.
-
-This is the core compute of GPT/LLaMA inference - and the causal mask runs on the Apple
-Neural Engine's native fused-attention hardware (``af.sdpa(..., is_causal=True)``), not a
-host/GPU fallback. The block is the standard pre-norm LLaMA layer:
-
-    h   = x + Wo - causal_attn(rms_norm(x) -> Q,K,V)        # masked multi-head attention
-    out = h + SwiGLU(rms_norm(h))                          # SwiGLU FFN
-    SwiGLU(z) = (silu(z @ Wg) * (z @ Wu)) @ Wd
-
-Layout: ``[S, D]`` (sequence x model dim, batch folded out); heads are ``[H, S, dh]``; the
-causal SDPA runs as ``[1, H, S, dh]`` on the native layer. Validated to cos 1.0 vs a numpy
-causal reference (see tests/test_decoder_block.py).
-"""
+"""A pre-norm LLaMA-style decoder block with native causal attention (af.sdpa is_causal) on the ANE."""
 from __future__ import annotations
 import math
 import numpy as np

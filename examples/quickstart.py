@@ -1,13 +1,4 @@
-"""Worked examples for the aneforge frontend - a vision CNN and a transformer
-ENCODER block, each built with the clean API, compiled to ONE fused ANE program,
-and checked against a numpy fp32 reference.
-
-These double as the API's end-to-end tests. The encoder is the case the LLM
-*decoder* could never be: one forward, no autoregressive accumulation, error-
-tolerant output - squarely in the ANE's niche.
-
-    python3 examples/quickstart.py
-"""
+"""aneforge frontend worked examples: a vision CNN and a transformer encoder block, each fused to one ANE program. Run: python3 examples/quickstart.py"""
 from __future__ import annotations
 import sys
 

@@ -1,12 +1,4 @@
-"""DEMO: a small vision conv encoder fused into one ANE program.
-
-Exercises:
-  - a conv->relu->maxpool x2 -> global-avg-pool -> fc encoder, the ANE's home turf
-  - the whole stack fused into ONE program (one dispatch for the entire forward pass)
-  - correctness vs a numpy fp32 reference (cosine ~1)
-
-Run:  python3 examples/demos/vision_conv_encoder.py
-"""
+"""A small vision conv encoder fused into one ANE program. Run: python3 examples/demos/vision_conv_encoder.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
