@@ -76,7 +76,6 @@ def _run_netplist(plist: dict, x: np.ndarray) -> tuple[np.ndarray, dict[str, Any
     return out, info
 
 
-# --------------------------------------------------------------------------
 # Public ops.  Inputs/outputs are fp16 numpy arrays in [N, C, H, W] order.
 
 def pixel_shuffle(x: np.ndarray, r: int) -> np.ndarray:
@@ -152,7 +151,6 @@ def batch_to_space(x: np.ndarray, bh: int, bw: int) -> np.ndarray:
   return out.reshape(N, C, H * bh, W * bw)
 
 
-# --------------------------------------------------------------------------
 # numpy references (exact integer rearranges).
 
 def ref_pixel_shuffle(x: np.ndarray, r: int) -> np.ndarray:

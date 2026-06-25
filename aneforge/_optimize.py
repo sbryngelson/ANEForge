@@ -35,9 +35,7 @@ def _topo(out):
   return order
 
 
-# --------------------------------------------------------------------------- #
-# deterministic graph-structure hash                                          #
-# --------------------------------------------------------------------------- #
+# deterministic graph-structure hash
 def _graph_key(out, input_shapes) -> str:
   """Deterministic hash of the graph STRUCTURE + input shapes (not weight values)."""
   order = _topo(out)
@@ -57,9 +55,7 @@ def _graph_key(out, input_shapes) -> str:
   return h.hexdigest()[:32]
 
 
-# --------------------------------------------------------------------------- #
-# persistent measurement cache                                                #
-# --------------------------------------------------------------------------- #
+# persistent measurement cache
 def _cache_dir() -> Path:
   env = os.environ.get("ANEFORGE_CACHE_DIR")
   if env:
@@ -96,9 +92,7 @@ def _save_cache(cache: dict) -> None:
     pass
 
 
-# --------------------------------------------------------------------------- #
-# attention query-tile autotune                                                #
-# --------------------------------------------------------------------------- #
+# attention query-tile autotune
 # The query-tile count sets how the [H,S,T] score is fissioned. The S-based heuristic is not
 # the per-shape optimum, so measure the best count once per (chip,S,T,heads,head_dim) and cache.
 _TILE_MEMO: dict = {}
@@ -166,9 +160,7 @@ def tune_attention(S: int, n_heads: int, dh: int, T: int | None = None,
   return attention_tiles(S, n_heads, dh, T=T, tune=True, candidates=candidates)
 
 
-# --------------------------------------------------------------------------- #
-# variant space (legal == metamorphic-proven-safe)                            #
-# --------------------------------------------------------------------------- #
+# variant space (legal == metamorphic-proven-safe)
 def _has_weights(out) -> bool:
   """True if the graph carries any int8-eligible weight (matmul `wt` or conv `weight`)."""
   for t in _topo(out):
@@ -314,9 +306,7 @@ def _config_label(cfg: dict) -> str:
   return "+".join(parts)
 
 
-# --------------------------------------------------------------------------- #
-# measurement                                                                 #
-# --------------------------------------------------------------------------- #
+# measurement
 def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5,
             tol: float = _ACCURACY_TOL):
   """Compile under `cfg`, validate vs `baseline_out` within tol, return (min latency us, output array)."""
@@ -350,9 +340,7 @@ def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5
     except Exception: pass
 
 
-# --------------------------------------------------------------------------- #
-# greedy per-weight int8 selection (coordinate descent, not 2^K)              #
-# --------------------------------------------------------------------------- #
+# greedy per-weight int8 selection (coordinate descent, not 2^K)
 def _greedy_int8(out, inputs, baseline_out, baseline_us, *, reps, atol,
                  min_lossy_speedup, budget, verbose=False):
   """Greedily grow the per-weight int8 set, one weight at a time (coordinate descent, capped by `budget`)."""
@@ -398,9 +386,7 @@ def _greedy_int8(out, inputs, baseline_out, baseline_us, *, reps, atol,
   return tuple(chosen), best_us, n_measured
 
 
-# --------------------------------------------------------------------------- #
-# tune                                                                        #
-# --------------------------------------------------------------------------- #
+# tune
 def _gen_inputs(input_shapes):
   """Deterministic synthetic inputs (fp16 ~N(0,1), nudged off zero)."""
   rng = np.random.default_rng(0xA9E)
@@ -564,10 +550,8 @@ def tune_report(out, budget: int = 8, inputs=None, reps: int = 20):
           "winner": winner, "speedup": speedup, "baseline_out": baseline_out}
 
 
-# =========================================================================== #
 # precision-aware tune: given an explicit error budget, select the numerics-aware #
-# rewrite set that meets it at minimum cost (accuracy vs an fp32 reference).       #
-# =========================================================================== #
+# rewrite set that meets it at minimum cost (accuracy vs an fp32 reference).
 def _f16(x):  # fp16 rounding of operands/products, wide accum
   return np.asarray(x, np.float16).astype(np.float64)
 

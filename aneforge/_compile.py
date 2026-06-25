@@ -44,9 +44,7 @@ def _topo(out: Tensor) -> list[Tensor]:
   return _topo_multi(out)
 
 
-# --------------------------------------------------------------------------- #
-# per-op MIL emitters (registry)                                              #
-# --------------------------------------------------------------------------- #
+# per-op MIL emitters (registry)
 
 _EMIT: dict[str, Callable[..., Any]] = {}
 
@@ -730,9 +728,7 @@ def _e_group_norm(em, t, n, s):
   em.line(f'{em.ty(t.shape)} {n} = add(x={n}_gg, y={b4})[name=string("{n}")];')
 
 
-# --------------------------------------------------------------------------- #
-# compiled model                                                              #
-# --------------------------------------------------------------------------- #
+# compiled model
 
 class Model:
   """A compiled, fused ANE program. Call it with the input array(s), in `af.input` order."""
@@ -1159,9 +1155,7 @@ def _compile_opt(out: Tensor, int8: bool, opt):
   raise ValueError(f"compile: unknown opt={opt!r} (use 0, 1, 2, or 'max')")
 
 
-# --------------------------------------------------------------------------- #
-# segmented compile: native-SDPA graph cuts                                   #
-# --------------------------------------------------------------------------- #
+# segmented compile: native-SDPA graph cuts
 def _import_bridge(module: str, attr: str, op_name: str, filename: str):
   """Lazily import `attr` from the in-package `aneforge._bridges.<module>` bridge."""
   import importlib
@@ -1178,10 +1172,8 @@ def _sdpa_fused(*args, **kwargs):
   return _import_bridge("ane_sdpa_fused", "sdpa_fused", "sdpa", "ane_sdpa_fused.py")(*args, **kwargs)
 
 
-# --------------------------------------------------------------------------- #
-# netplist-bridge ops: graph nodes that run as a native-ANE Path-A sub-program  #
+# netplist-bridge ops: graph nodes that run as a native-ANE Path-A sub-program
 # (a graph cut). Each NETPLIST_OPS entry is a legal cut point (_compile_segmented)#
-# --------------------------------------------------------------------------- #
 
 def _run_sdpa(srcs, attrs):
   q, k, v = srcs[0], srcs[1], srcs[2]

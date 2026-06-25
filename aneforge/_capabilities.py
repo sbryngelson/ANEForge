@@ -7,9 +7,7 @@ from typing import Any
 from . import _compile
 
 
-# --------------------------------------------------------------------------- #
-# valid status vocabulary (closed set)                                        #
-# --------------------------------------------------------------------------- #
+# valid status vocabulary (closed set)
 STATUSES = ("fused", "bridge", "cracked", "reachable", "arch-gated-negative",
             "not-authorable", "predicted")
 
@@ -433,9 +431,7 @@ _PREDICTED: list[dict[str, Any]] = [
 ]
 
 
-# --------------------------------------------------------------------------- #
-# (D) full-MIL-vocabulary sweep - the data-driven exhaustiveness layer          #
-# --------------------------------------------------------------------------- #
+# (D) full-MIL-vocabulary sweep - the data-driven exhaustiveness layer
 # Synthesizes an entry for every swept op not already represented, classified from its
 # sweep `klass`. Curated entries win (exact-name skipped).
 import os as _os
@@ -672,9 +668,7 @@ def route_registry() -> dict[str, Any]:
   }
 
 
-# --------------------------------------------------------------------------- #
-# cracked-LAYER MANIFEST - the traceable artifact behind the "26 cracked"      #
-# --------------------------------------------------------------------------- #
+# cracked-LAYER MANIFEST - the traceable artifact behind the "26 cracked"
 # slice_by_index == input_view (both Type=InputView); folded so the count is distinct layers.
 _CRACKED_DEDUPE_ALIAS: dict[str, str] = {"slice_by_index": "input_view"}
 

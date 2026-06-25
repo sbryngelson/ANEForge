@@ -9,9 +9,7 @@ import numpy as np
 
 from ._compile import NETPLIST_OPS, _topo
 
-# --------------------------------------------------------------------------- #
-# calibrated constants (load from the cost-model JSON; else defaults below)      #
-# --------------------------------------------------------------------------- #
+# calibrated constants (load from the cost-model JSON; else defaults below)
 # Defaults from ane_cost_model.json's calibration (floor/cut/BW/FLOPS).
 _DEFAULTS = {
   "floor_us": 70.0,
@@ -57,9 +55,7 @@ def _cost_model_path():
   return None
 
 
-# --------------------------------------------------------------------------- #
-# the measurement-free ANALYTIC per-chip cost model (Direction A)              #
-# --------------------------------------------------------------------------- #
+# the measurement-free ANALYTIC per-chip cost model (Direction A)
 # t = overhead + max(flops/peak, bytes/bw) per fused program, anchored to measured chips
 # (_ANCHORS) and scaled by {cores (BW), clock (floor), cores*eff (peak)}.
 _M1_FIT_PEAK_FLOPS = 3.25e12        # latency roofline compute ceiling (fit on M1 convs)
@@ -206,9 +202,7 @@ def _analytic_constants(arch: str) -> dict:
   return out
 
 
-# --------------------------------------------------------------------------- #
-# measured per-bridge-op cost model                                            #
-# --------------------------------------------------------------------------- #
+# measured per-bridge-op cost model
 # Bridge ops have no closed-form flops; bridge_cost() nearest-neighbour anchors by a
 # per-family work scalar (_BRIDGE_WORK) and scales by the work ratio, clamped to the floor.
 import re
@@ -397,9 +391,7 @@ def bridge_cost(t):
   return max(floor, scaled)
 
 
-# --------------------------------------------------------------------------- #
-# per-node structural roofline                                                 #
-# --------------------------------------------------------------------------- #
+# per-node structural roofline
 def _elems(shape) -> int:
   n = 1
   for d in shape: n *= int(d)
@@ -476,9 +468,7 @@ def _estimate_analytic(out, arch: str, int8: bool) -> float:
   return n_regions * c["floor_us"] + region_work + cut_work + n_cuts * c["cut_us"]
 
 
-# --------------------------------------------------------------------------- #
-# composition: replicate _compile's fused-region vs netplist-cut segmentation   #
-# --------------------------------------------------------------------------- #
+# composition: replicate _compile's fused-region vs netplist-cut segmentation
 def estimate(out, int8: bool = False, target: str | None = None) -> float:
   """Estimate the compiled latency (us) of the graph rooted at `out`; `target` switches to the analytic per-chip model."""
   if target is not None: return _estimate_analytic(out, target, int8)
@@ -524,9 +514,7 @@ def estimate(out, int8: bool = False, target: str | None = None) -> float:
   return n_regions * floor + region_work + cut_work + n_cuts * c["cut_us"] - int8_discount
 
 
-# --------------------------------------------------------------------------- #
-# precision / fp16-cancellation risk MODEL  (the optimizer's numerics pruner)  #
-# --------------------------------------------------------------------------- #
+# precision / fp16-cancellation risk MODEL  (the optimizer's numerics pruner)
 # Cheap structural pattern-matcher (not an error bound) over three fp16 failure modes:
 # (a) signed long-contraction reduce_sum, (b) sub of two live tensors, (c) group_norm
 # per-axis cliff. Per-graph signal = max node error proxy.
