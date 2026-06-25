@@ -1373,7 +1373,7 @@ def build_matrix_decomposition(
   params: dict[str, object] = {"Type": unit_type}
   if unit_type == "NonQRGivens":
     params["Epsilon"] = fp16_bits(epsilon)
-    axes = rotation_axis if rotation_axis is not None else [7 for _ in range(batch_size)]
+    axes = rotation_axis if rotation_axis is not None else [7] * batch_size
     if len(axes) != batch_size: raise ValueError("matrix_decomposition rotation_axis length must equal batch_size")
     params["RotationAxis"] = [int(axis) for axis in axes]
   elif rotation_axis is not None:
@@ -1419,7 +1419,7 @@ def build_matrix_decomposition_relu(
   if unit_type != "NonQRGivens":
     raise ValueError("matrix_decomposition_relu is currently recovered only for NonQRGivens")
   if batch_size < 1: raise ValueError("matrix_decomposition_relu batch_size must be positive")
-  axes = rotation_axis if rotation_axis is not None else [7 for _ in range(batch_size)]
+  axes = rotation_axis if rotation_axis is not None else [7] * batch_size
   if len(axes) != batch_size: raise ValueError("matrix_decomposition_relu rotation_axis length must equal batch_size")
   md_name = "matrix_decomposition_relu-1_md"
   relu_name = "matrix_decomposition_relu-1_relu"
@@ -1465,7 +1465,7 @@ def build_matrix_decomposition_add(
   if unit_type != "NonQRGivens":
     raise ValueError("matrix_decomposition_add is currently recovered only for NonQRGivens")
   if batch_size < 1: raise ValueError("matrix_decomposition_add batch_size must be positive")
-  axes = rotation_axis if rotation_axis is not None else [7 for _ in range(batch_size)]
+  axes = rotation_axis if rotation_axis is not None else [7] * batch_size
   if len(axes) != batch_size: raise ValueError("matrix_decomposition_add rotation_axis length must equal batch_size")
   md_name = "matrix_decomposition_add-1_md"
   add_name = "matrix_decomposition_add-1_add"
@@ -1524,7 +1524,7 @@ def build_matrix_decomposition_matmul(
   network_name = "network_matrix_decomposition_matmul-1"
   params: dict[str, object] = {"Type": unit_type}
   if unit_type == "NonQRGivens":
-    axes = rotation_axis if rotation_axis is not None else [7 for _ in range(batch_size)]
+    axes = rotation_axis if rotation_axis is not None else [7] * batch_size
     if len(axes) != batch_size:
       raise ValueError("matrix_decomposition_matmul rotation_axis length must equal batch_size")
     params["Epsilon"] = fp16_bits(epsilon)
@@ -1706,7 +1706,7 @@ def input_view_unit(name: str, bottom: str, dimension: str, offset: int, size: i
 def concat_unit(name: str, bottom: list[str], dimension: str, channels: int) -> dict:
   return {
     "Bottom": bottom,
-    "InputType": ["Float16" for _ in bottom],
+    "InputType": ["Float16"] * len(bottom),
     "Name": name,
     "OutputChannels": channels,
     "OutputType": "Float16",
@@ -2551,7 +2551,7 @@ def build(
   sdpa_subtract_max: bool = True,
 ) -> dict:
   op = canonical_op(op)
-  if op == "sdpa" or op == "scaled_dot_product_attention":
+  if op in {"sdpa", "scaled_dot_product_attention"}:
     return build_sdpa(
       channels=sdpa_channels,
       sequence=sdpa_sequence,
