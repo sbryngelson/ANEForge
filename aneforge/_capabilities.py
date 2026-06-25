@@ -130,33 +130,23 @@ _BRIDGE_EVIDENCE: dict[str, str] = {
 
 def _introspect_fused() -> list[dict[str, Any]]:
   """Every op live in `_compile._EMIT` -> a `fused` registry entry."""
-  out = []
-  for name in sorted(_compile._EMIT):
-    out.append({
-      "name": name,
-      "status": "fused",
-      "route": "e5rt-MIL (fused into one program; no graph cut)",
-      "frontend": _FRONTEND_SPELLING.get(name),
-      "verified": "silicon",
-      "evidence": "aneforge/_compile.py @op(...) registry; "
-                  "the reverse-engineering corpus (37/42 verified correct on e5rt)",
-    })
-  return out
+  return [{
+    "name": name, "status": "fused",
+    "route": "e5rt-MIL (fused into one program; no graph cut)",
+    "frontend": _FRONTEND_SPELLING.get(name), "verified": "silicon",
+    "evidence": "aneforge/_compile.py @op(...) registry; "
+                "the reverse-engineering corpus (37/42 verified correct on e5rt)",
+  } for name in sorted(_compile._EMIT)]
 
 
 def _introspect_bridge() -> list[dict[str, Any]]:
   """Every op live in `_compile.NETPLIST_OPS` -> a `bridge` registry entry."""
-  out = []
-  for name in sorted(_compile.NETPLIST_OPS):
-    out.append({
-      "name": name,
-      "status": "bridge",
-      "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
-      "frontend": _FRONTEND_SPELLING.get(name),
-      "verified": "silicon",
-      "evidence": _BRIDGE_EVIDENCE.get(name, "aneforge/_compile.py NETPLIST_OPS"),
-    })
-  return out
+  return [{
+    "name": name, "status": "bridge",
+    "route": "native Path-A netplist sub-program (graph cut; SegmentedModel)",
+    "frontend": _FRONTEND_SPELLING.get(name), "verified": "silicon",
+    "evidence": _BRIDGE_EVIDENCE.get(name, "aneforge/_compile.py NETPLIST_OPS"),
+  } for name in sorted(_compile.NETPLIST_OPS)]
 
 
 # --------------------------------------------------------------------------- #
@@ -637,11 +627,10 @@ def _introspect_sweep(already: set[str]) -> list[dict[str, Any]]:
       }
       if op in _SWEEP_CAPABILITY_ALIAS: entry["alias_of"] = _SWEEP_CAPABILITY_ALIAS[op]
       if op in _SWEEP_NOTE: entry["note"] = _SWEEP_NOTE[op]
-      if klass == "reachable":
-        entry["note"] = (entry.get("note") or "") + (
+      if klass == "reachable" and op not in _SWEEP_NOTE:
+        entry["note"] = ((entry.get("note") or "") +
           " Sweep klass 'reachable' = compiles + runs (presence), correctness not "
-          "numerically pinned against a reference." if op not in _SWEEP_NOTE else "")
-        entry["note"] = entry["note"].strip()
+          "numerically pinned against a reference.").strip()
       out.append(entry)
     elif op in _NOT_AUTHORABLE_OPS:
       out.append({
@@ -947,24 +936,16 @@ def build_registry() -> dict[str, Any]:
   entries += _introspect_fused()
   entries += _introspect_bridge()
 
-  for e in _CRACKED:
-    entries.append({
-      "name": e["name"], "status": "cracked", "route": e["route"],
-      "frontend": None, "verified": "silicon",
-      "evidence": e["evidence"], "note": e.get("note"),
-    })
-  for e in _NEGATIVES:
-    entries.append({
-      "name": e["name"], "status": "arch-gated-negative",
-      "route": None, "frontend": None, "verified": "negative-confirmed",
-      "wall": e["wall"], "evidence": e["evidence"], "probe": e.get("probe"),
-    })
-  for e in _PREDICTED:
-    entries.append({
-      "name": e["name"], "status": "predicted", "route": e["route"],
-      "frontend": None, "verified": "no",
-      "evidence": e["evidence"],
-    })
+  entries += [{"name": e["name"], "status": "cracked", "route": e["route"], "frontend": None,
+               "verified": "silicon", "evidence": e["evidence"], "note": e.get("note")}
+              for e in _CRACKED]
+  entries += [{"name": e["name"], "status": "arch-gated-negative", "route": None, "frontend": None,
+               "verified": "negative-confirmed", "wall": e["wall"],
+               "evidence": e["evidence"], "probe": e.get("probe")}
+              for e in _NEGATIVES]
+  entries += [{"name": e["name"], "status": "predicted", "route": e["route"], "frontend": None,
+               "verified": "no", "evidence": e["evidence"]}
+              for e in _PREDICTED]
 
   # (D) extend exhaustively over the full 166-op MIL vocabulary sweep: synthesize an
   # entry for every swept op not already represented (curated entries win - same name

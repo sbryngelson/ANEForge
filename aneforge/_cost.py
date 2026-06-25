@@ -451,12 +451,6 @@ def _bridge_model() -> dict:
   return out
 
 
-def _prod(shape) -> int:
-  n = 1
-  for d in shape: n *= int(d)
-  return n
-
-
 def _node_size(fam: str, t):
   """Extract a bridge node's size tuple in the SAME convention _parse_bridge_key
     produces for `fam` (so the work scalar matches the measured-key parse).
@@ -501,10 +495,10 @@ def _node_size(fam: str, t):
     return (int(C), int(H), int(W))
   if fam == "bridge_input_view":  # src flattened to W, out=(size,) -> (W, size)
     if not s: return None
-    return (_prod(s[0].shape), int(t.shape[0]))
+    return (_elems(s[0].shape), int(t.shape[0]))
   if fam == "bridge_scaled_elementwise":  # src flattened to W -> (W,)
     if not s: return None
-    return (_prod(s[0].shape),)
+    return (_elems(s[0].shape),)
   return None
 
 
@@ -533,10 +527,8 @@ def bridge_cost(t):
     # dispatch floor - an order-of-magnitude estimate beats none.
     return max(floor, 2.0 * q / _constants()["flops_per_us"])
   # nearest measured point by work scalar (in log space so ratios are symmetric)
-  def _key(pt):
-    pw = work_fn(pt[0])
-    return abs(np.log(max(q, 1e-9)) - np.log(max(pw, 1e-9)))
-  (psize, pmin) = min(pts, key=_key)
+  log_q = np.log(max(q, 1e-9))
+  (psize, pmin) = min(pts, key=lambda pt: abs(log_q - np.log(max(work_fn(pt[0]), 1e-9))))
   pw = work_fn(psize)
   # proportional scaling along the dominant work axis, clamped at the floor.
   scaled = pmin * (q / pw) if pw > 0 else pmin
@@ -555,10 +547,7 @@ def _elems(shape) -> int:
 def _weight_elems(t) -> int:
   """Total constant-weight elements a node carries (generic over attrs): any attr
     value that is a numpy array counts as streamed weight bytes."""
-  n = 0
-  for v in t.attrs.values():
-    if isinstance(v, np.ndarray): n += v.size
-  return n
+  return sum(v.size for v in t.attrs.values() if isinstance(v, np.ndarray))
 
 
 def _node_flops(t) -> float:
@@ -736,9 +725,8 @@ def _reduce_len(t) -> int:
   """Number of elements summed per output element of a reduce node."""
   src = t.srcs[0] if t.srcs else None
   if src is None: return 1
-  axes = t.attrs.get("axes", ())
   n = 1
-  for ax in axes:
+  for ax in t.attrs.get("axes", ()):
     if 0 <= ax < len(src.shape): n *= int(src.shape[ax])
   return n
 

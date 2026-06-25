@@ -421,18 +421,11 @@ def _compile_routes(out, int8: bool, build_dir=None):
 
 
 def _config_label(cfg: dict) -> str:
-  parts = [f"int8={cfg.get('int8', False)}"]
   decomp = cfg.get("decomp", ())
-  if decomp:
-    parts.append(f"decomp={list(decomp)}")
-  else:
-    parts.append("route=native")
-  if cfg.get("int8_nodes"):
-    parts.append(f"int8_nodes={list(cfg['int8_nodes'])}")
-  if cfg.get("rs_matmul"):
-    parts.append(f"rs_matmul={list(cfg['rs_matmul'])}")
-  if cfg.get("paired_sub"):
-    parts.append(f"paired_sub={list(cfg['paired_sub'])}")
+  parts = [f"int8={cfg.get('int8', False)}",
+           f"decomp={list(decomp)}" if decomp else "route=native"]
+  for key in ("int8_nodes", "rs_matmul", "paired_sub"):
+    if cfg.get(key): parts.append(f"{key}={list(cfg[key])}")
   return "+".join(parts)
 
 
@@ -548,18 +541,15 @@ def _gen_inputs(input_shapes):
   """Deterministic synthetic inputs for measurement/validation (fp16 ~N(0,1),
     nudged off zero so divides/rsqrt don't blow up - same recipe as the fuzzer)."""
   rng = np.random.default_rng(0xA9E)
-  out = []
-  for sh in input_shapes:
+  def _make(sh):
     a = rng.standard_normal(tuple(sh)).astype(np.float32)
-    a = np.where(np.abs(a) < 0.25, a + np.sign(a + 1e-6) * 0.5, a)
-    out.append(a.astype(np.float16))
-  return out
+    return np.where(np.abs(a) < 0.25, a + np.sign(a + 1e-6) * 0.5, a).astype(np.float16)
+  return [_make(sh) for sh in input_shapes]
 
 
 def _input_shapes(out):
-  order = _topo(out)
-  ins = sorted((t for t in order if t.op == "input"), key=lambda t: t.attrs.get("idx", 0))
-  return [tuple(t.shape) for t in ins]
+  inputs = (n for n in _topo(out) if n.op == "input")
+  return [tuple(n.shape) for n in sorted(inputs, key=lambda n: n.attrs.get("idx", 0))]
 
 
 def _estimate_variant(out, cfg):
@@ -762,6 +752,34 @@ def tune_report(out, budget: int = 8, inputs=None, reps: int = 20):
 # a rewrite can be selected for improving accuracy, which speed-only tune()       #
 # cannot do.                                                                      #
 # =========================================================================== #
+def _f16(x):  # fp16 rounding of operands/products (the ANE storage), wide accum
+  return np.asarray(x, np.float16).astype(np.float64)
+
+
+# op -> numpy evaluator for the fp32-faithful reference. Each takes the node's
+# fp16-rounded source values `s` and the node `t`. Built once (module scope), not
+# per-node. An op absent here has no faithful reference (the graph falls back).
+_FP32_EVAL = {
+  "add":         lambda s, t: _f16(s[0]) + _f16(s[1]),
+  "sub":         lambda s, t: _f16(s[0]) - _f16(s[1]),
+  "mul":         lambda s, t: _f16(s[0]) * _f16(s[1]),
+  "muls":        lambda s, t: _f16(s[0]) * np.float16(t.attrs["k"]).astype(np.float64),
+  "real_div":    lambda s, t: _f16(s[0]) / _f16(s[1]),
+  "maximum":     lambda s, t: np.maximum(_f16(s[0]), _f16(s[1])),
+  "minimum":     lambda s, t: np.minimum(_f16(s[0]), _f16(s[1])),
+  "relu":        lambda s, t: np.maximum(_f16(s[0]), 0.0),
+  "square":      lambda s, t: _f16(s[0]) ** 2,
+  "abs":         lambda s, t: np.abs(_f16(s[0])),
+  "exp":         lambda s, t: np.exp(_f16(s[0])),
+  "reduce_sum":  lambda s, t: _f16(s[0]).sum(tuple(t.attrs["axes"]), keepdims=True),
+  "reduce_mean": lambda s, t: _f16(s[0]).mean(tuple(t.attrs["axes"]), keepdims=True),
+  "reshape":     lambda s, t: _f16(s[0]).reshape(t.shape),
+  "transpose":   lambda s, t: np.transpose(_f16(s[0]), t.attrs["perm"]),
+  "matmul":      lambda s, t: _f16(s[0]) @ _f16(t.attrs["wt"].astype(np.float64)).T,
+  "bmm":         lambda s, t: _f16(s[0]) @ _f16(s[1]),
+}
+
+
 def _fp32_reference(out, inputs):
   """Compute a fp64/fp32-faithful reference for the graph on numpy, so accuracy can be
     measured as IMPROVEMENT (not just preservation). Uses the same wide-accumulator
@@ -778,37 +796,14 @@ def _fp32_reference(out, inputs):
   for t, a in zip(in_nodes, ins):
     vals[id(t)] = a
 
-  def f16(x):  # fp16 rounding of operands/products (the ANE storage), wide accum
-    return np.asarray(x, np.float16).astype(np.float64)
-
   for t in order:
     if id(t) in vals: continue
     s = [vals.get(id(src)) for src in t.srcs]
     if any(v is None for v in s): return None
-    op = t.op
+    fn = _FP32_EVAL.get(t.op)
+    if fn is None: return None  # unknown op -> no faithful reference
     try:
-      if op == "add":            r = f16(s[0]) + f16(s[1])
-      elif op == "sub":          r = f16(s[0]) - f16(s[1])
-      elif op == "mul":          r = f16(s[0]) * f16(s[1])
-      elif op == "muls":         r = f16(s[0]) * np.float16(t.attrs["k"]).astype(np.float64)
-      elif op == "real_div":     r = f16(s[0]) / f16(s[1])
-      elif op == "maximum":      r = np.maximum(f16(s[0]), f16(s[1]))
-      elif op == "minimum":      r = np.minimum(f16(s[0]), f16(s[1]))
-      elif op == "relu":         r = np.maximum(f16(s[0]), 0.0)
-      elif op == "square":       r = f16(s[0]) ** 2
-      elif op == "abs":          r = np.abs(f16(s[0]))
-      elif op == "exp":          r = np.exp(f16(s[0]))
-      elif op == "reduce_sum":   r = f16(s[0]).sum(tuple(t.attrs["axes"]), keepdims=True)
-      elif op == "reduce_mean":  r = f16(s[0]).mean(tuple(t.attrs["axes"]), keepdims=True)
-      elif op == "reshape":      r = f16(s[0]).reshape(t.shape)
-      elif op == "transpose":    r = np.transpose(f16(s[0]), t.attrs["perm"])
-      elif op == "matmul":
-        # x @ W with W stored transposed as [N,K]; wide accumulate over K
-        W = t.attrs["wt"].astype(np.float64)
-        r = f16(s[0]) @ f16(W).T
-      elif op == "bmm":          r = f16(s[0]) @ f16(s[1])
-      else:
-        return None            # unknown op -> no faithful reference
+      r = fn(s, t)
     except Exception:
       return None
     vals[id(t)] = np.asarray(r, np.float64).reshape(t.shape)
