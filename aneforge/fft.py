@@ -73,6 +73,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import sys
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 
@@ -117,8 +118,10 @@ def _dft_matrix(M: int):
     W = np.exp(-2j * np.pi * k * n / M)        # W[k,n]
     # we compute X[k] = sum_n x[n] W[k,n] = x @ W^T ; fold W^T as the weight.
     Wt = W.T                                   # [n, k] so x@Wt gives X[k]
-    return np.ascontiguousarray(Wt.real).astype(np.float16), \
-           np.ascontiguousarray(Wt.imag).astype(np.float16)
+    Wt_re = Wt.real  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
+    Wt_im = Wt.imag  # type: ignore[union-attr]
+    return np.ascontiguousarray(Wt_re).astype(np.float16), \
+           np.ascontiguousarray(Wt_im).astype(np.float16)
 
 
 def _idft_matrix(M: int):
@@ -127,8 +130,10 @@ def _idft_matrix(M: int):
     k = n.reshape(-1, 1)
     W = np.exp(+2j * np.pi * k * n / M)
     Wt = W.T
-    return np.ascontiguousarray(Wt.real).astype(np.float16), \
-           np.ascontiguousarray(Wt.imag).astype(np.float16)
+    Wt_re = Wt.real  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
+    Wt_im = Wt.imag  # type: ignore[union-attr]
+    return np.ascontiguousarray(Wt_re).astype(np.float16), \
+           np.ascontiguousarray(Wt_im).astype(np.float16)
 
 
 # The ANE caps transpose+matmul at rank-4 (4D) tensors (verified on-device: rank>=5
@@ -198,7 +203,7 @@ class _Builder:
         T = np.exp(self.sign * 2j * np.pi * k1 * n2 / Ntot)   # [N1, restlen]
         Tr = af.input((N1, restlen)); Ti = af.input((N1, restlen))
         self.aux_inputs += [Tr, Ti]
-        self.aux_values += [T.real.astype(np.float16), T.imag.astype(np.float16)]
+        self.aux_values += [T.real.astype(np.float16), T.imag.astype(np.float16)]  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
         return Tr.reshape(*bshape), Ti.reshape(*bshape)
 
     def _axis_dft(self, re: Tensor, im: Tensor, axis: int, r: int):
@@ -383,37 +388,37 @@ class Plan2:
 
 
 # plan cache so repeated calls at the same N reuse the compiled program
-_PLAN_CACHE: dict[tuple, Plan] = {}
+_PLAN_CACHE: dict[tuple, Plan | Plan2] = {}
 
 
 def fft_plan(N: int) -> Plan:
   key = (N, False, False)
   if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan(N, inverse=False, real_input=False)
-  return _PLAN_CACHE[key]
+  return cast(Plan, _PLAN_CACHE[key])
 
 
 def ifft_plan(N: int) -> Plan:
   key = (N, True, False)
   if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan(N, inverse=True, real_input=False)
-  return _PLAN_CACHE[key]
+  return cast(Plan, _PLAN_CACHE[key])
 
 
 def rfft_plan(N: int) -> Plan:
   key = (N, False, True)
   if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan(N, inverse=False, real_input=True)
-  return _PLAN_CACHE[key]
+  return cast(Plan, _PLAN_CACHE[key])
 
 
 def fft2_plan(M: int, N: int) -> Plan2:
   key = ("2d", M, N, False)
   if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan2(M, N, inverse=False)
-  return _PLAN_CACHE[key]
+  return cast(Plan2, _PLAN_CACHE[key])
 
 
 def ifft2_plan(M: int, N: int) -> Plan2:
   key = ("2d", M, N, True)
   if key not in _PLAN_CACHE: _PLAN_CACHE[key] = Plan2(M, N, inverse=True)
-  return _PLAN_CACHE[key]
+  return cast(Plan2, _PLAN_CACHE[key])
 
 
 # --------------------------------------------------------------------------- #
@@ -486,8 +491,8 @@ def _naive_dft_relerr(N: int, xr: np.ndarray, xi: np.ndarray):
     what the ANE's naive DFT-matmul produces. Lets us compare staged vs naive fp16."""
     n = np.arange(N); k = n.reshape(-1, 1)
     W = np.exp(-2j * np.pi * k * n / N)
-    Wr = W.real.astype(np.float16).astype(np.float64)
-    Wi = W.imag.astype(np.float16).astype(np.float64)
+    Wr = W.real.astype(np.float16).astype(np.float64)  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
+    Wi = W.imag.astype(np.float16).astype(np.float64)  # type: ignore[union-attr]
     xr16 = xr.astype(np.float16).astype(np.float64)
     xi16 = xi.astype(np.float16).astype(np.float64)
     Xr = xr16 @ Wr.T - xi16 @ Wi.T

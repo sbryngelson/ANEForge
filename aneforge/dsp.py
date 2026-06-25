@@ -47,6 +47,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import math
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -450,7 +451,7 @@ def iir_filter(x, b, a, n_taps: int = 256):
   # truncated impulse response: response of the IIR to a unit impulse, n_taps long.
   imp = np.zeros(n_taps, np.float64)
   imp[0] = 1.0
-  ir = ss.lfilter(b, a, imp).astype(np.float32)        # FIR approximation of the IIR
+  ir = ss.lfilter(b, a, imp).astype(np.float32)        # type: ignore[union-attr]  # lfilter returns ndarray; stubs over-constrain return
   return fir_filter(x, ir, mode="lfilter")
 
 
@@ -473,6 +474,7 @@ def _relerr(y, ref):
 
 
 def _selftest():
+  ss: Any = None  # pre-bound so pyright sees it as bound below (guarded by have_scipy)
   try:
     import scipy.signal as ss
     have_scipy = True
@@ -555,7 +557,7 @@ def _selftest():
     w = get_window("hann", win_len)
     # scipy stft scales by 1/sum(win); we compute raw windowed-FFT magnitude, so
     # compare against scipy's raw (scaling='spectrum' off): multiply scipy by sum(win).
-    f, tt, Zs = ss.stft(sx, nperseg=win_len, noverlap=win_len - hop, window=w,
+    f, tt, Zs = ss.stft(sx, nperseg=win_len, noverlap=win_len - hop, window=w,  # type: ignore[call-arg]  # stubs type window as str but ndarray is valid; boundary=None is valid at runtime
                         boundary=None, padded=False, return_onesided=True)
     mag_ref = np.abs(Zs) * w.sum()
     m = min(mag_ane.shape[1], mag_ref.shape[1])
