@@ -34,7 +34,7 @@ def out(s=""):
     sys.stdout.write(s + "\n"); sys.stdout.flush()
 
 
-# model                                                                       #
+# model
 
 def perception_weight():
     """Fixed depthwise perception: each channel convolved with identity, Sobel_x,
@@ -85,7 +85,7 @@ def init_params():
     return [W1, b1, W2, b2]
 
 
-# target + seed                                                               #
+# target + seed
 
 def target_rgba():
     """Render TARGET to a [1,4,GRID,GRID] premultiplied-RGBA array in [0,1]."""
@@ -116,7 +116,7 @@ def to_rgb(state):
     return np.clip(state[0, :3].transpose(1, 2, 0), 0, 1)
 
 
-# training: per-step forward/backward on the engine, Adam on the host           #
+# training: per-step forward/backward on the engine, Adam on the host
 
 def train():
     params = init_params()
@@ -208,7 +208,7 @@ def main():
     return 0 if ok else 1
 
 
-# rendering                                                                   #
+# rendering
 
 def telemetry(im, energy):
     from PIL import Image, ImageDraw, ImageFont
