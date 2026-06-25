@@ -1,51 +1,11 @@
-"""The aneforge capability census - the single, closed, machine-checkable source of
-truth for *what ANE capability aneforge surfaces*.
+"""The aneforge capability census - the closed, machine-checkable source of truth for what
+ANE capability aneforge surfaces.
 
-Why this module exists: the authoritative runtime op sets are `_EMIT` (the fused
-e5rt-MIL emitters) and `NETPLIST_OPS` (the native Path-A bridge ops), both in
-`_compile.py`. The discovery evidence behind them - which layers were proven on
-silicon, which are genuine hardware walls, which are only predicted - is scattered
-across the reverse-engineering corpus. Nothing reconciled the two: a new op could
-appear unclassified, or a "surfaced" op could silently stop compiling unnoticed.
-
-`build_registry()` closes the loop. It introspects the live `_EMIT` /
-`NETPLIST_OPS` and merges them with curated, citation-carrying classification data
-for everything that *can't* be introspected (cracked-but-not-promoted layers, the
-arch-gated negatives, the predicted-but-unbuilt frontier). The result is a closed
-classification of every ANE capability aneforge knows about. `tests/
-test_routes.py` fails CI if the live runtime drifts from this registry either way.
-
-Discipline (this is a publication artifact): every entry is one of
-  - `fused`                - in `_EMIT`; lowers to e5rt-MIL, fuses into one program.
-  - `bridge`               - in `NETPLIST_OPS`; runs as a native Path-A sub-program (a graph cut).
-  - `cracked`              - reverse-engineered native layer PROVEN on silicon in
-                               the reverse-engineering corpus, but NOT yet promoted to the frontend.
-  - `reachable`            - the native MIL op compiles + runs correct on aneforge's own
-                               e5rt path (proven by the full-vocabulary sweep,
-                               `full_mil_vocabulary_sweep.json`), but is not yet
-                               promoted to a frontend `_EMIT` emitter or `af.` method.
-                               Reachable through the MIL door, not direct `Type=` netplist
-                               authoring, so it is not a cracked native layer and does not
-                               count toward the cracked-layer manifest.
-  - `arch-gated-negative`  - known NOT to work, carrying the SPECIFIC wall (an authored
-                               op/config that the ANE backend rejects or fails to lower).
-  - `not-authorable`       - control-flow / list / state ops (cond, while_loop, make_list,
-                               list_*, read_state, ...) with no single-op MIL form on the
-                               single-procedure feed-forward surface; recorded, not defeated
-                               (the recurrence/scan wall).
-  - `predicted`            - predicted crackable by the callable-`_ANECValidate*`
-                               heuristic, but NOT built and NOT verified.
-`fused`/`bridge` carry `verified="silicon"`; `cracked`/`reachable` carry it too
-(proven in the reverse-engineering corpus / the on-device sweep) - the distinction
-from fused/bridge is *promotion*, not evidence. `predicted` is explicitly
-`verified="no"`. Every `cracked` cites its bridge in the reverse-engineering corpus;
-every negative cites the finding that established the wall; every
-`reachable`/`not-authorable` cites the sweep matrix.
-
-Scope: the registry is exhaustive over the full 166-op MIL vocabulary swept in
-`full_mil_vocabulary_sweep.json` (116/166 reachable), not just the 50
-`_ANECValidate*Layer` validators. The validator-surface accounting (the cracked-layer
-manifest) is a strict subset, kept intact.
+`build_registry()` introspects the live `_EMIT` / `NETPLIST_OPS` and merges them with curated,
+citation-carrying classification of everything that can't be introspected. Each entry's status
+is one of STATUSES (fused/bridge/cracked/reachable/arch-gated-negative/not-authorable/predicted);
+exhaustive over the 166-op MIL vocabulary sweep. `tests/test_routes.py` fails CI on drift.
+See .superpowers/sdd/gold-core-heavy.md for the status taxonomy + evidence discipline.
 """
 from __future__ import annotations
 
@@ -62,11 +22,7 @@ STATUSES = ("fused", "bridge", "cracked", "reachable", "arch-gated-negative",
             "not-authorable", "predicted")
 
 
-# --------------------------------------------------------------------------- #
-# introspected: the frontend surface of each live runtime op                  #
-# --------------------------------------------------------------------------- #
-# runtime op name -> frontend spelling (Tensor method / af.* fn). Enriches
-# introspected entries; missing op reports frontend=None (still classified).
+# runtime op name -> frontend spelling (Tensor method / af.* fn); missing op -> frontend=None.
 _FRONTEND_SPELLING: dict[str, str] = {
     # fused unary activations
     "relu": "x.relu()", "silu": "x.silu()", "sigmoid": "x.sigmoid()", "tanh": "x.tanh()",
@@ -103,9 +59,7 @@ _FRONTEND_SPELLING: dict[str, str] = {
     "dynamic_slice": "af.dynamic_slice(x,start,size)", "scaled_elementwise": "af.scaled_elementwise(x,z,...)",
 }
 
-# The in-package bridge module each NETPLIST_OPS entry invokes (its evidence). Promoted
-# out of the reverse-engineering corpus into the self-contained aneforge/_bridges/ package
-# (the product no longer depends on the research corpus at runtime).
+# The in-package bridge module each NETPLIST_OPS entry invokes (its evidence).
 _BRIDGE_EVIDENCE: dict[str, str] = {
     "sdpa": "aneforge/_bridges/ane_sdpa_fused.py",
     "argmax": "aneforge/_bridges/ane_rank_fused.py", "topk": "aneforge/_bridges/ane_rank_fused.py",
@@ -149,13 +103,8 @@ def _introspect_bridge() -> list[dict[str, Any]]:
   } for name in sorted(_compile.NETPLIST_OPS)]
 
 
-# --------------------------------------------------------------------------- #
-# curated: classifications that can't be introspected from the runtime        #
-# --------------------------------------------------------------------------- #
-# (A) cracked - proven on silicon in the reverse-engineering corpus (a self-verifying
-#     *_fused.py), but not promoted into the frontend _EMIT / NETPLIST_OPS. Citations are
-#     the bridge files. (The promoted siblings - PixelShuffle, L2Norm, Sort/TopK/ArgMinMax,
-#     the space/channel/batch rearranges, Flatten, etc. - appear above as fused/bridge.)
+# (A) cracked - proven on silicon (a self-verifying *_fused.py), not promoted into the
+#     frontend _EMIT / NETPLIST_OPS. Citations are the bridge files.
 _CRACKED: list[dict[str, Any]] = [
     {
         "name": "Dropout",
@@ -217,16 +166,11 @@ _CRACKED: list[dict[str, Any]] = [
     },
 ]
 
-# (B) arch-gated negatives - known not to work on this M5, each with its specific wall.
-#     "Negative" means: rejected at compile, or the named configuration fails
-#     ANECCompile/HWX codegen even though the validator accepts the schema. The
-#     `probe` field is a tiny aneforge call the gate runs to confirm it still
-#     fails (raises) - None means manual-probe-only (too slow/risky for CI).
+# (B) arch-gated negatives - known not to work on this M5, each carrying its specific `wall`.
+#     `probe` is a tiny aneforge call the gate runs to confirm it still fails (None = manual-only).
 _NEGATIVES: list[dict[str, Any]] = [
-    # --- native MIL op unimplemented on the ANE backend ("Not implemented ... not
-    #     supported on any backend"). Key distinction (2026-05-31 calibration): the
-    #     native OP is unimplemented, but the CAPABILITY is reachable on the same e5rt
-    #     path via a decomposition. These are native-op gaps, not hardware walls. ---
+    # --- native MIL op unimplemented on the ANE backend; the CAPABILITY is often reachable
+    #     via a decomposition on the same e5rt path. Native-op gaps, not hardware walls. ---
     {
         "name": "reduce_prod",
         "wall": "the native MIL reduce_prod op is unimplemented on the ANE backend "
@@ -302,20 +246,9 @@ _NEGATIVES: list[dict[str, Any]] = [
         "evidence": "reference_unentitled_menu; capabilities.md (Datatypes)",
         "probe": None,  # numpy has no native bf16; no clean frontend probe
     },
-    # --- quantization: no walls remain (reconciled 2026-06-02) -----------------
-    # The former "blockwise_int8"/"int4_weight" negatives were a malformed probe: the
-    # empty-paren spelling `constexpr_blockwise_shift_scale()[data=..]` segfaults the
-    # e5rt compiler, but the named-arg form `constexpr_blockwise_shift_scale(data=..,
-    # scale=..)` compiles + runs correct (relerr ~3e-4) across multi-block + int4
-    # configs (same macOS 26 / M5). Ships as compress="blockwise". Caveat: the
-    # blockwise output is not matmul-routable, so it dequantizes in-program to dense
-    # fp16 (no weight-streaming win, unlike int8-affine / int4-LUT / sparse); exposed
-    # for the smaller artifact + finer scales, not throughput. Registered via the
-    # sweep-driven layer below.
-    # int8-affine (constexpr_affine_dequantize), int4-LUT (constexpr_lut_to_dense) and
-    # sparse (constexpr_sparse_to_dense) all run on the raw e5rt path and ship via
-    # compress="int8"/"int4"/"sparse" (test_compress.py). The "sparse segfaults" claim
-    # was likewise a malformed-MIL artifact. No quant wall remains.
+    # --- quantization: no walls remain (reconciled 2026-06-02) - the old blockwise/int4/
+    #     sparse "negatives" were malformed probes; all ship via compress= (test_compress.py).
+    #     See .superpowers/sdd/gold-core-heavy.md for the reconciliation detail. ---
     # --- layer/codegen walls (validator accepts schema, M5 HWX codegen fails) ---
     {
         "name": "conv_kernel_ge16",
@@ -408,13 +341,8 @@ _NEGATIVES: list[dict[str, Any]] = [
         "evidence": "finding_layer_crack_sweep; capabilities.md",
         "probe": None,
     },
-    # note (reconciled 2026-06-02): the former "NMS" arch-gated negative was flipped to
-    # reachable. The earlier wall was an over-cautious direct-NETPLIST probe (full Params
-    # recovered, compile failed). The MIL `non_maximum_suppression` op compiles + runs on the
-    # e5rt path (presence-only - not numerically validated against a reference, since NMS
-    # output ordering is selection-dependent), so it is `reachable` (sweep-proven on silicon,
-    # not promoted to a frontend primitive) via the sweep-driven layer below, not a negative.
-    # See full_mil_vocabulary_sweep.json (non_maximum_suppression, reachable).
+    # note: the former "NMS" negative was flipped to `reachable` (the MIL op compiles via the
+    # sweep-driven layer); see _SWEEP_NOTE["non_maximum_suppression"] and the gold file.
     {
         "name": "CropResize",
         "wall": "texture-family codegen gate: direct-netplist CropResize fails ANECCompile on M5 "
@@ -422,16 +350,8 @@ _NEGATIVES: list[dict[str, Any]] = [
         "evidence": "finding_layer_crack_sweep; the reverse-engineering corpus",
         "probe": None,
     },
-    # note (reconciled 2026-06-02): the former "AffineTransform" and "Resample_Bilinear"
-    # arch-gated negatives were flipped to reachable. The earlier walls came from over-
-    # cautious direct-NETPLIST (Type=AffineTransform / Type=Resample,Bilinear) probes that
-    # failed HWX codegen - scoped to the netplist door. The MIL ops compile + run correct on
-    # aneforge's own e5rt path (full_mil_vocabulary_sweep.json): `affine` (genuine warp,
-    # relerr 2.3e-3 at align_corners=True, not a no-op) and `resize_bilinear`/
-    # `upsample_bilinear` (exact bilinear, relerr 2e-4). All three now ship as fused _EMIT
-    # ops (af.affine / af.resize_bilinear / af.upsample_bilinear), so they appear in the
-    # census as `fused`, not negatives. Same macOS 26 / M5 (not an OS change). The remaining
-    # texture-family negative is CropResize (still walled below).
+    # note: the former AffineTransform / Resample_Bilinear negatives now ship as fused _EMIT
+    # ops (af.affine / af.resize_bilinear / af.upsample_bilinear); CropResize stays walled (above).
     {
         "name": "MATDECOMP_MATMULT_0x19",
         "wall": "internal-optimizer-gated (NOT schema-gated): the fused matrix-decomp-matmul "
@@ -481,12 +401,7 @@ _NEGATIVES: list[dict[str, Any]] = [
         "evidence": "capabilities.md (no hardware backing)",
         "probe": None,
     },
-    # note (reconciled 2026-06-02): the former "instance_norm" arch-gated negative was
-    # flipped to reachable. The earlier wall was scoped to the native InstanceNorm netplist
-    # LAYER (which failed ANECCompile); the MIL `instance_norm` op compiles + runs correct
-    # on the e5rt path (full_mil_vocabulary_sweep.json, reachable+correct) and now ships as
-    # a fused _EMIT op (x.instance_norm(...)), so it is `fused`, not a negative. The
-    # decomposition route (reduce_mean/sub/mul/rsqrt) remains available too.
+    # note: the former "instance_norm" negative now ships as a fused _EMIT op (x.instance_norm).
     {
         "name": "Reverse",
         "wall": "the native netplist Reverse LAYER is schema-UNREACHABLE: no exported "
@@ -513,9 +428,7 @@ _NEGATIVES: list[dict[str, Any]] = [
     },
 ]
 
-# (C) predicted - crackable by the callable-`_ANECValidate*` heuristic (a callable
-#     exported validator marks a schema-gated layer reachable by direct netplist
-#     authoring), but not built and not verified. Explicitly not-verified.
+# (C) predicted - crackable by the callable-`_ANECValidate*` heuristic, but not built / not verified.
 _PREDICTED: list[dict[str, Any]] = [
     {
         "name": "Pad",
@@ -535,34 +448,22 @@ _PREDICTED: list[dict[str, Any]] = [
 # --------------------------------------------------------------------------- #
 # (D) full-MIL-vocabulary sweep - the data-driven exhaustiveness layer          #
 # --------------------------------------------------------------------------- #
-# Makes the registry exhaustive over the full 166-op MIL vocabulary swept on-device
-# (full_mil_vocabulary_sweep.json). Every sweep op not already represented above
-# (by exact name in _EMIT / NETPLIST_OPS / the curated lists) gets a synthesized
-# entry, classified from its sweep `klass`:
-#   reachable+correct / reachable -> `reachable` (runs on the e5rt MIL path; not a
-#                                    promoted frontend primitive, so not a cracked
-#                                    native layer and not in the cracked-manifest count).
-#   not-implemented-on-ANE        -> `arch-gated-negative` (op unimplemented on backend).
-#   compile-walled                -> `not-authorable` for control-flow/list/state (no
-#                                    single-op MIL form), else `arch-gated-negative`.
-# Curated entries win over the sweep (exact-name match skipped), preserving the
-# hand-written walls/evidence/notes.
+# Synthesizes an entry for every swept op not already represented, classified from its
+# sweep `klass` (reachable -> `reachable`; not-implemented -> negative; compile-walled ->
+# not-authorable for control-flow else negative). Curated entries win (exact-name skipped).
 import os as _os
 _SWEEP_PATH = _os.path.join(_os.path.dirname(__file__),
                             "full_mil_vocabulary_sweep.json")
 
-# control-flow / list / state ops: walled because the single-procedure feed-forward
-# netplist surface has no loop/list/state construct (the recurrence/scan wall), not a
-# per-op codegen bug. Recorded as `not-authorable`, not arch-gated-negative.
+# control-flow / list / state ops: no loop/list/state construct on the feed-forward
+# netplist surface (the recurrence/scan wall), so `not-authorable`, not arch-gated-negative.
 _NOT_AUTHORABLE_OPS: frozenset[str] = frozenset({
     "cond", "while_loop", "classify",
     "make_list", "list_gather", "list_length", "list_read", "list_scatter", "list_write",
     "read_state", "gru", "lstm", "rnn",
 })
 
-# sweep ops that are the same capability as an op already surfaced under a different
-# name (a `reachable` entry pointing at its canonical surfaced sibling -
-# aliasing, no double-count of the capability as a distinct frontend primitive).
+# sweep ops aliasing an already-surfaced capability (a `reachable` entry -> its sibling; no double-count).
 _SWEEP_CAPABILITY_ALIAS: dict[str, str] = {
     "scaled_dot_product_attention": "sdpa (bridge) - same fused-attention capability",
     "linear": "matmul / linear_activation (fused) - same affine-projection capability",
@@ -666,23 +567,11 @@ def _introspect_sweep(already: set[str]) -> list[dict[str, Any]]:
   return out
 
 
-# --------------------------------------------------------------------------- #
-# EQUIVALENCE-route registry - the closed table of alternative lowerings        #
-# --------------------------------------------------------------------------- #
-# Every surfaced capability is either route-selectable (the autotuner picks its
-# cheapest equivalent lowering by measured cost) or single-route (one lowering, no
-# alternative). This table closes that over the bridge ops: each NETPLIST_OPS bridge op
-# records either an `alt` (a fused decomposition removing the graph cut, with loss-class
-# + on-device evidence) or `single_route=True` with the reason it has none. Only on-
-# device-validated alts appear (the builder lives in _rewrite._BRIDGE_DECOMPOSERS, keyed
-# identically; reconciled by tests/test_routes.py); a candidate that failed validation is
-# marked single-route with its failure evidence (e.g. rearranges hit the rank-5 wall).
-#
-# Loss class "lossless" = mathematically identical (bit-identical or within fp16
-# op-noise), chosen purely on measured speed. Fused ops are single-route by
-# construction and not listed; _routes_for() reports any op absent here as
-# single-route("only lowering"). The reduce_sum->@ones rewrite is on the precision
-# axis (tune_precision), documented there, not as a bridge alt.
+# Closed equivalence-route table over the bridge ops: each records an `alt` (a fused
+# decomposition removing the graph cut, with loss-class + on-device evidence) or
+# `single_route=True` with the reason. Only on-device-validated alts appear (builder in
+# _rewrite._BRIDGE_DECOMPOSERS; reconciled by tests/test_routes.py). Fused ops are
+# single-route by construction and not listed. See .superpowers/sdd/gold-core-heavy.md.
 _BRIDGE_ROUTES: dict[str, dict[str, Any]] = {
     # --- route-selectable: a validated fused decomposition removes the cut ---
     "sdpa": {
@@ -767,10 +656,7 @@ _BRIDGE_ROUTES: dict[str, dict[str, Any]] = {
 
 
 def _routes_for(name: str, status: str) -> dict[str, Any]:
-  """Route classification for one op: `{"route_class": "selectable"|"single", ...}`.
-    A bridge op in `_BRIDGE_ROUTES` with an `alt` is `selectable`; everything else
-    (single-route bridge, or any fused op - one lowering by construction) is `single`
-    with a reason."""
+  """Route class for one op: `selectable` (bridge with an `alt`) or `single` (with a reason)."""
   info = _BRIDGE_ROUTES.get(name)
   if info and "alt" in info:
     return {"route_class": "selectable", "alt_route": info["alt"],
@@ -790,11 +676,8 @@ def _routes_for(name: str, status: str) -> dict[str, Any]:
 
 
 def route_registry() -> dict[str, Any]:
-  """The closed equivalence-route registry over the BRIDGE ops: which are route-
-    selectable (with the validated alternative + loss class + evidence) and which are
-    single-route (with the reason). Driven off the live `NETPLIST_OPS` so it can never
-    silently omit a bridge op. Reconciled against `_rewrite._BRIDGE_DECOMPOSERS` and the
-    census by tests/test_routes.py."""
+  """The closed equivalence-route registry over the bridge ops (selectable vs single-route),
+    driven off the live `NETPLIST_OPS`. Reconciled by tests/test_routes.py."""
   selectable, single = [], []
   for name in sorted(_compile.NETPLIST_OPS):
     r = _routes_for(name, "bridge")
@@ -812,10 +695,7 @@ def route_registry() -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # cracked-LAYER MANIFEST - the traceable artifact behind the "26 cracked"      #
 # --------------------------------------------------------------------------- #
-# `slice_by_index` (status=cracked) is the same hardware capability as the
-# `input_view` bridge op (Type=InputView) - the registry note already records it as
-# "not double-counted". The manifest folds it into `input_view` so the 26 are
-# distinct native layers, not 27 with an alias.
+# slice_by_index == input_view (both Type=InputView); folded in so the count is distinct layers.
 _CRACKED_DEDUPE_ALIAS: dict[str, str] = {"slice_by_index": "input_view"}
 
 _CRACKED_MANIFEST_DEFINITION = (
@@ -841,27 +721,10 @@ _CRACKED_MANIFEST_HISTORICAL_NOTE = (
 
 
 def cracked_manifest() -> list[dict[str, Any]]:
-  """The closed, machine-checkable manifest of the distinct cracked native hardware
-    layers behind the "26 cracked native hardware layers" count.
-
-    Membership rule (exact): a cracked native hardware layer is a registry entry whose
-    `status` is in `{"cracked", "bridge"}` - `bridge` ops are Path-A netplist sub-
-    programs authored directly, `cracked` ops are unpromoted direct-netplist cracks; both
-    are reached by the netplist-authoring method (author `Type=<Layer>` in the netplist)
-    and are not emitted by Apple's user-space MIL frontend.
-
-    Dedupe: `slice_by_index` (status=cracked) is the SAME hardware capability as the
-    `input_view` bridge op (both `Type=InputView`); it is folded into `input_view`
-    and not double-counted. So distinct cracked layers = (#cracked) + (#bridge) - 1.
-
-    `fused` ops are not cracks under this rule - they go through aneforge's MIL @op
-    emitter, not direct `Type=` authoring - even ones (PixelShuffle, L2Norm) historically
-    reached by the netplist-authoring method before promotion (see
-    `_CRACKED_MANIFEST_HISTORICAL_NOTE`).
-
-    Returns a list of `{name, status, route, evidence}` items, sorted by name. The
-    aliased member carries its fold-in via an `aliases` key.
-    """
+  """The closed manifest of distinct cracked native hardware layers (the "26 cracked" count).
+    Members = registry entries with status in {cracked, bridge}; slice_by_index folds into
+    input_view (distinct = #cracked + #bridge - 1). Returns {name, status, route, evidence}
+    items sorted by name. See `_CRACKED_MANIFEST_DEFINITION` for the exact membership rule."""
   reg = build_registry()
   by_name = {e["name"]: e for e in reg["entries"]}
 
@@ -925,13 +788,8 @@ def write_cracked_manifest(path: str = "cracked_manifest.json") -> str:
 
 
 def build_registry() -> dict[str, Any]:
-  """Build the closed capability registry: introspect the live `_EMIT` /
-    `NETPLIST_OPS` and merge with the curated cracked/negative/predicted entries.
-
-    Returns a dict with `entries` (list, sorted by (status-order, name)) and a
-    `summary` of per-status counts. This is the source of truth `write_json`
-    serialises and `tests/test_routes.py` reconciles against.
-    """
+  """Build the closed capability registry: introspect live `_EMIT` / `NETPLIST_OPS`, merge
+    the curated cracked/negative/predicted entries + sweep layer. Returns {entries, summary}."""
   entries: list[dict[str, Any]] = []
   entries += _introspect_fused()
   entries += _introspect_bridge()
@@ -947,10 +805,7 @@ def build_registry() -> dict[str, Any]:
                "verified": "no", "evidence": e["evidence"]}
               for e in _PREDICTED]
 
-  # (D) extend exhaustively over the full 166-op MIL vocabulary sweep: synthesize an
-  # entry for every swept op not already represented (curated entries win - same name
-  # is skipped so the hand-written walls/notes survive). Makes the registry exhaustive
-  # over the MIL vocabulary, not just the 50 validators / surfaced ops.
+  # (D) extend over the full MIL vocabulary sweep (curated entries win on name collision).
   already = {e["name"] for e in entries}
   entries += _introspect_sweep(already)
 
@@ -961,8 +816,7 @@ def build_registry() -> dict[str, Any]:
     if key in seen: raise ValueError(f"capability registry: duplicate entry {key}")
     seen.add(key)
 
-  # enrich fused/bridge entries with their equivalence-route classification (the
-  # source of truth for the optimizer's route choice - selectable vs single).
+  # enrich fused/bridge entries with their equivalence-route classification.
   for e in entries:
     if e["status"] in ("fused", "bridge"): e.update(_routes_for(e["name"], e["status"]))
 
@@ -971,8 +825,7 @@ def build_registry() -> dict[str, Any]:
 
   summary = {s: sum(1 for e in entries if e["status"] == s) for s in STATUSES}
   summary["total"] = len(entries)
-  # distinct cracked native hardware layers (cracked + bridge, minus the one alias);
-  # the traceable count behind the "26 cracked" figure (see cracked_manifest()).
+  # distinct cracked native layers = cracked + bridge - the one alias (see cracked_manifest()).
   summary["cracked_count"] = (
     summary["cracked"] + summary["bridge"] - len(_CRACKED_DEDUPE_ALIAS)
   )
