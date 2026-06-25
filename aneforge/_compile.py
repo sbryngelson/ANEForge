@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
+
+if TYPE_CHECKING:
+  from ._netplist_worker import _Worker
 
 from ._runtime import E5RT, ANE_MASK
 
@@ -1592,7 +1595,7 @@ class SegmentedModel:
     # route. Built lazily on first call (keyed by the stage), reused for the
     # rest of this model's lifetime, released in release(). Set
     # ANEFORGE_NETPLIST_WORKER=0 to force the A1 (subprocess-per-call) path.
-    self._workers: dict[int, object] = {}
+    self._workers: dict[int, "_Worker"] = {}
     self._worker_runs: dict[int, Callable[..., Any]] = {}
     self._worker_warned: set[str] = set()
 
@@ -1660,7 +1663,7 @@ class SegmentedModel:
       if st["kind"] == "region": st["prog"].release()
     for w in self._workers.values():
       try:
-        w.release()  # type: ignore[union-attr]  # workers are _Worker objects with .release()
+        w.release()
       except Exception:
         pass
     self._workers.clear()

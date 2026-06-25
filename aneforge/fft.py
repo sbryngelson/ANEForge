@@ -115,11 +115,11 @@ def _dft_matrix(M: int):
     Used as a streamed fp16 weight: y = x @ W  (x is [.., M], W is [M, M])."""
     n = np.arange(M)
     k = n.reshape(-1, 1)
-    W = np.exp(-2j * np.pi * k * n / M)        # W[k,n]
+    W = np.exp(-2j * np.pi * k * n / M).astype(np.complex128)   # W[k,n]
     # we compute X[k] = sum_n x[n] W[k,n] = x @ W^T ; fold W^T as the weight.
     Wt = W.T                                   # [n, k] so x@Wt gives X[k]
-    Wt_re = Wt.real  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
-    Wt_im = Wt.imag  # type: ignore[union-attr]
+    Wt_re = Wt.real
+    Wt_im = Wt.imag
     return np.ascontiguousarray(Wt_re).astype(np.float16), \
            np.ascontiguousarray(Wt_im).astype(np.float16)
 
@@ -128,10 +128,10 @@ def _idft_matrix(M: int):
     """Inverse DFT twiddle (conjugate, UNSCALED): W[k,n] = exp(+2pi i k n / M)."""
     n = np.arange(M)
     k = n.reshape(-1, 1)
-    W = np.exp(+2j * np.pi * k * n / M)
+    W = np.exp(+2j * np.pi * k * n / M).astype(np.complex128)
     Wt = W.T
-    Wt_re = Wt.real  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
-    Wt_im = Wt.imag  # type: ignore[union-attr]
+    Wt_re = Wt.real
+    Wt_im = Wt.imag
     return np.ascontiguousarray(Wt_re).astype(np.float16), \
            np.ascontiguousarray(Wt_im).astype(np.float16)
 
@@ -200,10 +200,10 @@ class _Builder:
         `aux_values`, fed in creation order == the compiled input order)."""
         k1 = np.arange(N1).reshape(-1, 1)
         n2 = np.arange(restlen).reshape(1, -1)
-        T = np.exp(self.sign * 2j * np.pi * k1 * n2 / Ntot)   # [N1, restlen]
+        T = np.exp(self.sign * 2j * np.pi * k1 * n2 / Ntot).astype(np.complex128)   # [N1, restlen]
         Tr = af.input((N1, restlen)); Ti = af.input((N1, restlen))
         self.aux_inputs += [Tr, Ti]
-        self.aux_values += [T.real.astype(np.float16), T.imag.astype(np.float16)]  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
+        self.aux_values += [T.real.astype(np.float16), T.imag.astype(np.float16)]
         return Tr.reshape(*bshape), Ti.reshape(*bshape)
 
     def _axis_dft(self, re: Tensor, im: Tensor, axis: int, r: int):
@@ -490,9 +490,9 @@ def _naive_dft_relerr(N: int, xr: np.ndarray, xi: np.ndarray):
     computed in numpy with fp16-rounded inputs/twiddles and a wide accumulator - i.e.
     what the ANE's naive DFT-matmul produces. Lets us compare staged vs naive fp16."""
     n = np.arange(N); k = n.reshape(-1, 1)
-    W = np.exp(-2j * np.pi * k * n / N)
-    Wr = W.real.astype(np.float16).astype(np.float64)  # type: ignore[union-attr]  # complex exp -> NDArray[Incomplete]; .real/.imag are valid
-    Wi = W.imag.astype(np.float16).astype(np.float64)  # type: ignore[union-attr]
+    W = np.exp(-2j * np.pi * k * n / N).astype(np.complex128)
+    Wr = W.real.astype(np.float16).astype(np.float64)
+    Wi = W.imag.astype(np.float16).astype(np.float64)
     xr16 = xr.astype(np.float16).astype(np.float64)
     xi16 = xi.astype(np.float16).astype(np.float64)
     Xr = xr16 @ Wr.T - xi16 @ Wi.T

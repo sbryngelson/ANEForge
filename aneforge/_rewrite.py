@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 import numpy as np
 
@@ -80,7 +80,10 @@ def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
     # again in `build`, so a stateful/non-deterministic rule would be unsafe. The
     # match-guard ensures `build` fires only when `rule` returns a Tensor (not None),
     # which is why the build-lambda's None-able return is type-ignored as safe.
-    r = Rule("adhoc", "lossless", lambda t: rule(t) is not None, lambda t: rule(t))  # type: ignore[arg-type]
+    # cast: the match-guard (`rule(t) is not None`) guarantees build is only called
+    # when rule returns a Tensor, so the None-able return type is safe to narrow here.
+    r = Rule("adhoc", "lossless", lambda t: rule(t) is not None,
+             cast(Callable[[Tensor], Tensor], lambda t: rule(t)))
     return graph_rewrite(out, [r])
 
 
@@ -346,15 +349,16 @@ NUMERIC_RULES: list[Rule] = [
 # fp16 NumPy kernels for the foldable ops. Compute reproduces device fp16 where it can,
 # but is NEVER assumed bit-identical to the engine -> const_fold is gated (NUMERIC).
 def _f16(x: "np.ndarray") -> "np.ndarray": return np.asarray(x, np.float16)
-_EVAL: dict[str, "object"] = {
-  "muls":    lambda s, a: _f16(s[0] * _f16(a["k"])),
-  "adds":    lambda s, a: _f16(s[0] + _f16(a["k"])),
-  "add":     lambda s, a: _f16(s[0] + s[1]),
-  "sub":     lambda s, a: _f16(s[0] - s[1]),
-  "mul":     lambda s, a: _f16(s[0] * s[1]),
-  "relu":    lambda s, a: _f16(np.maximum(s[0], 0)),
-  "reshape": lambda s, a, shape=None: _f16(s[0].reshape(shape)),
-  "cast":    lambda s, a: _f16(s[0]),
+_EvalFn = Callable[["list[np.ndarray]", "dict[str, Any]", "tuple[int, ...]"], "np.ndarray"]
+_EVAL: dict[str, _EvalFn] = {
+  "muls":    lambda s, a, sh=(): _f16(s[0] * _f16(a["k"])),
+  "adds":    lambda s, a, sh=(): _f16(s[0] + _f16(a["k"])),
+  "add":     lambda s, a, sh=(): _f16(s[0] + s[1]),
+  "sub":     lambda s, a, sh=(): _f16(s[0] - s[1]),
+  "mul":     lambda s, a, sh=(): _f16(s[0] * s[1]),
+  "relu":    lambda s, a, sh=(): _f16(np.maximum(s[0], 0)),
+  "reshape": lambda s, a, sh=(): _f16(s[0].reshape(sh)),
+  "cast":    lambda s, a, sh=(): _f16(s[0]),
 }
 
 def _const_subgraph(t: Tensor, max_elems: int = 1 << 16) -> "np.ndarray | None":
@@ -366,10 +370,11 @@ def _const_subgraph(t: Tensor, max_elems: int = 1 << 16) -> "np.ndarray | None":
     if id(n) in memo: return memo[id(n)]
     if n.op == "const_array": memo[id(n)] = _f16(n.attrs["value"]); return memo[id(n)]
     if n.op == "input" or n.op not in _EVAL: memo[id(n)] = None; return None
-    srcs = [ev(s) for s in n.srcs]
-    if any(s is None for s in srcs): memo[id(n)] = None; return None
-    fn = _EVAL[n.op]  # type: ignore[index]
-    v: "np.ndarray" = fn(srcs, n.attrs, n.shape) if n.op == "reshape" else fn(srcs, n.attrs)  # type: ignore[operator]
+    srcs_maybe = [ev(s) for s in n.srcs]
+    if any(s is None for s in srcs_maybe): memo[id(n)] = None; return None
+    srcs = cast("list[np.ndarray]", srcs_maybe)
+    fn = _EVAL[n.op]
+    v: "np.ndarray" = fn(srcs, n.attrs, n.shape)
     memo[id(n)] = v; return v
   return ev(t)
 
