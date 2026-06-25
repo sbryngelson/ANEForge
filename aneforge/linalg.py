@@ -1,69 +1,12 @@
-"""aneforge.linalg - a linear-algebra toolkit for the Apple Neural Engine.
+"""aneforge.linalg - linear algebra on the Apple Neural Engine.
 
-WHAT FITS THIS HARDWARE
------------------------
-The ANE is a fp16 feed-forward dataflow engine: it has no in-graph loop and no
-data-dependent control flow. Anything with a FIXED, data-independent schedule
-fits, and that covers two families, both shipped here:
+Iterative solvers (CG/Jacobi/refinement/LSQR/GMRES/rSVD) and small-n direct
+factorizations (QR/Cholesky/LU/eigh/eigvals/svd) - both are fixed-schedule
+dataflow that unrolls into one on-ANE program. See docs/developer/applied-math.md
+and docs/developer/numerics.md (the fp16 envelope and the reduce_sum trap: on this
+ANE reduce_sum accumulates fp16-narrow while matmul accumulates wide, so every dot
+is (u*v)@ones, never .sum()).
 
-  * ITERATIVE, MATMUL-DOMINATED methods with a FIXED iteration count (CG, Jacobi,
-    refinement, LSQR, GMRES, randomized SVD, ...): pure static dataflow. The
-    expensive matmuls (A@x, A@Omega, A^T@Q, Q@Ub, A^T@A) run on the ANE via a
-    compiled aneforge graph; fixed-K recurrences unroll into ONE on-ANE program.
-    The host keeps only what the ANE cannot do: RNG, the occasional small dense
-    decomposition, the loop counter.
-  * DIRECT factorizations at SMALL n (qr, cholesky, lu, lu_pivoted, eigh,
-    eigvals, svd, ...): a fixed recurrence with no data-dependent branch ALSO
-    unrolls into one on-ANE program. The unrolled chain is O(n^3) graph ops, so
-    these are small-n. The UNPIVOTED lu/cholesky also require well-conditioned
-    leading minors / a safe diagonal; lu_pivoted does true partial pivoting via
-    the on-engine argmax bridge (a SEGMENTED program, still all on ANE silicon).
-
-What stays ARCH-LIMITED is narrower than "direct factorizations": only
-CONVERGENCE-GATED / pivot-shifted-deflated variants, whose data-dependent
-control flow cannot be expressed in-graph - and the native MatrixDecomposition
-composite is `not_currently_callable` (see tests/test_numerical.py).
-
-THE fp16 ENVELOPE (from the reverse-engineering corpus, re-measured in __main__)
----------------------------------------------------------------------------
-The ANE matmul accumulator is WIDE (>=fp32), so a single A@x is clean even at
-cond~1e4 - BUT the iterates/residuals are stored and re-fed as fp16, and the
-residual b - A x is a catastrophic-cancellation subtract. Fixed-K iterative
-refinement recovers about ONE order of magnitude of accuracy for moderate
-conditioning; by cond~1e3 the fp16 approximate solve barely converges and
-refinement only nibbles. We claim no accuracy past what the sweep shows.
-
-  IMPORTANT (the reduce_sum trap): on this ANE `reduce_sum` accumulates NARROWLY
-  (fp16) while `matmul` accumulates WIDE. So every dot product / accumulation in
-  this module is `(u * v) @ ones` (a matmul), never `(u*v).sum()`.
-
-API (importable as `from aneforge.linalg import conjugate_gradient, qr, eigh, ...`)
-
-  Iterative solvers
-    conjugate_gradient(A, b, iters=K)         - CG for SPD A, fixed K iters
-    jacobi(A, b, iters=K) / gauss_seidel(...) - classic stationary iterations
-    iterative_refine(A, b, x0, iters=K)       - residual-correction refinement
-    least_squares(A, b, iters=...)            - normal equations solved by CG + refine
-    lsqr(A, b, iters=K)                       - Golub-Kahan least squares, fully on-ANE
-    gmres(A, b)                               - general square solve, one GMRES(n) cycle
-
-  Direct factorizations (small-n, fixed recurrences unrolled on-ANE)
-    qr(A)                                     - thin QR by modified Gram-Schmidt
-    cholesky(A)                               - unpivoted Cholesky of an SPD A
-    lu(A)                                     - unpivoted Doolittle LU (well-conditioned A)
-    lu_pivoted(A)                             - partial-pivoted LU (argmax bridge, segmented)
-
-  Eigenvalues / SVD
-    eigh(A, sweeps=...)                       - full symmetric spectrum, cyclic Jacobi
-    eigvals(A, iters=...)                     - general (nonsymmetric) eigenvalues, unshifted QR
-    generalized_eigh(A, B, sweeps=...)        - symmetric-definite A x = lambda B x
-    dominant_eig(A) / dominant_svd(A)         - dominant eigenpair / singular triple
-    svd(A, sweeps=...)                        - all singular values via Gram matrix + eigh
-    svdvals_topk(A, k, ...)                   - top-k singular values, fully on-ANE
-    randomized_svd(A, k, oversample, power_iters) - sketch + range-finder + small host SVD
-    pca(X, k, ...)                            - randomized_svd of centered data
-
-Run the self-test:
     PYTHONPATH=. python3 aneforge/linalg.py
 """
 from __future__ import annotations
@@ -79,20 +22,11 @@ import aneforge as af
 f16 = np.float16
 
 
-# =========================================================================== #
-# ANE GEMM primitive (used by randomized_svd / least_squares for the one-shot   #
-# sketch / projection / Gram products). The iterative SOLVERS do NOT use this:   #
-# they unroll their whole recurrence into ONE graph (see _solve_once) rather     #
-# than dispatching a fresh GEMM per step. Accumulation via matmul (wide), never   #
-# reduce_sum (narrow).                                                            #
-# =========================================================================== #
+# One-shot ANE GEMM for the sketch/projection/Gram products. The iterative solvers
+# do NOT use this; they unroll their whole recurrence into one graph (_solve_once).
 
 def _ane_gemm(A16: np.ndarray, B16: np.ndarray, transpose_a: bool = False) -> np.ndarray:
-  """C = A @ B  (or A^T @ B) on the ANE.
-
-    Used by randomized_svd for the big sketch / projection products. `A` is the
-    activation; `B` is folded as a weight if it is a fixed (host-drawn) array.
-    When `transpose_a` we transpose the activation in-graph (A^T @ B)."""
+  """C = A @ B (or A^T @ B) on the ANE; B folds in as a weight."""
   A16 = A16.astype(f16); B16 = B16.astype(f16)
   if transpose_a:
     m, n = A16.shape
@@ -108,26 +42,15 @@ def _ane_gemm(A16: np.ndarray, B16: np.ndarray, transpose_a: bool = False) -> np
   return np.asarray(C, f16)
 
 
-# =========================================================================== #
-# host helpers                                                                 #
-# =========================================================================== #
-
 def _spectral_omega(A16: np.ndarray | np.floating[Any]) -> float:
-  """Richardson/Jacobi relaxation factor omega from the max abs row-sum (an
-    upper bound on the spectral radius). Host-side scalar."""
+  """Richardson/Jacobi relaxation omega from the max abs row-sum (host scalar)."""
   rowsum = np.abs(np.asarray(A16, np.float64)).sum(1).max()
   return float(f16(1.0 / rowsum))
 
 
 def _solve_once(out, *feeds):
-  """Compile ONE fused graph, run it in a SINGLE dispatch, release, return fp64.
-
-    The point of the module: a fixed-iteration method is static dataflow, so the
-    whole K-step recurrence UNROLLS into one program that lives entirely on the ANE.
-    The host builds the graph and reads the answer back - it never re-enters the loop,
-    and there is no per-iteration host<->device round-trip."""
-  # vouched numerical kernel (the residual subtracts are intrinsic, accuracy-swept in
-  # __main__), so skip the user-facing cancel_sub precision check.
+  """Compile the unrolled recurrence as ONE fused graph, run once, return fp64."""
+  # vouched numerical kernel (residual subtracts are intrinsic, swept in __main__).
   net = af.compile(out, _check_precision=False)
   y = np.asarray(net(*feeds), np.float64)
   net.release()
@@ -139,35 +62,14 @@ def _solve_once(out, *feeds):
 # =========================================================================== #
 
 def conjugate_gradient(A, b, iters: int = 20, x0=None, refine: int = 0):
-  """Solve A x = b for SYMMETRIC POSITIVE-DEFINITE A by CG, FIXED `iters`.
-
-    Static dataflow: the iteration count is fixed (no convergence test), so the
-    schedule is data-independent and ANE-friendly. Per iteration the ONE heavy op
-    is the GEMV `A @ p` (ANE, wide accumulator). The two dot products
-    (r.r, p.Ap) are also ANE matmuls; the scalar ratios / axpy updates are host.
-
-    ANE: A@p, r.r, p.Ap, r2.r2  (every matmul/dot).
-    HOST: alpha/beta scalar ratios, x/r/p axpy updates, the fixed loop.
-
-    fp16 RANGE: symmetric Jacobi (diagonal) preconditioning, A~ = D^{-1/2} A D^{-1/2},
-    bounds A~'s entries to ~1 so the fp16 dot products p.Ap do not OVERFLOW (raw
-    cond~1e2 GEMV products blow past 65504 otherwise). The scaling is a host diagonal
-    rescale of the FOLDED constant matrix (graph setup), not re-entered per iteration.
-
-    FULLY ON THE ANE: the entire K-iteration recurrence - the A@p GEMV, the r.r and
-    p.Ap dot products (as (u*v)@ones matmuls, wide accumulator), the alpha/beta scalar
-    ratios (as [1,1] real_div), and the x/r/p axpy updates (broadcast mul + add) - is
-    UNROLLED into ONE graph and compiled ONCE. No Python loop issues per-iteration
-    dispatches; the solve is a single ANE program, a single execute.
-
-    `refine` unrolls that many residual-correction rounds into the SAME graph (each
-    recomputes r = b - A x and re-solves a short inner CG), useful near the ceiling.
-    """
+  """Solve A x = b for SPD A by CG, FIXED `iters` (the whole recurrence unrolls into
+    one on-ANE program). `refine` adds residual-correction rounds, useful near the
+    fp16 ceiling. Symmetric Jacobi preconditioning keeps the fp16 dots in range; see
+    docs/developer/numerics.md."""
   A0 = np.asarray(A, np.float64); b0 = np.asarray(b, np.float64).reshape(-1)
   n = A0.shape[0]
-  # symmetric Jacobi preconditioner: solve A~ y = b~ with A~ = Dh^{-1} A Dh^{-1},
-  # b~ = Dh^{-1} b, then x = Dh^{-1} y.   Dh = sqrt(diag(A)).  A~ is symmetric, so
-  # the matrix-vector A~ p as a row vector is p @ A~.
+  # symmetric Jacobi preconditioner: A~ = Dh^{-1} A Dh^{-1}, b~ = Dh^{-1} b,
+  # x = Dh^{-1} y;  Dh = sqrt(diag(A)).  A~ symmetric, so A~ p (row) is p @ A~.
   dh = np.sqrt(np.abs(A0.diagonal())); dh[dh == 0] = 1.0
   A16 = f16((A0 / dh[:, None]) / dh[None, :])
   b16 = f16(b0 / dh).reshape(1, n)
@@ -203,9 +105,7 @@ def conjugate_gradient(A, b, iters: int = 20, x0=None, refine: int = 0):
 
   feeds = [b16] if x0T is None else [b16, (np.asarray(x0, np.float64).reshape(-1) * dh).astype(f16).reshape(1, n)]
   y = _solve_once(x, *feeds).ravel()
-  # fp16 BREAKDOWN at high cond: the unrolled iterates can overflow fp16 (no in-graph
-  # convergence test to stop early), surfacing as non-finite. Report the ceiling as a
-  # finite large relerr rather than a nan answer.
+  # high cond: unrolled iterates can overflow fp16 (no early-stop) -> guard nan to 0.
   if not np.isfinite(y).all(): y = np.zeros(n)
   return (y / dh).astype(np.float32)
 
@@ -215,17 +115,8 @@ def conjugate_gradient(A, b, iters: int = 20, x0=None, refine: int = 0):
 # =========================================================================== #
 
 def jacobi(A, b, iters: int = 60, x0=None):
-  """Jacobi iteration  x_{k+1} = D^{-1} (b - (A - D) x_k),  FIXED `iters`.
-
-    Rewritten so the heavy op is the full GEMV `A @ x` on the ANE:
-        x_{k+1} = x_k + D^{-1} (b - A x_k).
-    Converges for diagonally-dominant A.
-
-    FULLY ON THE ANE: all `iters` steps unroll into ONE program (single dispatch).
-    The matrix-vector A x (row form x @ A^T) is the ANE GEMV; D^{-1} is fed once as a
-    constant vector and the update x + (b - A x) * D^{-1} is broadcast mul + add. The
-    host builds the graph and reads the answer; it does not loop.
-    """
+  """Jacobi iteration x_{k+1} = x_k + D^{-1}(b - A x_k), FIXED `iters`; converges for
+    diagonally-dominant A. All steps unroll into one on-ANE program (A x is the GEMV)."""
   A16 = np.asarray(A, f16); b0 = np.asarray(b, np.float64).reshape(-1)
   n = A16.shape[0]
   AT16 = np.ascontiguousarray(A16.T)                     # x @ A^T = (A x) as a row
@@ -243,27 +134,15 @@ def jacobi(A, b, iters: int = 60, x0=None):
 
 
 def gauss_seidel(A, b, iters: int = 60, x0=None):
-  """Gauss-Seidel iteration, FIXED `iters`.
-
-    Gauss-Seidel uses the freshest x-components within a sweep, so the inner sweep
-    is INHERENTLY SEQUENTIAL (component i depends on already-updated components <i).
-    That serial dependence is what the ANE cannot express in-graph, so the
-    per-component back-substitution sweep runs on the HOST, while the heavy
-    full-matrix residual GEMV `A @ x` (recomputed once per outer sweep to keep the
-    host work O(n^2)) still runs on the ANE.
-
-    ANE: A@x (the bulk FLOPs).   HOST: the sequential triangular sweep + loop.
-    The division: Gauss-Seidel's serial sweep is the arch-limited part; only
-    the dense GEMV stays on-device.
-    """
+  """Gauss-Seidel iteration, FIXED `iters`. The serial forward sweep is arch-limited
+    (host); only the dense residual GEMV stays on the ANE. See
+    docs/developer/applied-math.md."""
   A16 = np.asarray(A, f16); b16 = np.asarray(b, f16).reshape(-1)
   Af = np.asarray(A16, np.float64); bf = b16.astype(np.float64)
   n = A16.shape[0]
   x = np.zeros(n, np.float64) if x0 is None else np.asarray(x0, np.float64).reshape(-1).copy()
   L = np.tril(Af, -1); U = np.triu(Af, 1); d = Af.diagonal()
   for _ in range(iters):
-    # ANE supplies the off-diagonal contribution via the full GEMV, then the
-    # host does the serial forward sweep with the fresh values.
     for i in range(n):
       s = L[i, :i] @ x[:i] + U[i, i + 1:] @ x[i + 1:]
       x[i] = (bf[i] - s) / d[i]
@@ -275,21 +154,10 @@ def gauss_seidel(A, b, iters: int = 60, x0=None):
 # =========================================================================== #
 
 def iterative_refine(A, b, x0, iters: int = 3, inner: int = 60):
-  """Sharpen an approximate solve x0 of A x = b by fixed-K residual correction.
-
-    Each round:  r = b - A x  (the cancellation-prone subtract),  solve A dx = r
-    approximately,  x <- x + dx.  The static-dataflow stand-in for the arch-limited
-    direct factorizations; it extends the well-conditioned fp16 envelope ~1 order of
-    magnitude (the reverse-engineering corpus).
-
-    The inner approximate-solve is a short Richardson sweep (matmul-only), so the
-    whole thing is matmul-dominated.
-
-    FULLY ON THE ANE: both loops - the `iters` outer refinements and each `inner`
-    Richardson sweep - UNROLL into ONE program (single dispatch). A~ is symmetric, so
-    A~ x is the GEMV x @ A~; omega is a compile-time scalar (fused `muls`); the
-    subtract and axpy are elementwise. Host: build the graph, read the answer.
-    """
+  """Sharpen an approximate solve x0 by fixed-K residual correction (r = b - A x,
+    solve A dx = r, x += dx). Extends the well-conditioned fp16 envelope ~1 order of
+    magnitude; both loops unroll into one on-ANE program. The inner solve is a short
+    Richardson sweep (matmul-only). See docs/developer/numerics.md."""
   A0 = np.asarray(A, np.float64); b0 = np.asarray(b, np.float64).reshape(-1)
   n = A0.shape[0]
   # same symmetric Jacobi scaling as CG, to keep the fp16 GEMV products in range
@@ -317,28 +185,9 @@ def iterative_refine(A, b, x0, iters: int = 3, inner: int = 60):
 
 def randomized_svd(A, k: int, oversample: int = 5, power_iters: int = 2):
   """Truncated SVD of A [m,n] via Halko-Martinsson-Tropp randomized range finding.
-
-    Steps:
-      1. Omega = host-drawn Gaussian [n, l]    (a constant, not on-device compute)   HOST
-      2. Y = A @ Omega   (the big sketch)                                            ANE
-         power iterations with re-orthonormalization: Q = qr(Y); Y = A @ (A^T @ Q)   ANE + host QR
-      3. Q = orthonormal basis of Y  (l columns)                                     HOST
-      4. B = Q^T @ A   (the projection)                                              ANE
-      5. (Ub, S, Vt) = svd(B)  (small l x n SVD)                                      HOST
-      6. U = Q @ Ub   (the back-projection)                                          ANE
-    Return (U[:, :k], S[:k], Vt[:k, :]).
-
-    UNLIKE the iterative SOLVERS in this module (CG / Jacobi / refinement, matmul +
-    elementwise only, so they unroll into ONE fully-on-ANE program), rSVD has an
-    irreducible host step: the subspace ORTHONORMALIZATION between power steps. Pure
-    in-graph column-normalization cannot stand in - power iteration aligns the columns
-    toward the dominant singular vector, and only a QR re-spreads them, so skipping it
-    collapses the trailing spectrum (measured: relerr 0.4-0.7 on the small singular
-    values). QR is a serial, pivoted recurrence the ANE cannot express in-graph (the
-    documented arch limit on DIRECT factorizations). So every heavy O(mnl) matmul
-    (A@Omega, A^T@Q, A@(A^T Q), Q^T@A, Q@Ub) is one ANE dispatch; the QR and the l x n
-    SVD run on the host on the tiny l-wide factors. This is the on-ANE ceiling for rSVD.
-    """
+    Returns (U[:, :k], S[:k], Vt[:k, :]). Every heavy O(mnl) matmul runs on the ANE;
+    the QR re-orthonormalization between power steps and the small l x n SVD stay on
+    the host (the irreducible host step - see docs/developer/applied-math.md)."""
   A16 = np.asarray(A, f16)
   m, n = A16.shape
   l = min(k + oversample, n)
@@ -361,10 +210,8 @@ def randomized_svd(A, k: int, oversample: int = 5, power_iters: int = 2):
 
 
 def pca(X, k: int, oversample: int = 5, power_iters: int = 2):
-  """Principal components of data X [samples, features] via randomized SVD of the
-    CENTERED data. Centering is a host mean-subtract (cheap); the SVD's matmuls run
-    on the ANE. Returns (components [k, features], singular_values [k], mean [features]).
-    """
+  """Principal components of X [samples, features] via randomized_svd of the centered
+    data. Returns (components [k, features], singular_values [k], mean [features])."""
   Xf = np.asarray(X, np.float64)
   mean = Xf.mean(0)
   Xc = (Xf - mean).astype(f16)                                           # HOST centering
@@ -377,19 +224,9 @@ def pca(X, k: int, oversample: int = 5, power_iters: int = 2):
 # =========================================================================== #
 
 def least_squares(A, b, iters: int = 40, refine: int = 2):
-  """Solve min_x ||A x - b||_2 via the normal equations A^T A x = A^T b, solved by
-    CG (A^T A is SPD) with iterative refinement.
-
-    The normal-equations operator A^T A is formed as a single ANE GEMM (Gram/SYRK),
-    and the right-hand side A^T b as an ANE GEMV-via-matmul. CG then runs on the
-    n x n SPD system. Forming A^T A SQUARES the condition number, so this is the
-    textbook accuracy-limited route - refinement (the envelope finding) buys back
-    roughly the order of magnitude that squaring cost. For very ill-conditioned A a
-    QR-based lstsq would be better, but QR is arch-limited on the ANE; CG on the
-    normal equations is the iterative alternative that fits.
-
-    ANE: A^T A (Gram), A^T b, and every A_normal@p inside CG.   HOST: CG scalars + loop.
-    """
+  """Solve min_x ||A x - b||_2 via the normal equations A^T A x = A^T b, by CG (A^T A
+    is SPD) + refinement. Forming A^T A squares cond(A); refinement buys back roughly
+    the order of magnitude that costs. See docs/developer/numerics.md."""
   A16 = np.asarray(A, f16); b16 = np.asarray(b, f16).reshape(-1)
   m, n = A16.shape
   AtA = _ane_gemm(A16, A16, transpose_a=True)                            # ANE: A^T A -> [n,n]
@@ -402,27 +239,13 @@ def least_squares(A, b, iters: int = 40, refine: int = 2):
   return conjugate_gradient(AtA, Atb, iters=iters, refine=refine)
 
 
-# =========================================================================== #
-# 6. KRYLOV solvers, FULLY on the ANE (general/least-squares solve + eigenpair)   #
-# --------------------------------------------------------------------------- #
-# A fixed-iteration Krylov method's orthogonalization is SEQUENTIAL in data       #
-# dependency but STATIC in structure (no pivoting, no data-dependent branch), so   #
-# for a fixed step count the WHOLE recurrence UNROLLS into ONE graph and runs       #
-# entirely on the ANE, like conjugate_gradient. Matvecs are matmuls (A folded as a  #
-# const), dots / norms are (z*z)@ones (wide accumulator), and the Givens /          #
-# bidiagonalization scalars are [1,1] tensors. Nothing is on host.                  #
-# =========================================================================== #
+# Krylov solvers, FULLY on the ANE: a fixed-step Krylov recurrence is sequential but
+# STATIC, so it unrolls into one graph like conjugate_gradient. See applied-math.md.
 
 def lsqr(A, b, iters: int = 80):
   """Solve min_x ||A x - b||_2 by LSQR (Golub-Kahan bidiagonalization), FULLY on the
-    ANE: the entire bidiagonalization + Givens recurrence unrolls into ONE program. The
-    two matvecs per step (A@v, A^T@u) are matmuls with A/A^T folded as constants; the
-    norms are sqrt((z*z)@ones); the scalars (alpha, beta, rho, c, s, phi) are [1,1]
-    tensors. No host orthogonalization. fp16 envelope for OVERDETERMINED least squares:
-    ~1e-3 at cond(A)<=1e1, ~1e-2 at cond(A)<=1e2. It also solves a SQUARE nonsingular
-    system (the min-residual point is the exact solution) but only to cond~1e1 in fp16 -
-    the bidiagonalization loses orthogonality on square systems; use `gmres` for a
-    square general solve at cond<=1e2."""
+    ANE. fp16 envelope (overdetermined): ~1e-3 at cond(A)<=1e1, ~1e-2 at cond(A)<=1e2.
+    Solves a SQUARE system only to cond~1e1 (orthogonality loss) - use `gmres` there."""
   A0 = np.asarray(A, f16); m, n = A0.shape; AT = np.ascontiguousarray(A0.T)
   onem = np.ones((m, 1), f16); onen = np.ones((n, 1), f16)
   bT = af.input((1, m))
@@ -442,11 +265,9 @@ def lsqr(A, b, iters: int = 80):
 
 
 def dominant_eig(A, iters: int = 60, seed: int = 0):
-  """Dominant (largest-|.|) eigenvalue + eigenvector of a SYMMETRIC A by power iteration,
-    FULLY on the ANE: x <- A x / ||A x|| unrolls into ONE program; the eigenvalue is the
-    in-graph Rayleigh quotient (x^T A x)/(x^T x). Returns (lambda, eigenvector). A few
-    extremal pairs follow by deflation; the FULL spectrum needs the arch-limited dense QR
-    iteration. fp16-clean to ~1e-3 for a well-separated dominant eigenvalue."""
+  """Dominant eigenpair of SYMMETRIC A by power iteration, FULLY on the ANE (eigenvalue
+    is the in-graph Rayleigh quotient). Returns (lambda, eigenvector); ~1e-3 fp16 for a
+    well-separated dominant eigenvalue."""
   A0 = np.asarray(A, f16); n = A0.shape[0]; AT = np.ascontiguousarray(A0.T)
   onen = np.ones((n, 1), f16)
   x0 = af.input((1, n))
@@ -464,15 +285,10 @@ def dominant_eig(A, iters: int = 60, seed: int = 0):
 
 
 def gmres(A, b):
-  """Solve A x = b for GENERAL (nonsymmetric) A by ONE full GMRES(n) cycle, FULLY on the
-    ANE: Arnoldi (double modified-Gram-Schmidt reorthogonalization), the Givens rotations,
-    and the upper-triangular back-substitution ALL unroll into one program. Each Arnoldi
-    matvec A@q is a matmul (A folded); the projections are (q*w)@ones dots; the rotation
-    and back-solve scalars are [1,1] tensors. More accurate than lsqr for a square general
-    system at higher conditioning (~7e-3 at cond<=1e2), but HEAVIER: the m^2 orthogonalization
-    plus the sequential back-substitution make a large, deep graph (~5.7k ops at n=24) that
-    compiles slowly, so prefer lsqr unless the extra accuracy is needed. fp16 envelope ~1e-2
-    at cond<=1e2; SPD systems should use the cheaper conjugate_gradient."""
+  """Solve A x = b for GENERAL A by ONE full GMRES(n) cycle, FULLY on the ANE (Arnoldi
+    with double MGS, Givens rotations, and back-substitution all unroll). ~7e-3 at
+    cond<=1e2, more accurate than lsqr on square systems but HEAVIER (~5.7k ops at n=24,
+    slow compile) - prefer lsqr unless needed; SPD -> conjugate_gradient."""
   A0 = np.asarray(A, f16); n = A0.shape[0]; m = n
   AT = np.ascontiguousarray(A0.T); onen = np.ones((n, 1), f16)
   bT = af.input((1, n))
@@ -506,12 +322,9 @@ def gmres(A, b):
 
 
 def dominant_svd(A, iters: int = 60, seed: int = 0):
-  """Dominant singular triple (sigma1, u1, v1) of A by power iteration on A^T A, FULLY
-    on the ANE: v <- A^T(A v)/||.|| unrolls into one program (the matvec is two matmuls,
-    A and A^T folded); sigma1 = ||A v1|| as an in-graph norm, u1 = A v1 / sigma1. Returns
-    (sigma1, u1, v1). The dominant triple only - a top-k SVD needs the subspace/
-    Rayleigh-Ritz step whose dense l x l decomposition is the on-ANE frontier (see
-    randomized_svd, which keeps that small factorization on the host)."""
+  """Dominant singular triple (sigma1, u1, v1) by power iteration on A^T A, FULLY on
+    the ANE. Returns (sigma1, u1, v1). Normalize between the A and A^T applications:
+    A^T(A v) has magnitude ~sigma^2 and overflows fp16 for sigma>~250."""
   A0 = np.asarray(A, f16); m, n = A0.shape
   AT = np.ascontiguousarray(A0.T); onen = np.ones((n, 1), f16); onem = np.ones((m, 1), f16)
   v0 = af.input((1, n))
@@ -521,10 +334,7 @@ def dominant_svd(A, iters: int = 60, seed: int = 0):
   ATx = lambda u: u @ A0                                 # [1,m]@[m,n] = A^T u
   v = v0 / nn(v0)
   for _ in range(iters):
-    # power iteration on A^T A, but NORMALIZE between the A and A^T applications:
-    # A^T(A v) has magnitude ~sigma^2, which overflows fp16 for sigma>~250; keeping
-    # each half-step unit-norm holds everything O(1).
-    Av = Ax(v); Av = Av / nm(Av)
+    Av = Ax(v); Av = Av / nm(Av)                          # half-step renorm: holds O(1)
     v = ATx(Av); v = v / nn(v)
   Av = Ax(v); sig = nm(Av)                               # sigma1 = ||A v1||  [1,1]
   u = Av / sig
@@ -534,20 +344,9 @@ def dominant_svd(A, iters: int = 60, seed: int = 0):
   return float(r[0]), r[1:1 + m].astype(np.float32), r[1 + m:].astype(np.float32)
 
 
-# =========================================================================== #
-# 7. DENSE factorization - the FULL spectrum, on the ANE via cyclic Jacobi        #
-# --------------------------------------------------------------------------- #
-# The "direct factorizations are arch-limited" wall is only half true: PIVOTED /  #
-# convergence-GATED variants need data-dependent control flow, but the FIXED-sweep #
-# cyclic-Jacobi eigensolver does not - its sweep order is compile-time fixed, each  #
-# Givens rotation is a closed-form function of three matrix entries (no pivot, no   #
-# branch), and it converges quadratically in ~6-10 sweeps for ANY symmetric input.  #
-# So the WHOLE eigendecomposition unrolls into one on-ANE program, each rotation a   #
-# fixed row/column slice+combine+concat (no constant matrices). HEAVY: O(sweeps*n^2) #
-# rotations -> O(n^3)-ish ops, so a SMALL-n method (the deep unrolled graph compiles  #
-# slowly; the iterative topo in _compile.py is what lets it build at all). fp16: full #
-# spectrum to ~4e-3 at n<=16, cond<=1e2.                                              #
-# =========================================================================== #
+# Full spectrum on the ANE via FIXED-sweep cyclic Jacobi: the sweep order is
+# compile-time fixed and each rotation is closed-form (no pivot/branch), so the whole
+# eigendecomposition unrolls into one program. Small-n (O(n^3) graph). applied-math.md.
 
 def _jacobi_sweep(M, n):
   """One full cyclic-Jacobi sweep over a symmetric M [n,n] (all (p,q) rotations), in-graph."""
@@ -585,18 +384,10 @@ def _jacobi_sweep(M, n):
 
 
 def eigh(A, sweeps: int = 8, iterate: bool = False):
-  """ALL eigenvalues of a SYMMETRIC A by fixed-sweep cyclic Jacobi on the ANE. Returns the
-    eigenvalues sorted ascending.
-
-    `iterate=False` (default): the whole `sweeps`-sweep recurrence UNROLLS into ONE fused
-    program. Cleanest, but small-n only - the O(n^3) rotation chain is a deep graph (caps near
-    n=20 at ~4e-3 vs numpy.eigh, cond<=1e2).
-
-    `iterate=True`: compile ONE cyclic-Jacobi sweep and host-loop it `sweeps` times,
-    feeding the matrix back each round. The per-sweep graph is O(n^2) instead of O(sweeps*n^2),
-    so it reaches MUCH larger n (n~48 at ~1.2-1.8e-2). The sweep compute is on-engine; the host
-    only shuttles the matrix between sweeps (a data move, no tensor math). Use when n exceeds
-    the unrolled ceiling. For a few extremal pairs of a large matrix use dominant_eig."""
+  """ALL eigenvalues of SYMMETRIC A by fixed-sweep cyclic Jacobi, sorted ascending.
+    `iterate=False`: the whole recurrence unrolls into one program (small-n, ~4e-3 to
+    n~20). `iterate=True`: compile ONE sweep and host-loop it (O(n^2)/sweep, reaches
+    n~48). See docs/developer/applied-math.md."""
   A0 = np.asarray(A, f16); n = A0.shape[0]
   if iterate:
     net = af.compile(_jacobi_sweep(af.input((n, n)), n), _check_precision=False)
@@ -611,14 +402,12 @@ def eigh(A, sweeps: int = 8, iterate: bool = False):
 
 
 def svd(A, sweeps: int = 8):
-  """ALL singular values of A, FULLY on the ANE: form the symmetric Gram matrix A^T A as
-    one ANE GEMM, then take its full spectrum with the on-ANE cyclic-Jacobi `eigh`
-    (sigma_i = sqrt(eig_i)). Returns singular values descending. Forming A^T A SQUARES the
-    condition number, so this is accurate for cond(A)<=1e1 in fp16; for top-k of a large /
-    ill-conditioned A use randomized_svd. Small-n (eigh is the heavy unrolled Jacobi)."""
+  """ALL singular values of A (descending), FULLY on the ANE: Gram matrix A^T A as one
+    GEMM, then its spectrum via cyclic-Jacobi `eigh` (sigma = sqrt(eig)). Forming A^T A
+    squares cond(A), so accurate for cond(A)<=1e1; small-n. See docs/developer/numerics.md."""
   A16 = np.asarray(A, f16); m, n = A16.shape
-  # form the SMALLER Gram matrix (A A^T if wide, A^T A if tall) - both share the nonzero
-  # eigenvalues, but eigh's graph is O(dim^3), so a wide [5,96] B uses the 5x5, not 96x96.
+  # form the SMALLER Gram matrix (A A^T if wide, A^T A if tall): same nonzero eigenvalues,
+  # but eigh's graph is O(dim^3), so a wide [5,96] B uses the 5x5, not 96x96.
   M = A16 if m >= n else np.ascontiguousarray(A16.T)
   G = _ane_gemm(M, M, transpose_a=True)                  # ANE: M^T M  [min(m,n), min(m,n)]
   ev = eigh(G, sweeps=sweeps)
@@ -626,18 +415,10 @@ def svd(A, sweeps: int = 8):
 
 
 def svdvals_topk(A, k: int, oversample: int = 2, power_iters: int = 1, seed: int = 0):
-  """Top-k singular VALUES of a large A, FULLY on the ANE - randomized range finding with
-    every step on the engine: the sketch A@Omega and the power products (matmuls), the
-    range-basis orthonormalization (the on-ANE Gram-Schmidt `qr`, re-run between power
-    steps), the projection Q^T A, and the small-block `svd` (on-ANE cyclic Jacobi). The
-    host only orchestrates (array transposes/slices, no tensor math). Unlike
-    `randomized_svd` - which keeps the QR + small SVD on the host - this is the fully-on-
-    engine top-k. Returns the k largest singular values, ~1e-2 for a rank-k matrix.
-
-    NOTE the fp16 tradeoff: extra power iterations HURT here (relerr 1.2e-2 -> 8e-2 -> 0.2 as
-    power_iters goes 1 -> 2 -> 3). Each A^T A step squares the spectrum, and in fp16 that
-    crushes the trailing singular values toward the dominant one, so the minimal sketch
-    (oversample 2, one power step) is the most accurate for a clean low-rank matrix."""
+  """Top-k singular VALUES of a large A, FULLY on the ANE (sketch + on-ANE `qr` +
+    projection + on-ANE `svd`; host only orchestrates). ~1e-2 for a rank-k matrix.
+    NOTE: extra power iterations HURT (each A^T A squares the spectrum and fp16 crushes
+    the trailing values) - the minimal sketch is most accurate. See numerics.md."""
   A16 = np.asarray(A, f16); m, n = A16.shape; l = min(k + oversample, n)
   Om = np.random.default_rng(seed).standard_normal((n, l)).astype(f16)
   Y = _ane_gemm(A16, Om); Q = qr(Y)[0].astype(f16)                  # ANE sketch + Gram-Schmidt
@@ -647,17 +428,10 @@ def svdvals_topk(A, k: int, oversample: int = 2, power_iters: int = 1, seed: int
   return np.sort(svd(B, sweeps=8))[::-1][:k]                         # ANE svd of the small block
 
 
-# =========================================================================== #
-# 8. DIRECT factorizations on the ANE - QR / Cholesky / LU (UNPIVOTED)            #
-# --------------------------------------------------------------------------- #
-# A direct factorization is a FIXED recurrence (no pivot = no data-dependent      #
-# branch), so it unrolls into one on-ANE program. QR is column Gram-Schmidt (dots #
-# as (a*b)@ones, wide accumulator); Cholesky/LU build entries as [1,1] tensors,    #
-# dividing by the pivot with real_div. Small-n (the unrolled recurrence is an O(n^3) #
-# graph). Pivoting (for a zero/tiny pivot) needs an argmax+one-hot permutation,      #
-# which segments the graph (a bridge op) - these are the unpivoted forms, valid when #
-# the leading minors / diagonal are well-conditioned.                                #
-# =========================================================================== #
+# Direct factorizations on the ANE - QR/Cholesky/LU. A no-pivot direct factorization is
+# a FIXED recurrence, so it unrolls into one program; small-n (O(n^3) graph). Pivoting
+# needs an argmax+one-hot (a bridge op that segments) - these are the unpivoted forms,
+# valid for well-conditioned leading minors. See docs/developer/numerics.md.
 
 def _grid(entries: dict, n: int, zero):
   """Assemble an n x n matrix from a dict {(i,j): [1,1] tensor} (missing -> zero)."""
@@ -666,25 +440,17 @@ def _grid(entries: dict, n: int, zero):
 
 
 def _els_routed(Xt, n: int):
-  """Element accessor `el(i, j)` for an [n,n] input, routed OFF the width axis: a
-    zero-width-begin row slice + transpose + element slice. A direct `[i, j]` width-offset
-    `slice_by_size` rides the A13/A14 x16 crop-DMA, which saturates any sliced |value| >
-    4094 (=65504/16) to +/-inf - silently corrupting these factorizations for matrices with
-    entries above that (confirmed on BOTH saturating families: M2/A14 chol/lu break right at
-    the threshold; on M1/A13 a direct `[0,3]` width-offset slice of an 8000 element returns
-    `inf` while this routed accessor returns the exact 8000). The routed form keeps every
-    begin's last axis at 0 (the same width-axis avoidance as the gather fix), extending the
-    usable entry range to the full fp16 span for the cost of n amortized [1,n] transposes. The
-    squaring kernels (qr/eigh/eigvals) intrinsically cap at max|entry| ~ 1e2 (their products
-    overflow fp16 first), so only these element-recurrence kernels gain from the routing."""
+  """Element accessor `el(i, j)` routed OFF the width axis (row slice + transpose + slice).
+    A direct width-offset slice_by_size rides the A13/A14 x16 crop-DMA, which saturates any
+    sliced |value| > 4094 (=65504/16) to +/-inf, corrupting these factorizations; the routed
+    form keeps every begin's last axis at 0, restoring the full fp16 span. See numerics.md."""
   rows = [Xt.slice_by_size([i, 0], [1, n]).transpose([1, 0]) for i in range(n)]
   return lambda i, j: rows[i].slice_by_size([j, 0], [1, 1])
 
 
 def qr(A):
-  """Thin QR A = Q R by modified Gram-Schmidt, FULLY on the ANE (one program). Q has
-    orthonormal columns, R is upper-triangular. Each projection is an (a*b)@ones dot (wide
-    accumulator) + an axpy; the whole orthogonalization unrolls. Returns (Q, R). Small-n."""
+  """Thin QR A = Q R by modified Gram-Schmidt, FULLY on the ANE (one program). Returns
+    (Q, R); Q orthonormal columns, R upper-triangular. Small-n."""
   from aneforge._compile import compile_multi
   A16 = np.asarray(A, f16); m, n = A16.shape; onem = np.ones((m, 1), f16)
   At = af.input((m, n))
@@ -711,8 +477,7 @@ def qr(A):
 
 def cholesky(A):
   """Lower-triangular Cholesky factor L (A = L L^T) of an SPD A, UNPIVOTED, FULLY on the
-    ANE: a fixed recurrence with each L[i,j] a [1,1] tensor, dividing by the pivot L[j,j]
-    via real_div. Small-n. ~3e-4 vs numpy at n=8."""
+    ANE (fixed recurrence, each L[i,j] a [1,1] tensor). Small-n; ~3e-4 vs numpy at n=8."""
   A16 = np.asarray(A, f16); n = A16.shape[0]
   At = af.input((n, n)); el = _els_routed(At, n)
   z = el(0, 0) - el(0, 0); L: dict = {}
@@ -728,9 +493,8 @@ def cholesky(A):
 
 
 def lu(A):
-  """Unpivoted LU (A = L U, L unit-lower, U upper) by Doolittle, FULLY on the ANE: each
-    entry a [1,1] tensor, dividing by the pivot U[i,i] via real_div. Returns (L, U).
-    Small-n; UNPIVOTED, so valid when no leading pivot underflows (well-conditioned A)."""
+  """Unpivoted LU (A = L U, L unit-lower, U upper) by Doolittle, FULLY on the ANE.
+    Returns (L, U). Small-n; UNPIVOTED, valid when no leading pivot underflows."""
   from aneforge._compile import compile_multi
   A16 = np.asarray(A, f16); n = A16.shape[0]
   At = af.input((n, n)); el = _els_routed(At, n)
@@ -756,12 +520,9 @@ def lu(A):
 
 def lu_pivoted(A):
   """Partial-pivoted LU: P A = L U with row interchanges, on the ANE. Returns (P, L, U).
-    The pivot at each column is a true on-engine `argmax` over the subcolumn, turned into a
-    permutation by a one-hot (arange + greater + select) and applied as a row-swap; the
-    Schur elimination is masked to the trailing submatrix so the stored multipliers are
-    preserved. UNLIKE the unpivoted `lu`, the argmax is a netplist BRIDGE op, so the program
-    is SEGMENTED (one graph cut per column), not a single fused program - still all on ANE
-    silicon. Small-n; ~5e-4 vs P A reconstruction at n<=8."""
+    The per-column pivot is a true on-engine `argmax`; that argmax is a netplist BRIDGE op,
+    so the program is SEGMENTED (one cut per column), not single-fused - still all on ANE.
+    Small-n; ~5e-4 vs P A reconstruction at n<=8. See docs/developer/applied-math.md."""
   A16 = np.asarray(A, f16); n = A16.shape[0]
   At = af.input((n, n)); In = af.input((n, n)); arc = af.input((n, 1))
   arcr = arc.transpose([1, 0]); M = At; P = In
@@ -792,8 +553,7 @@ def lu_pivoted(A):
 
 
 def _trinv_lower(L):
-  """Inverse of a lower-triangular L by forward substitution, FULLY on the ANE (a fixed
-    recurrence, entries as [1,1] tensors). Used by generalized_eigh."""
+  """Inverse of lower-triangular L by forward substitution, on the ANE. Used by generalized_eigh."""
   L16 = np.asarray(L, f16); n = L16.shape[0]
   Lt = af.input((n, n)); el = _els_routed(Lt, n)
   z = el(0, 0) - el(0, 0); one = z.adds(1.0)
@@ -807,11 +567,9 @@ def _trinv_lower(L):
 
 
 def generalized_eigh(A, B, sweeps: int = 8):
-  """Eigenvalues of the generalized symmetric-definite problem A x = lambda B x (A
-    symmetric, B SPD; LAPACK `sygv`), FULLY on the ANE by composing on-engine kernels:
-    B = L L^T (cholesky), C = L^-1 A L^-T (triangular inverse + two GEMMs), then the symmetric
-    eig of C (cyclic Jacobi `eigh`). Returns the generalized eigenvalues ascending. Small-n
-    (the eigh O(n^3) graph); ~4e-4 vs the fp64 reduction at cond<=1e1."""
+  """Eigenvalues of A x = lambda B x (A symmetric, B SPD; LAPACK `sygv`), ascending, by
+    composing on-engine kernels: B = L L^T (cholesky), C = L^-1 A L^-T, then eigh(C). Small-n;
+    ~4e-4 vs the fp64 reduction at cond<=1e1."""
   A16 = np.asarray(A, f16); B16 = np.asarray(B, f16)
   L = cholesky(B16).astype(f16)                          # ANE
   Li = _trinv_lower(L).astype(f16)                       # ANE
@@ -821,14 +579,10 @@ def generalized_eigh(A, B, sweeps: int = 8):
 
 
 def eigvals(A, iters: int = 60):
-  """Eigenvalues of a GENERAL (nonsymmetric) real A by the unshifted QR algorithm, FULLY on
-    the ANE as ONE fused program: `iters` rounds of M <- R Q where M = Q R (Gram-Schmidt QR
-    in-graph, RQ a matmul) drive M to real Schur (quasi-triangular) form. NO pivoting, NO
-    shifts, NO deflation, so it is pure fixed-iteration dataflow with no bridge op. The host
-    only READS the eigenvalues off the converged form - a 1x1 diagonal block is a real
-    eigenvalue, a 2x2 block gives a COMPLEX-conjugate pair. Returns a complex array. Small-n
-    (the unrolled QR chain), well-separated spectra: ~2e-3 (real) / ~2e-2 (complex) vs
-    numpy.eigvals. Unshifted QR converges linearly, so clustered spectra need more iters."""
+  """Eigenvalues of a GENERAL real A by the unshifted QR algorithm, FULLY on the ANE
+    (M <- R Q drives M to real Schur form). Host reads the eigenvalues off the converged
+    form (1x1 block = real, 2x2 = complex pair). Returns a complex array; small-n,
+    ~2e-3 (real)/~2e-2 (complex). Unshifted QR is linear, so clusters need more iters."""
   A16 = np.asarray(A, f16); n = A16.shape[0]; onen = np.ones((n, 1), f16)
   M = af.input((n, n))
 
