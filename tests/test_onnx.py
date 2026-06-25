@@ -273,7 +273,7 @@ def test_depth_to_space_crd_raises():  # ANE matches DCR only
 def test_resize_nearest_builds():  # sizes input -> [1,4,16,16]
   sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
   n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="nearest",
-                       coordinate_transformation_mode="asymmetric")
+                       coordinate_transformation_mode="asymmetric", nearest_mode="floor")
   m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
              inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 16, 16) and out.op == "resize_nearest_neighbor"
@@ -289,7 +289,7 @@ def test_resize_linear_builds():  # sizes input, linear+asymmetric -> bilinear
 def test_resize_scales_builds():  # scales input (no sizes) -> round(2*8)=16
   scales = onnx.numpy_helper.from_array(np.array([1, 1, 2, 2], dtype=np.float32), "scales")
   n = helper.make_node("Resize", ["x", "roi", "scales"], ["y"], mode="nearest",
-                       coordinate_transformation_mode="asymmetric")
+                       coordinate_transformation_mode="asymmetric", nearest_mode="floor")
   m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
              inits=[_empty_f32("roi"), scales])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 16, 16) and out.op == "resize_nearest_neighbor"
@@ -313,6 +313,22 @@ def test_resize_nearest_half_pixel_raises():  # ANE nearest matches asymmetric o
   sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
   n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="nearest",
                        coordinate_transformation_mode="half_pixel")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_resize_nearest_default_mode_raises():  # ONNX default nearest_mode is round_prefer_floor; ANE samples floor
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="nearest",
+                       coordinate_transformation_mode="asymmetric")   # nearest_mode omitted -> round_prefer_floor
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_resize_linear_pytorch_half_pixel_raises():  # torch exports this; ANE bilinear does not match it
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="linear",
+                       coordinate_transformation_mode="pytorch_half_pixel")
   m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
              inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)

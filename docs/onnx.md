@@ -80,7 +80,9 @@ mis-lower:
 - **Resize:** `[N,C,H,W]`, opset 11+, target from `sizes` (preferred) or `scales`. Only
   the coordinate conventions the ANE actually matches are accepted, each validated
   on-device (cosine ~1.0); every other config raises rather than silently mis-resize:
-    - `mode="nearest"` requires `coordinate_transformation_mode="asymmetric"`.
+    - `mode="nearest"` requires `coordinate_transformation_mode="asymmetric"` and
+      `nearest_mode="floor"` (the ANE samples with `floor`; the ONNX default
+      `round_prefer_floor` and the other round/ceil modes raise).
     - `mode="linear"` requires `asymmetric` (-> half-pixel-off bilinear) or
       `align_corners`.
     - `half_pixel`/`pytorch_half_pixel` sampling and `mode="cubic"` are **not** matched by

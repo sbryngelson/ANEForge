@@ -244,6 +244,8 @@ def _resize(node, ins, a, i):
   if mode == "nearest":
     if ctm != "asymmetric":
       raise NotImplementedError(f"ONNX Resize nearest: coordinate_transformation_mode={ctm!r} not supported (ANE matches 'asymmetric')")
+    nm = _sattr(a, "nearest_mode", "round_prefer_floor")   # ONNX default; ANE samples with floor
+    if nm != "floor": raise NotImplementedError(f"ONNX Resize: nearest_mode={nm!r} not supported (only 'floor')")
     return _rnn(x, th, tw)
   if mode == "linear":
     if ctm == "asymmetric": return _rbilin(x, th, tw, align_corners=False)
