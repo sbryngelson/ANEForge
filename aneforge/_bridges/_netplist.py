@@ -36,15 +36,17 @@ def ensure_invoker(name: str) -> Path:
   return binp
 
 
-def invoke_netplist(invoker, net_plist, *, weights=(), inputs=(), outputs=(), repeats=1, warmup=None, extra=()):
+def invoke_netplist(invoker, net_plist, *, weights=(), inputs=(), outputs=(), repeats: int | None = 1, warmup=None, extra=()):
   """Shared Path-A dispatch: build the invoker command and run it. `inputs`/
     `outputs` are `(name, path)` pairs (caller writes inputs, reads outputs).
-    Raises on non-zero return or non-`ok` status; returns the status dict."""
+    `repeats`/`warmup` are omitted from the command when None (the rank_invoker
+    does not accept them). Raises on non-zero return or non-`ok` status;
+    returns the status dict."""
   cmd = [str(invoker), "--net-plist", str(net_plist)]
   for w in weights: cmd += ["--weights", str(w)]
   for name, path in inputs: cmd += ["--input", f"{name}={path}"]
   for name, path in outputs: cmd += ["--output", f"{name}={path}"]
-  cmd += ["--repeats", str(repeats)]
+  if repeats is not None: cmd += ["--repeats", str(repeats)]
   if warmup is not None: cmd += ["--warmup", str(warmup)]
   cmd += list(extra)
   proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -53,7 +55,11 @@ def invoke_netplist(invoker, net_plist, *, weights=(), inputs=(), outputs=(), re
     raise RuntimeError(
       f"{name} failed (rc={proc.returncode}):\n"
       f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
-  info = json.loads(proc.stdout.strip().splitlines()[-1])
+  # Prefer JSON lines (the layer_invoker may emit non-JSON noise before the
+  # status line); fall back to the last line for invokers that print only JSON.
+  json_lines = [ln for ln in proc.stdout.splitlines() if ln.strip().startswith("{")]
+  if not json_lines: raise RuntimeError(f"no JSON from {name}:\n{proc.stdout}\n{proc.stderr}")
+  info = json.loads(json_lines[-1])
   if info.get("status") != "ok": raise RuntimeError(f"{name} non-ok status: {info}")
   return info
 

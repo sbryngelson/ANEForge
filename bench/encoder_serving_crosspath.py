@@ -14,6 +14,8 @@ import numpy as np
 import aneforge as af
 import mlx.core as mx
 
+from _mil import mil_encoding_tally as _lut_tally
+
 # config
 D, H, DFF, S = 768, 12, 3072, 128
 DH = D // H
@@ -81,19 +83,6 @@ def build_ane(w, B):
     ff = yn.linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
     out = (h1 + ff).reshape(B, S, D)
     return out
-
-
-def _lut_tally(build_dir):
-    """Count the weight encodings the emitter chose, summed across model.mil files."""
-    counts = {"int4_lut": 0, "sparse": 0, "int8": 0, "fp16": 0}
-    for mil in Path(build_dir).rglob("model.mil"):
-        txt = mil.read_text()
-        counts["int4_lut"] += txt.count("constexpr_lut_to_dense")
-        counts["sparse"] += txt.count("constexpr_sparse_to_dense")
-        counts["int8"] += txt.count("constexpr_affine_dequantize")
-        counts["fp16"] += sum(1 for ln in txt.splitlines()
-                              if "= const()" in ln and "BLOBFILE" in ln)
-    return counts
 
 
 def run_ane(w, B, x, label, compress, atol):

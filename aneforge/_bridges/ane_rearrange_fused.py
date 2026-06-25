@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from ._netplist import ensure_invoker, invoke_netplist
+from ._netplist import build_plist, ensure_invoker, input_entry, invoke_netplist, output_entry
 
 # The native netplist Type token for each public layer name.
 _LAYER_TYPES = {
@@ -23,31 +23,6 @@ _LAYER_TYPES = {
   "SpaceToBatch",
   "BatchToSpace",
 }
-
-
-def _in_entry(sym: str, w: int, h: int, c: int, unit: str, b: int = 1) -> dict:
-  return {
-    "BatchSize": b,
-    "InputChannels": c,
-    "InputDepth": 1,
-    "InputHeight": h,
-    "InputInterleave": 1,
-    "InputName": sym,
-    "InputType": "Float16",
-    "InputWidth": w,
-    "Name": unit,
-    "OperationName": "op0",
-  }
-
-
-def _out_entry(sym: str, unit: str) -> dict:
-  return {
-    "Name": unit,
-    "OperationName": "op0",
-    "OutputInterleave": 1,
-    "OutputName": sym,
-    "OutputType": "Float16",
-  }
 
 
 def build_netplist(
@@ -66,7 +41,6 @@ def build_netplist(
   if layer not in _LAYER_TYPES:
     raise ValueError(f"unknown layer {layer!r}; expected one of {sorted(_LAYER_TYPES)}")
   unit_name = f"{layer.lower()}-1"
-  net_name = f"network_{unit_name}"
   unit = {
     "Bottom": ["x"],
     "InputType": ["Float16"],
@@ -76,25 +50,11 @@ def build_netplist(
     "Params": {"FactorX": factor_x, "FactorY": factor_y, "FactorZ": factor_z},
     "Type": layer,
   }
-  network = {
-    unit_name: unit,
-    "Units": [unit_name],
-    "Weights": ["weights.0"],
-    "y": {"Bottom": unit_name, "OutputInterleave": 1, "OutputName": "y", "OutputType": "Float16"},
-  }
-  return {
-    "Version": "1.0.10",
-    "Networks": [net_name],
-    "ProcedureList": [
-      {
-        "Name": f"procedure_{unit_name}",
-        "InputList": [_in_entry("x", in_width, in_height, in_channels, unit_name, in_batch)],
-        "OperationList": [{"NetworkName": net_name, "OperationName": "op0"}],
-        "OutputList": [_out_entry("y", unit_name)],
-      }
-    ],
-    net_name: network,
-  }
+  return build_plist(
+    f"network_{unit_name}", unit_name,
+    [input_entry("x", width=in_width, height=in_height, channels=in_channels,
+                 entry_name=unit_name, batch_size=in_batch)],
+    [output_entry("y", unit_name)], {unit_name: unit})
 
 
 def _run_netplist(plist: dict, x: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:

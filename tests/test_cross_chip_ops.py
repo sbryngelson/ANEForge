@@ -1,19 +1,10 @@
 """Cross-chip ops M1 can't run: catalog declares availability and aneforge guards them on M1."""
 from __future__ import annotations
 import pytest
+from _helpers import requires_ane
 import aneforge as af
 from aneforge import _op_catalog as oc
 import aneforge._targets as TG
-
-
-def _ane():
-  try:
-    from aneforge._runtime import _find_dylib; _find_dylib(); return True
-  except Exception:
-    return False
-
-
-requires_ane = pytest.mark.skipif(not _ane(), reason="ANE/e5rt dylib unavailable")
 
 
 # --- (1) catalog correctly declares M1-can't / M5-can for the gated ops -----------------

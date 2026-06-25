@@ -7,14 +7,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))          # tests/  -> _corpus
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # repo root -> aneforge
 
-import aneforge  # noqa: F401,E402  (importing the package sets KMP_DUPLICATE_LIB_OK before numpy loads)
+import aneforge  # noqa: F401  (importing the package sets KMP_DUPLICATE_LIB_OK before numpy loads)
 
-from _corpus import run_corpus, eval_case  # noqa: E402
-import test_nn_blocks  # noqa: E402
-import test_synthetic  # noqa: E402
-import test_corners  # noqa: E402
-import test_shapes  # noqa: E402
-import test_broad  # noqa: E402
+from _corpus import run_corpus, eval_case
+import test_nn_blocks
+import test_synthetic
+import test_corners
+import test_shapes
+import test_broad
 
 ALL_CASES = (test_nn_blocks.CASES + test_synthetic.CASES + test_corners.CASES
              + test_shapes.CASES + test_broad.CASES)

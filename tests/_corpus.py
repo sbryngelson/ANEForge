@@ -10,7 +10,7 @@ from typing import Callable
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root -> import aneforge
-import aneforge as af  # noqa: E402
+import aneforge as af
 
 
 @dataclass
@@ -49,19 +49,25 @@ def run_case(case: Case, int8: bool = False) -> np.ndarray:
 
 
 def compare(out: np.ndarray, ref: np.ndarray, case: Case, int8: bool = False):
-  """Return (passed: bool, metric_str, tol_used) for one (out, ref) pair."""
+  """Return (passed: bool, metric_str, tol_used, relerr) for one (out, ref) pair.
+
+    ``relerr`` is the numeric relative error when a relerr metric applies, else None
+    (carried on the record so runners need not re-parse the metric string)."""
   out = np.asarray(out, np.float32)
   ref = np.asarray(ref, np.float32)
-  if out.shape != ref.shape: return False, f"shape {out.shape} != ref {ref.shape}", 0.0
+  if out.shape != ref.shape: return False, f"shape {out.shape} != ref {ref.shape}", 0.0, None
   if case.exact:
     ok = bool(np.array_equal(out, ref))
-    return ok, f"exact={ok}", 0.0
+    return ok, f"exact={ok}", 0.0, None
   if case.abserr is not None:
     err = float(np.abs(out - ref).max())
-    return err < case.abserr, f"abserr {err:.5g}", case.abserr
+    return err < case.abserr, f"abserr {err:.5g}", case.abserr, None
   tol = case.int8_tol if int8 else case.tol
   relerr = float(np.abs(out - ref).max() / (np.abs(ref).max() + 1e-6))
-  return relerr < tol, f"relerr {relerr:.5g}", tol
+  metric = f"relerr {relerr:.5g}"
+  # Carry the *printed-precision* value so runners that aggregate it match the old
+  # behaviour of re-parsing ``float(metric.split()[1])`` exactly.
+  return relerr < tol, metric, tol, float(metric.split()[1])
 
 
 def eval_case(case: Case):
@@ -73,13 +79,13 @@ def eval_case(case: Case):
   ref = None
   for variant, int8 in variants:
     rec = {"name": case.name, "category": case.category, "variant": variant,
-           "metric": "", "tol": 0.0, "err": ""}
+           "metric": "", "tol": 0.0, "err": "", "relerr": None}
     try:
       if ref is None:
         ref = case.ref_fn(*[np.asarray(a, np.float32) for a in case.inputs])
       out = run_case(case, int8=int8)
-      passed, metric, tol = compare(out, ref, case, int8=int8)
-      rec["metric"], rec["tol"] = metric, tol
+      passed, metric, tol, relerr = compare(out, ref, case, int8=int8)
+      rec["metric"], rec["tol"], rec["relerr"] = metric, tol, relerr
       if case.xfail:
         rec["status"] = "XPASS" if passed else "XFAIL"
         rec["err"] = case.xfail
@@ -95,30 +101,48 @@ def eval_case(case: Case):
   return results
 
 
-def run_corpus(cases, verbose: bool = True):
+def _default_header():
+  return f"{'case':36s} {'var':5s} {'status':6s}  detail"
+
+
+def _default_row(rec):
+  return f"{rec['name']:36s} {rec['variant']:5s} {rec['status']:6s}  {rec['metric']}"
+
+
+def run_corpus(cases, verbose: bool = True, *, columns=None, verdict=None,
+               sep_width: int = 78, annotate=None):
   """Run all cases, print a pass/fail table, return (results, exit_code).
 
     Gating rule: PASS and XFAIL are green; FAIL, ERROR, and XPASS are red.
     (XPASS = an xfail-marked case unexpectedly passed -> the marker is stale.)
+
+    Customisation hooks (used by the per-domain runners so they need not re-implement
+    the eval/count/gate skeleton):
+      columns   : (header_str, row_fn(rec)->str) overriding the printed table layout.
+      annotate  : annotate(case, rec) called per record before it is printed, to stamp
+                  extra fields (e.g. cost/feasibility tags) onto the record.
+      verdict   : verdict(all_results, relerrs) printed after the summary stats and
+                  before the GATE line (a domain-specific findings block).
+      sep_width : width of the '-'/'=' separator rules.
     """
+  header_fn, row_fn = columns or (_default_header, _default_row)
   all_results = []
   relerrs = []
   if verbose:
-    print(f"{'case':36s} {'var':5s} {'status':6s}  detail")
-    print("-" * 78)
+    print(header_fn())
+    print("-" * sep_width)
   for case in cases:
     for rec in eval_case(case):
+      if annotate is not None: annotate(case, rec)
       all_results.append(rec)
-      tag = f"{rec['name']:36s} {rec['variant']:5s} {rec['status']:6s}  {rec['metric']}"
-      if rec["err"]: tag += f"  [{rec['err']}]"
+      line = row_fn(rec)
+      if rec["err"]: line += f"  [{rec['err']}]"
       if verbose:
-        print(tag)
+        print(line)
         if rec.get("traceback"):
           print("    " + rec["traceback"].replace("\n", "\n    "))
-      m = rec["metric"]
-      if m.startswith("relerr "):
-        try: relerrs.append(float(m.split()[1]))
-        except ValueError: pass
+      if rec.get("relerr") is not None:
+        relerrs.append(rec["relerr"])
 
   n_pass = sum(r["status"] == "PASS" for r in all_results)
   n_xfail = sum(r["status"] == "XFAIL" for r in all_results)
@@ -128,12 +152,14 @@ def run_corpus(cases, verbose: bool = True):
   total = len(all_results)
   red = n_fail + n_err + n_xpass
 
-  print("\n" + "=" * 78)
+  print("\n" + "=" * sep_width)
   print(f"variants run: {total}   PASS {n_pass}   XFAIL {n_xfail}   "
         f"FAIL {n_fail}   ERROR {n_err}   XPASS {n_xpass}")
   if relerrs:
     print(f"relerr across {len(relerrs)} numeric variants: "
           f"min {min(relerrs):.2e}  median {np.median(relerrs):.2e}  max {max(relerrs):.2e}")
+  if verdict is not None:
+    verdict(all_results, relerrs)
   print(f"GATE: {'GREEN' if red == 0 else 'RED'}  "
         f"({n_pass + n_xfail}/{total} green, {red} red)")
   return all_results, (0 if red == 0 else 1)

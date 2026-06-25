@@ -7,19 +7,17 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # tests/ -> import _corpus
-from _corpus import Case, eval_case  # noqa: E402
-import aneforge as af  # noqa: E402
+from _corpus import Case, run_corpus
+from _helpers import f16, onehot_select as _col
+import aneforge as af
 
 try:
-  import scipy.linalg as sla  # noqa: E402
+  import scipy.linalg as sla
   HAVE_SCIPY = True
 except Exception:  # noqa: BLE001
   HAVE_SCIPY = False
 
 rng = np.random.default_rng(1234)
-
-
-def f16(*shape, scale=1.0): return (rng.standard_normal(shape).astype(np.float32) * scale).astype(np.float16)
 
 
 # tag side-table: name -> (cost_character, feasibility); printed by the runner
@@ -50,7 +48,7 @@ def _power_iteration():
   A = (rng.standard_normal((N, N)).astype(np.float32) * 0.25)
   A = (A + A.T)  # symmetric -> real dominant eigenvector, clean power iteration
   A = A.astype(np.float16)
-  x0 = f16(1, N)
+  x0 = f16(rng, 1, N)
 
   def build(xt):
     h = xt
@@ -93,7 +91,7 @@ def _cg_step():
   M = (rng.standard_normal((N, N)).astype(np.float32) * 0.2)
   A = (M @ M.T + N * np.eye(N)).astype(np.float32)   # SPD, well-conditioned
   Ah = A.astype(np.float16)
-  x = f16(1, N); r = f16(1, N); p = f16(1, N)
+  x = f16(rng, 1, N); r = f16(rng, 1, N); p = f16(rng, 1, N)
 
   def _dot(u, v):                                    # [1,N].[1,N] -> [1,1]
     return (u * v).sum(1)
@@ -163,14 +161,6 @@ def _horner():
                 "floor/fusion", "works")
 
 
-def _col(t: af.Tensor, i: int) -> af.Tensor:
-  """Select column i of a [1, W] tensor as a [1,1] tensor by matmul against a
-    one-hot column selector (a folded constant weight); stays fused, no graph cut."""
-  W = t.shape[1]
-  sel = np.zeros((W, 1), np.float16); sel[i, 0] = 1.0
-  return t @ sel.astype(np.float16)                   # [1,W] @ [W,1] -> [1,1]
-
-
 def _stencil_laplacian():
   """2D 5-point Laplacian (PDE diffusion step) as a fixed-kernel conv.
 
@@ -188,7 +178,7 @@ def _stencil_laplacian():
   K[0, 0] = dt * lap
   K[0, 0, 1, 1] += 1.0          # identity center -> u + dt*Lap(u)
   Kf = K.astype(np.float16)
-  u = f16(1, 1, 32, 32, scale=1.0)
+  u = f16(rng, 1, 1, 32, 32, scale=1.0)
 
   def build(ut): return af.conv(ut, Kf, pad=1)
 
@@ -219,7 +209,7 @@ def _nbody_normals():
     adding it would just chain an l2_norm in a *separate* e5rt segment; we keep the
     probe focused on the bridge numerics.
     """
-  e1 = f16(3); e2 = f16(3)
+  e1 = f16(rng, 3); e2 = f16(rng, 3)
 
   def build(a, b): return af.cross_product(a, b)
 
@@ -244,7 +234,7 @@ def _mc_reduction():
     error is fp16 *input* rounding of the 8192 samples. tol=0.03.
     """
   Nn = 8192
-  s = f16(1, Nn, scale=1.0)
+  s = f16(rng, 1, Nn, scale=1.0)
 
   def build(st):
     g = st.square()                 # g(x) = x^2
@@ -290,7 +280,7 @@ def _lrn_local():
     """
   C, H, W = 8, 4, 4
   alpha, beta, k = 1.0, 0.75, 1.0
-  x = f16(1, C, H, W, scale=1.0)
+  x = f16(rng, 1, C, H, W, scale=1.0)
 
   def build(xt): return af.lrn(xt, alpha=alpha, beta=beta, k=k)
 
@@ -321,7 +311,7 @@ def _gram_syrk():
     (wide accumulator keeps it tight).
     """
   M, K = 24, 16
-  X = f16(M, K, scale=0.3)
+  X = f16(rng, M, K, scale=0.3)
 
   def build(xt): return xt @ xt.transpose([1, 0])     # [M,K] @ [K,M] -> [M,M]
 
@@ -356,7 +346,7 @@ def _qr_givens_probe():
     passes, so it is recorded as WORKS-for-the-step. cost MIXED.
     """
   N = 8
-  A = f16(N, 2, scale=0.5)   # two columns a1, a2 as [N,2]
+  A = f16(rng, N, 2, scale=0.5)   # two columns a1, a2 as [N,2]
 
   def build(at):
     a1 = at.transpose([1, 0])              # [2,N]; take rows via one-hot selects
@@ -455,7 +445,7 @@ def _triangular_solve_probe():
   Lm = np.tril(rng.standard_normal((N, N)).astype(np.float32) * 0.3)
   Lm[np.diag_indices(N)] = np.abs(Lm[np.diag_indices(N)]) + 1.0   # strong diagonal
   Lflat = Lm.astype(np.float16).reshape(1, N * N)
-  b = f16(1, N)
+  b = f16(rng, 1, N)
 
   def lelem(t, i):
     sel = np.zeros((N * N, 1), np.float16); sel[i, 0] = 1.0
@@ -503,7 +493,7 @@ def _linear_solve_probe():
   A2 = (rng.standard_normal((2, 2)).astype(np.float32) * 0.5)
   A2 = (A2 + 2.0 * np.eye(2)).astype(np.float16)   # well-conditioned 2x2
   Aflat = A2.reshape(1, 4)
-  rhs = f16(1, 2)
+  rhs = f16(rng, 1, 2)
 
   def el(t, i, w):
     sel = np.zeros((w, 1), np.float16); sel[i, 0] = 1.0
@@ -548,6 +538,19 @@ LAPACK_PROBES = [
 CASES = KERNELS + LAPACK_PROBES
 
 
+def _header():
+  return f"{'case':32s} {'var':4s} {'status':6s} {'cost':18s} {'feasible':13s} detail"
+
+
+def _row(rec):
+  return (f"{rec['name']:32s} {rec['variant']:4s} {rec['status']:6s} "
+          f"{rec['cost']:18s} {rec['feasibility']:13s} {rec['metric']}")
+
+
+def _annotate(case, rec):
+  rec["cost"], rec["feasibility"] = TAGS.get(case.name, ("?", "?"))
+
+
 def run_numerical(cases, verbose: bool = True):
   """Mirror of _corpus.run_corpus, extended to print the cost/feasibility tags
     and a LAPACK-probe verdict block. Returns (results, exit_code).
@@ -557,82 +560,43 @@ def run_numerical(cases, verbose: bool = True):
     arch-limited still "passes" if its tiny fixed-N instance is numerically correct;
     the tag carries the *generalization* verdict.
     """
-  all_results = []
-  relerrs = []
-  if verbose:
-    print(f"{'case':32s} {'var':4s} {'status':6s} {'cost':18s} {'feasible':13s} detail")
+  def verdict(all_results, relerrs):
+    # ------- LAPACK feasibility verdict block ----------------------------- #
+    print("\n" + "-" * 100)
+    print("WHAT NUMERICAL COMPUTING FITS THE ANE (fp16 feed-forward dataflow)")
     print("-" * 100)
-  for case in cases:
-    cost, feas = TAGS.get(case.name, ("?", "?"))
-    for rec in eval_case(case):
-      rec["cost"], rec["feasibility"] = cost, feas
-      all_results.append(rec)
-      line = (f"{rec['name']:32s} {rec['variant']:4s} {rec['status']:6s} "
-              f"{cost:18s} {feas:13s} {rec['metric']}")
-      if rec["err"]:
-        line += f"  [{rec['err']}]"
-      if verbose:
-        print(line)
-        if rec.get("traceback"):
-          print("    " + rec["traceback"].replace("\n", "\n    "))
-      m = rec["metric"]
-      if m.startswith("relerr "):
-        try:
-          relerrs.append(float(m.split()[1]))
-        except ValueError:
-          pass
+    for c in LAPACK_PROBES:
+      recs = [r for r in all_results if r["name"] == c.name]
+      st = recs[0]["status"] if recs else "?"
+      metric = recs[0]["metric"] if recs else ""
+      cost, feas = TAGS[c.name]
+      numeric = "tiny-N instance PASSES" if st == "PASS" else f"instance {st}"
+      print(f"  {c.name:32s} -> {feas:13s} ({numeric}; {metric})")
+    print("\n  Summary verdict:")
+    print("    WORKS (feed-forward, fp16-clean): power iteration, CG step, Horner,")
+    print("      stencil/conv PDE step, n-body cross-product normals, MC mean/variance,")
+    print("      Gram/SYRK. The ANE is strong on composed elementwise + GEMM + conv +")
+    print("      reductions; the wide accumulator keeps reductions clean.")
+    print("    ARCH-LIMITED (the LAPACK corners): QR/Cholesky/LU/triangular-solve are")
+    print("      expressible ONLY by per-N static unrolling (no in-graph loop or scalar")
+    print("      feedback), so they do not scale to data-sized problems. The native")
+    print("      MatrixDecomposition (NonQRGivens) unit's factorization COMPOSITE is")
+    print("      not_currently_callable (carriers compile, the factorization does not),")
+    print("      and the frontend exposes no decomposition/solve op at all.")
+    print("    fp16 is NOT the wall: the unrolled tiny-N factorizations pass at")
+    print("      relerr < 1e-3, and condition-number sweeps (Cholesky to cond~1e4,")
+    print("      2x2 solve to cond~1.3e3) stay < 1% - the wide accumulator absorbs the")
+    print("      sequential sqrt/div re-rounding. The ceiling is ARCHITECTURAL (the")
+    print("      missing loop), not numerical. (Only true det->0 singularity would")
+    print("      break it, and that breaks fp32 too.)")
+    print("    => The ANE fits VECTOR/MATRIX numerical kernels with bounded, static")
+    print("       dataflow (iterative methods, stencils, GEMM-heavy linear algebra),")
+    print("       NOT pivoted/recursive direct factorizations that need data-sized")
+    print("       iteration.")
+    print()  # blank line before the GATE line
 
-  n_pass = sum(r["status"] == "PASS" for r in all_results)
-  n_xfail = sum(r["status"] == "XFAIL" for r in all_results)
-  n_fail = sum(r["status"] == "FAIL" for r in all_results)
-  n_err = sum(r["status"] == "ERROR" for r in all_results)
-  n_xpass = sum(r["status"] == "XPASS" for r in all_results)
-  total = len(all_results)
-  red = n_fail + n_err + n_xpass
-
-  print("\n" + "=" * 100)
-  print(f"variants run: {total}   PASS {n_pass}   XFAIL {n_xfail}   "
-        f"FAIL {n_fail}   ERROR {n_err}   XPASS {n_xpass}")
-  if relerrs:
-    print(f"relerr across {len(relerrs)} numeric variants: "
-          f"min {min(relerrs):.2e}  median {np.median(relerrs):.2e}  max {max(relerrs):.2e}")
-
-  # ------- LAPACK feasibility verdict block ----------------------------- #
-  print("\n" + "-" * 100)
-  print("WHAT NUMERICAL COMPUTING FITS THE ANE (fp16 feed-forward dataflow)")
-  print("-" * 100)
-  for c in LAPACK_PROBES:
-    recs = [r for r in all_results if r["name"] == c.name]
-    st = recs[0]["status"] if recs else "?"
-    metric = recs[0]["metric"] if recs else ""
-    cost, feas = TAGS[c.name]
-    numeric = "tiny-N instance PASSES" if st == "PASS" else f"instance {st}"
-    print(f"  {c.name:32s} -> {feas:13s} ({numeric}; {metric})")
-  print("\n  Summary verdict:")
-  print("    WORKS (feed-forward, fp16-clean): power iteration, CG step, Horner,")
-  print("      stencil/conv PDE step, n-body cross-product normals, MC mean/variance,")
-  print("      Gram/SYRK. The ANE is strong on composed elementwise + GEMM + conv +")
-  print("      reductions; the wide accumulator keeps reductions clean.")
-  print("    ARCH-LIMITED (the LAPACK corners): QR/Cholesky/LU/triangular-solve are")
-  print("      expressible ONLY by per-N static unrolling (no in-graph loop or scalar")
-  print("      feedback), so they do not scale to data-sized problems. The native")
-  print("      MatrixDecomposition (NonQRGivens) unit's factorization COMPOSITE is")
-  print("      not_currently_callable (carriers compile, the factorization does not),")
-  print("      and the frontend exposes no decomposition/solve op at all.")
-  print("    fp16 is NOT the wall: the unrolled tiny-N factorizations pass at")
-  print("      relerr < 1e-3, and condition-number sweeps (Cholesky to cond~1e4,")
-  print("      2x2 solve to cond~1.3e3) stay < 1% - the wide accumulator absorbs the")
-  print("      sequential sqrt/div re-rounding. The ceiling is ARCHITECTURAL (the")
-  print("      missing loop), not numerical. (Only true det->0 singularity would")
-  print("      break it, and that breaks fp32 too.)")
-  print("    => The ANE fits VECTOR/MATRIX numerical kernels with bounded, static")
-  print("       dataflow (iterative methods, stencils, GEMM-heavy linear algebra),")
-  print("       NOT pivoted/recursive direct factorizations that need data-sized")
-  print("       iteration.")
-
-  print(f"\nGATE: {'GREEN' if red == 0 else 'RED'}  "
-        f"({n_pass + n_xfail}/{total} green, {red} red)")
-  return all_results, (0 if red == 0 else 1)
+  return run_corpus(cases, verbose, columns=(_header, _row), annotate=_annotate,
+                    verdict=verdict, sep_width=100)
 
 
 if __name__ == "__main__":

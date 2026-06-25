@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))      # tests/ -> import corpus
-import run_corpus  # noqa: E402
-from _corpus import _build_graph  # noqa: E402
+import run_corpus
+from _corpus import _build_graph
 
-from aneforge import _targets as T  # noqa: E402
-from aneforge._compile import _lower_fused_to_dir, cross_compile_check  # noqa: E402
+from aneforge import _targets as T
+from aneforge._compile import _lower_fused_to_dir, cross_compile_check
 
 ARCHS = [("h13", 2), ("h14", 3), ("h15", 4), ("h16s", 5)]
 

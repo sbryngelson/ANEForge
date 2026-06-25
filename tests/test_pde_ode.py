@@ -8,14 +8,11 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # tests/ -> import _corpus
-from _corpus import Case, eval_case  # noqa: E402
-import aneforge as af  # noqa: E402
+from _corpus import Case, run_corpus
+from _helpers import f16, onehot_select as _col
+import aneforge as af
 
 rng = np.random.default_rng(7)
-
-
-def f16(*shape, scale=1.0):
-  return (rng.standard_normal(shape).astype(np.float32) * scale).astype(np.float16)
 
 
 # tag side-table: name -> (cost_character, feasibility)
@@ -25,16 +22,6 @@ TAGS: dict[str, tuple[str, str]] = {}
 def tagged(case: Case, cost: str, feasibility: str) -> Case:
   TAGS[case.name] = (cost, feasibility)
   return case
-
-
-def _col(t: af.Tensor, i: int, w: int | None = None) -> af.Tensor:
-  """Select scalar element i of a [1, W] tensor as a [1,1] tensor via a one-hot
-    matmul (a folded constant weight). Same static-index trick as test_numerical.py;
-    stays fused, no dynamic_slice graph cut."""
-  W = w or t.shape[-1]
-  sel = np.zeros((W, 1), np.float16)
-  sel[i, 0] = 1.0
-  return t @ sel.astype(np.float16)
 
 
 # 1. PDE / STENCILS  (conv-based - the ANE's home turf)
@@ -63,7 +50,7 @@ def _jacobi_iteration():
   H = W = 24; K = 5
   nbr = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], np.float32)
   Kw = (0.25 * nbr).reshape(1, 1, 3, 3).astype(np.float16)
-  u0 = f16(1, 1, H, W, scale=1.0)
+  u0 = f16(rng, 1, 1, H, W, scale=1.0)
 
   def build(ut):
     h = ut
@@ -105,7 +92,7 @@ def _heat_step_2d():
   K[0, 0] = r * lap
   K[0, 0, 1, 1] += 1.0
   Kf = K.astype(np.float16)
-  u0 = f16(1, 1, H, W, scale=1.0)
+  u0 = f16(rng, 1, 1, H, W, scale=1.0)
 
   def build(ut): return af.conv(ut, Kf, pad=1)
 
@@ -141,8 +128,8 @@ def _wave_step_2d():
   K[0, 0] = (C * C) * lap
   K[0, 0, 1, 1] += 2.0                  # + 2*I  -> conv gives 2 u^n + C^2 Lap u^n
   Kf = K.astype(np.float16)
-  un = f16(1, 1, H, W, scale=1.0)       # u^n
-  unm1 = f16(1, 1, H, W, scale=1.0)     # u^{n-1}
+  un = f16(rng, 1, 1, H, W, scale=1.0)       # u^n
+  unm1 = f16(rng, 1, 1, H, W, scale=1.0)     # u^{n-1}
 
   def build(un_t, unm1_t): return af.conv(un_t, Kf, pad=1) - unm1_t
 
@@ -182,7 +169,7 @@ def _multigrid_smooth():
   K[0, 0] = omega * 0.25 * nbr
   K[0, 0, 1, 1] += (1.0 - omega)
   Kf = K.astype(np.float16)
-  u0 = f16(1, 1, H, W, scale=1.0)
+  u0 = f16(rng, 1, 1, H, W, scale=1.0)
 
   def build(ut): return af.conv(ut, Kf, pad=1)
 
@@ -220,7 +207,7 @@ def _forward_euler():
   A = (rng.standard_normal((N, N)).astype(np.float32) * 0.3)
   A = (A - A.T)                       # skew-symmetric -> norm-preserving, stable
   Ah = A.astype(np.float16)
-  y0 = f16(1, N, scale=1.0)
+  y0 = f16(rng, 1, N, scale=1.0)
 
   def build(yt):
     h = yt
@@ -263,7 +250,7 @@ def _rk4_step():
 
   def f_np(y): return -y + 0.1 * y * y
 
-  y0 = f16(1, N, scale=0.5)
+  y0 = f16(rng, 1, N, scale=0.5)
 
   def build(yt):
     y = yt
@@ -685,6 +672,19 @@ ARCH_LIMITED = [
 CASES = PDE_STENCILS + ODE_ROOT + SERIES + ARCH_LIMITED
 
 
+def _header():
+  return f"{'case':32s} {'var':4s} {'status':6s} {'cost':22s} {'feasible':13s} detail"
+
+
+def _row(rec):
+  return (f"{rec['name']:32s} {rec['variant']:4s} {rec['status']:6s} "
+          f"{rec['cost']:22s} {rec['feasibility']:13s} {rec['metric']}")
+
+
+def _annotate(case, rec):
+  rec["cost"], rec["feasibility"] = TAGS.get(case.name, ("?", "?"))
+
+
 def run_pde_ode(cases, verbose: bool = True):
   """Mirror of _corpus.run_corpus, extended to print cost/feasibility tags and an
     iterative-methods capability verdict block. Returns (results, exit_code).
@@ -694,104 +694,66 @@ def run_pde_ode(cases, verbose: bool = True):
     their tag carries the capability verdict. A fixed-iteration kernel that drifts
     past tol would FAIL (red) - that is how compounding-vs-bug is policed.
     """
-  all_results = []
-  relerrs = []
-  if verbose:
-    print(f"{'case':32s} {'var':4s} {'status':6s} {'cost':22s} {'feasible':13s} detail")
+  def verdict(all_results, relerrs):
+    # ------- iterative-methods capability verdict block ------------------- #
+    print("\n" + "-" * 110)
+    print("WHICH ITERATIVE NUMERICAL METHODS FIT THE ANE (fixed feed-forward dataflow)")
     print("-" * 110)
-  for case in cases:
-    cost, feas = TAGS.get(case.name, ("?", "?"))
-    for rec in eval_case(case):
-      rec["cost"], rec["feasibility"] = cost, feas
-      all_results.append(rec)
-      line = (f"{rec['name']:32s} {rec['variant']:4s} {rec['status']:6s} "
-              f"{cost:22s} {feas:13s} {rec['metric']}")
-      if rec["err"]: line += f"  [{rec['err']}]"
-      if verbose:
-        print(line)
-        if rec.get("traceback"):
-          print("    " + rec["traceback"].replace("\n", "\n    "))
-      m = rec["metric"]
-      if m.startswith("relerr "):
-        try:
-          relerrs.append(float(m.split()[1]))
-        except ValueError:
-          pass
+    print("  PDE / STENCILS (conv-based) - the marquee fit:")
+    for c in PDE_STENCILS:
+      recs = [r for r in all_results if r["name"] == c.name]
+      st = recs[0]["status"] if recs else "?"
+      print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; {recs[0]['metric'] if recs else ''})")
+    print("  ODE INTEGRATORS & ROOT FINDERS (fixed-step recurrences):")
+    for c in ODE_ROOT:
+      recs = [r for r in all_results if r["name"] == c.name]
+      st = recs[0]["status"] if recs else "?"
+      print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; {recs[0]['metric'] if recs else ''})")
+    print("  SERIES / SPECIAL FUNCTIONS (Horner chains vs exact):")
+    for c in SERIES:
+      recs = [r for r in all_results if r["name"] == c.name]
+      st = recs[0]["status"] if recs else "?"
+      print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; {recs[0]['metric'] if recs else ''})")
+    print("  ARCH-LIMITED (convergent/adaptive forms - control flow the ANE lacks):")
+    for c in ARCH_LIMITED:
+      recs = [r for r in all_results if r["name"] == c.name]
+      st = recs[0]["status"] if recs else "?"
+      print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; xfail = inexpressible stop)")
 
-  n_pass = sum(r["status"] == "PASS" for r in all_results)
-  n_xfail = sum(r["status"] == "XFAIL" for r in all_results)
-  n_fail = sum(r["status"] == "FAIL" for r in all_results)
-  n_err = sum(r["status"] == "ERROR" for r in all_results)
-  n_xpass = sum(r["status"] == "XPASS" for r in all_results)
-  total = len(all_results)
-  red = n_fail + n_err + n_xpass
+    print("\n  Summary verdict:")
+    print("    WORKS (fixed-iteration, fully unrolled into a static graph):")
+    print("      - PDE stencil sweeps: Jacobi (K sweeps), explicit heat step, leapfrog")
+    print("        wave step, damped-Jacobi multigrid smoothing. These lower to native")
+    print("        conv - the ANE's home turf - and are fp16-clean (wide accumulator).")
+    print("      - ODE integrators: forward-Euler & RK4 advanced a FIXED #steps; the RHS")
+    print("        is aneforge ops. Error is fp16 COMPOUNDING (~few %, bounded), not a bug.")
+    print("      - Root finders: Newton (scalar via sqrt-iter, vector via 2x2 closed-form")
+    print("        Jacobian) & fixed-point x=g(x), all FIXED iteration count.")
+    print("      - Special functions: exp/erf/log via Horner series, accurate to a few %")
+    print("        vs the EXACT function on a bounded argument interval.")
+    print("    ARCH-LIMITED (needs control flow the feed-forward engine lacks):")
+    print("      - RUN-TO-CONVERGENCE (stop when ||residual|| < tol): variable iteration")
+    print("        count = data-dependent loop/branch. Must fix K up front; a fixed graph")
+    print("        cannot match an adaptive reference for the hard lanes.")
+    print("      - ADAPTIVE TIMESTEP (shrink dt on local error): data-dependent step size")
+    print("        and step count. A fixed coarse step diverges on stiff lanes.")
+    print("      - REGIME SWITCHES in special functions (erf/log argument reduction, big-x")
+    print("        asymptotics): a runtime branch on the argument; one fixed series only")
+    print("        covers a bounded interval.")
+    print("      - MULTIGRID V-CYCLE RECURSION / coarse solve: the inter-grid transfers")
+    print("        are convs/pools (expressible), but the recursion depth + coarse solve")
+    print("        are control-flow / data-sized. Only the single smoothing sweep fits.")
+    print("    => The ANE fits iterative scientific methods whose ITERATION STRUCTURE is")
+    print("       STATIC AND KNOWN AT COMPILE TIME (fixed sweeps/steps, unrolled). It does")
+    print("       NOT fit methods whose iteration count or step size is decided AT RUNTIME")
+    print("       from the data (convergence tests, adaptive stepping, regime switches),")
+    print("       which need the in-graph loop/branch the feed-forward dataflow lacks.")
+    print("       fp16 is not the wall here (compounding stays bounded over modest step")
+    print("       counts); the wall is the missing data-dependent control flow.")
+    print()  # blank line before the GATE line
 
-  print("\n" + "=" * 110)
-  print(f"variants run: {total}   PASS {n_pass}   XFAIL {n_xfail}   "
-        f"FAIL {n_fail}   ERROR {n_err}   XPASS {n_xpass}")
-  if relerrs:
-    print(f"relerr across {len(relerrs)} numeric variants: "
-          f"min {min(relerrs):.2e}  median {np.median(relerrs):.2e}  max {max(relerrs):.2e}")
-
-  # ------- iterative-methods capability verdict block ------------------- #
-  print("\n" + "-" * 110)
-  print("WHICH ITERATIVE NUMERICAL METHODS FIT THE ANE (fixed feed-forward dataflow)")
-  print("-" * 110)
-  print("  PDE / STENCILS (conv-based) - the marquee fit:")
-  for c in PDE_STENCILS:
-    recs = [r for r in all_results if r["name"] == c.name]
-    st = recs[0]["status"] if recs else "?"
-    print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; {recs[0]['metric'] if recs else ''})")
-  print("  ODE INTEGRATORS & ROOT FINDERS (fixed-step recurrences):")
-  for c in ODE_ROOT:
-    recs = [r for r in all_results if r["name"] == c.name]
-    st = recs[0]["status"] if recs else "?"
-    print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; {recs[0]['metric'] if recs else ''})")
-  print("  SERIES / SPECIAL FUNCTIONS (Horner chains vs exact):")
-  for c in SERIES:
-    recs = [r for r in all_results if r["name"] == c.name]
-    st = recs[0]["status"] if recs else "?"
-    print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; {recs[0]['metric'] if recs else ''})")
-  print("  ARCH-LIMITED (convergent/adaptive forms - control flow the ANE lacks):")
-  for c in ARCH_LIMITED:
-    recs = [r for r in all_results if r["name"] == c.name]
-    st = recs[0]["status"] if recs else "?"
-    print(f"    {c.name:30s} {TAGS[c.name][1]:13s} ({st}; xfail = inexpressible stop)")
-
-  print("\n  Summary verdict:")
-  print("    WORKS (fixed-iteration, fully unrolled into a static graph):")
-  print("      - PDE stencil sweeps: Jacobi (K sweeps), explicit heat step, leapfrog")
-  print("        wave step, damped-Jacobi multigrid smoothing. These lower to native")
-  print("        conv - the ANE's home turf - and are fp16-clean (wide accumulator).")
-  print("      - ODE integrators: forward-Euler & RK4 advanced a FIXED #steps; the RHS")
-  print("        is aneforge ops. Error is fp16 COMPOUNDING (~few %, bounded), not a bug.")
-  print("      - Root finders: Newton (scalar via sqrt-iter, vector via 2x2 closed-form")
-  print("        Jacobian) & fixed-point x=g(x), all FIXED iteration count.")
-  print("      - Special functions: exp/erf/log via Horner series, accurate to a few %")
-  print("        vs the EXACT function on a bounded argument interval.")
-  print("    ARCH-LIMITED (needs control flow the feed-forward engine lacks):")
-  print("      - RUN-TO-CONVERGENCE (stop when ||residual|| < tol): variable iteration")
-  print("        count = data-dependent loop/branch. Must fix K up front; a fixed graph")
-  print("        cannot match an adaptive reference for the hard lanes.")
-  print("      - ADAPTIVE TIMESTEP (shrink dt on local error): data-dependent step size")
-  print("        and step count. A fixed coarse step diverges on stiff lanes.")
-  print("      - REGIME SWITCHES in special functions (erf/log argument reduction, big-x")
-  print("        asymptotics): a runtime branch on the argument; one fixed series only")
-  print("        covers a bounded interval.")
-  print("      - MULTIGRID V-CYCLE RECURSION / coarse solve: the inter-grid transfers")
-  print("        are convs/pools (expressible), but the recursion depth + coarse solve")
-  print("        are control-flow / data-sized. Only the single smoothing sweep fits.")
-  print("    => The ANE fits iterative scientific methods whose ITERATION STRUCTURE is")
-  print("       STATIC AND KNOWN AT COMPILE TIME (fixed sweeps/steps, unrolled). It does")
-  print("       NOT fit methods whose iteration count or step size is decided AT RUNTIME")
-  print("       from the data (convergence tests, adaptive stepping, regime switches),")
-  print("       which need the in-graph loop/branch the feed-forward dataflow lacks.")
-  print("       fp16 is not the wall here (compounding stays bounded over modest step")
-  print("       counts); the wall is the missing data-dependent control flow.")
-
-  print(f"\nGATE: {'GREEN' if red == 0 else 'RED'}  "
-        f"({n_pass + n_xfail}/{total} green, {red} red)")
-  return all_results, (0 if red == 0 else 1)
+  return run_corpus(cases, verbose, columns=(_header, _row), annotate=_annotate,
+                    verdict=verdict, sep_width=110)
 
 
 if __name__ == "__main__":

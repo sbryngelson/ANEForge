@@ -5,9 +5,11 @@ import numpy as np
 
 import aneforge as af
 from _corpus import Case
-from test_shapes import f16, np_conv, np_group_norm, np_softmax
-
-rng = np.random.default_rng(11)
+from _helpers import f16
+# Reuse test_shapes' generator so the drawn random inputs (and goldens) stay byte-identical
+# to before, when f16 was imported from test_shapes and closed over test_shapes.rng (seed 7).
+# (test_broad's own seed-11 rng was never used - f16 always drew from test_shapes.rng.)
+from test_shapes import np_conv, np_group_norm, np_softmax, rng
 
 
 def _lin(z, W, b):
@@ -19,11 +21,11 @@ def _lin(z, W, b):
 # ---- multi-head attention block at scale -------------------------------------
 def _mha_case(S, D, H):
   dh = D // H
-  Wq, bq = f16(D, D, scale=1/np.sqrt(D)), f16(D, scale=0.1)
-  Wk, bk = f16(D, D, scale=1/np.sqrt(D)), f16(D, scale=0.1)
-  Wv, bv = f16(D, D, scale=1/np.sqrt(D)), f16(D, scale=0.1)
-  Wo, bo = f16(D, D, scale=1/np.sqrt(D)), f16(D, scale=0.1)
-  x = f16(S, D, scale=1.0)
+  Wq, bq = f16(rng, D, D, scale=1/np.sqrt(D)), f16(rng, D, scale=0.1)
+  Wk, bk = f16(rng, D, D, scale=1/np.sqrt(D)), f16(rng, D, scale=0.1)
+  Wv, bv = f16(rng, D, D, scale=1/np.sqrt(D)), f16(rng, D, scale=0.1)
+  Wo, bo = f16(rng, D, D, scale=1/np.sqrt(D)), f16(rng, D, scale=0.1)
+  x = f16(rng, S, D, scale=1.0)
 
   def build(xt):
     return af.mha(xt, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads=H)
@@ -40,9 +42,9 @@ def _mha_case(S, D, H):
 
 # ---- MLP / FFN at large width (batch via leading dim) ------------------------
 def _mlp_case(N, Din, Dff, Dout):
-  W1, b1 = f16(Dff, Din, scale=1/np.sqrt(Din)), f16(Dff, scale=0.1)
-  W2, b2 = f16(Dout, Dff, scale=1/np.sqrt(Dff)), f16(Dout, scale=0.1)
-  x = f16(N, Din, scale=1.0)
+  W1, b1 = f16(rng, Dff, Din, scale=1/np.sqrt(Din)), f16(rng, Dff, scale=0.1)
+  W2, b2 = f16(rng, Dout, Dff, scale=1/np.sqrt(Dff)), f16(rng, Dout, scale=0.1)
+  x = f16(rng, N, Din, scale=1.0)
 
   def build(xt):
     return xt.linear(W1, b1).gelu().linear(W2, b2)
@@ -58,10 +60,10 @@ def _mlp_case(N, Din, Dff, Dout):
 
 # ---- conv -> group_norm -> relu -> conv residual (UNet-like) at scale --------
 def _conv_block_case(C, HW):
-  g = f16(C, pos=True); b = f16(C, scale=0.1)
-  W1 = f16(C, C, 3, 3, scale=1/np.sqrt(C*9))
-  W2 = f16(C, C, 3, 3, scale=1/np.sqrt(C*9))
-  x = f16(1, C, HW, HW, scale=1.0)
+  g = f16(rng, C, pos=True); b = f16(rng, C, scale=0.1)
+  W1 = f16(rng, C, C, 3, 3, scale=1/np.sqrt(C*9))
+  W2 = f16(rng, C, C, 3, 3, scale=1/np.sqrt(C*9))
+  x = f16(rng, 1, C, HW, HW, scale=1.0)
 
   def build(xt):
     h = af.conv(xt, W1, pad=1)
@@ -79,7 +81,7 @@ def _conv_block_case(C, HW):
 
 # ---- batched matmul at scale -------------------------------------------------
 def _bmm_case(B, M, K, N):
-  a = f16(B, M, K, scale=1.0); b = f16(B, K, N, scale=1/np.sqrt(K))
+  a = f16(rng, B, M, K, scale=1.0); b = f16(rng, B, K, N, scale=1/np.sqrt(K))
 
   def build(at, bt):
     return at @ bt
@@ -92,8 +94,8 @@ def _bmm_case(B, M, K, N):
 
 # ---- wide deep fused chain (fusion at scale) ---------------------------------
 def _deep_chain_case(D, depth):
-  Ws = [f16(D, D, scale=1/np.sqrt(D)) for _ in range(depth)]
-  x = f16(8, D, scale=1.0)
+  Ws = [f16(rng, D, D, scale=1/np.sqrt(D)) for _ in range(depth)]
+  x = f16(rng, 8, D, scale=1.0)
 
   def build(xt):
     h = xt
@@ -116,7 +118,7 @@ def _deep_chain_case(D, depth):
 
 # ---- composition ops: native op arch-gated, function reachable by decomposition --
 def _cumsum_case(M, N):
-  x = f16(M, N, scale=1.0)
+  x = f16(rng, M, N, scale=1.0)
   return Case(f"cumsum_{M}x{N}", "broad",
               lambda xt: xt.cumsum(),
               lambda xa: np.cumsum(xa.astype(np.float32), axis=-1),
@@ -124,7 +126,7 @@ def _cumsum_case(M, N):
 
 
 def _gather_case(M, N, idx, axis):
-  x = f16(M, N, scale=1.0)
+  x = f16(rng, M, N, scale=1.0)
   return Case(f"gather_ax{axis}_{M}x{N}", "broad",
               lambda xt: af.gather(xt, idx, axis=axis),
               lambda xa: np.take(xa.astype(np.float32), idx, axis=axis),

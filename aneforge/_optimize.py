@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ._compile import compile as _raw_compile, _topo
+from ._compile import compile as _raw_compile, _topo as _raw_topo
 from ._cost import estimate, precision_risk
 from .graph import Tensor
 
@@ -30,6 +30,24 @@ _ACCURACY_TOL = 5e-3
 # A lossy variant must beat the baseline by this factor to be chosen, so a measurement-noise
 # "win" never costs accuracy for no real speedup.
 _MIN_LOSSY_SPEEDUP = 1.10
+
+
+# A tune re-walks the immutable graph via _topo from every candidate detector and each
+# _apply_variant/_estimate_variant call. The graph is never mutated during a tune
+# (_apply_variant builds a NEW DAG; compile only writes node._name, which topo ignores - order
+# depends ONLY on .srcs), so memoizing post-order per root only avoids recompute, never changes
+# the order. Each entry stores its root Tensor and is identity-checked on read: the stored
+# Tensor keeps its id alive, so a reused id can never return a stale order. Capped to bound it.
+_TOPO_MEMO: dict[int, tuple] = {}
+
+
+def _topo(out):
+  hit = _TOPO_MEMO.get(id(out))
+  if hit is not None and hit[0] is out: return hit[1]
+  order = _raw_topo(out)
+  if len(_TOPO_MEMO) >= 256: _TOPO_MEMO.clear()
+  _TOPO_MEMO[id(out)] = (out, order)
+  return order
 
 
 # --------------------------------------------------------------------------- #
@@ -281,6 +299,19 @@ def _apply_variant(out, cfg):
   return new_out, bool(cfg.get("int8", False))
 
 
+def _route_configs(routes) -> list:
+  """Coordinate-descent route enumeration shared by _route_variants and _variants:
+    opt=0 baseline (all native) + each single route flip + all-decomposed = K+1 configs,
+    linear NOT 2^K. Config values are JSON-friendly lists (a cached config must compare
+    equal after a JSON round-trip - the cache premise)."""
+  configs = [{"int8": False, "decomp": [], "lossy": False}]   # opt=0 baseline (all native)
+  for i in routes:
+    configs.append({"int8": False, "decomp": [i], "lossy": False})
+  if len(routes) > 1:
+    configs.append({"int8": False, "decomp": list(routes), "lossy": False})
+  return configs
+
+
 def _variants(out):
   """Legal variant configs (each a buildable/cacheable compile-config). Axes:
       - GLOBAL int8: {False, True}, LOSSY (accuracy-gated).
@@ -288,15 +319,7 @@ def _variants(out):
         Enumerated by COORDINATE DESCENT: baseline + each single flip + all-decomposed =
         K+1 variants, linear NOT 2^K.
     """
-  # config values are JSON-friendly lists (a cached config must compare equal after a JSON
-  # round-trip - the cache premise).
-  routes = _route_ids(out)
-  configs = [{"int8": False, "decomp": [], "lossy": False}]   # opt=0 baseline (all native)
-  if routes:
-    for i in routes:
-      configs.append({"int8": False, "decomp": [i], "lossy": False})
-    if len(routes) > 1:
-      configs.append({"int8": False, "decomp": list(routes), "lossy": False})
+  configs = _route_configs(_route_ids(out))
   if _has_weights(out):
     configs.append({"int8": True, "decomp": [], "lossy": True})   # PRIMARY: global int8
   cf = _constfold_candidates(out)
@@ -314,13 +337,7 @@ def _route_variants(out):
     numerics. (Shape-dependent equivalence is handled upstream: af.sdpa decomposes above the
     native accuracy limit, so a routable native sdpa node only exists where the route is
     lossless.)"""
-  routes = _route_ids(out)
-  configs = [{"int8": False, "decomp": [], "lossy": False}]      # all-native baseline
-  for i in routes:
-    configs.append({"int8": False, "decomp": [i], "lossy": False})
-  if len(routes) > 1:
-    configs.append({"int8": False, "decomp": list(routes), "lossy": False})
-  return configs
+  return _route_configs(_route_ids(out))
 
 
 def _compile_routes(out, int8: bool, build_dir=None):

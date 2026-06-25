@@ -3,18 +3,9 @@ from __future__ import annotations
 import math
 import numpy as np
 import pytest
+from _helpers import requires_ane
 from examples.llama_block_causal import build_causal_llama_block, numpy_reference
 import aneforge as af
-
-
-def _ane():
-  try:
-    from aneforge._runtime import _find_dylib; _find_dylib(); return True
-  except Exception:
-    return False
-
-
-requires_ane = pytest.mark.skipif(not _ane(), reason="ANE/e5rt dylib unavailable")
 
 
 @requires_ane

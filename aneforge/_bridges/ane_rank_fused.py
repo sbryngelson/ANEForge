@@ -4,88 +4,34 @@ See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
-import json
-import subprocess
 import tempfile
 import plistlib
 from pathlib import Path
 
 import numpy as np
 
-from ._netplist import bin_dir
-
-_INVOKER_BIN = bin_dir() / "rank_invoker"
-_INVOKER_SRC = Path(__file__).resolve().parents[1] / "_invokers" / "rank_invoker.mm"
-
-
-def _ensure_invoker() -> Path:
-  if (
-    _INVOKER_BIN.exists()
-    and _INVOKER_SRC.exists()
-    and _INVOKER_BIN.stat().st_mtime >= _INVOKER_SRC.stat().st_mtime
-  ):
-    return _INVOKER_BIN
-  _INVOKER_BIN.parent.mkdir(parents=True, exist_ok=True)
-  cmd = [
-    "xcrun", "clang++", "-O2", "-Wall", "-Wextra",
-    "-fobjc-arc", "-std=gnu++17",
-    "-framework", "Foundation", "-framework", "IOSurface",
-    str(_INVOKER_SRC), "-o", str(_INVOKER_BIN),
-  ]
-  proc = subprocess.run(cmd, capture_output=True, text=True)
-  if proc.returncode != 0: raise RuntimeError(f"failed to build rank invoker:\n{proc.stderr}")
-  return _INVOKER_BIN
+from ._netplist import build_plist, ensure_invoker, input_entry, invoke_netplist, output_entry
 
 
 # Minimal netplist scaffolding: single op, single input x, output y.
 
-def _input_entry(unit, sym, *, width, height=1, channels=1):
-  return {
-    "BatchSize": 1, "InputChannels": channels, "InputDepth": 1,
-    "InputHeight": height, "InputInterleave": 1, "InputName": sym,
-    "InputType": "Float16", "InputWidth": width, "Name": unit,
-    "OperationName": "op0",
-  }
-
-
-def _output_entry(sym, unit):
-  return {
-    "Name": unit, "OperationName": "op0", "OutputInterleave": 1,
-    "OutputName": sym, "OutputType": "Float16",
-  }
-
-
 def _build_plist(layer_type: str, params: dict, *, width, height, channels):
-  net = f"network_{layer_type.lower()}-1"
   unit = {
     "Bottom": ["x"], "InputType": ["Float16"], "Name": "op-1",
     "OutputChannels": channels, "OutputType": "Float16",
     "Type": layer_type, "Params": params,
   }
-  network = {
-    "op-1": unit, "Units": ["op-1"], "Weights": ["weights.0"],
-    "y": {"Bottom": "op-1", "OutputInterleave": 1,
-          "OutputName": "y", "OutputType": "Float16"},
-  }
-  return {
-    "Version": "1.0.10",
-    "Networks": [net],
-    "ProcedureList": [{
-      "Name": net.replace("network_", "procedure_"),
-      "InputList": [_input_entry("op-1", "x", width=width,
-                                 height=height, channels=channels)],
-      "OperationList": [{"NetworkName": net, "OperationName": "op0"}],
-      "OutputList": [_output_entry("y", "op-1")],
-    }],
-    net: network,
-  }
+  return build_plist(
+    f"network_{layer_type.lower()}-1", "op-1",
+    [input_entry("x", width=width, height=height, channels=channels, entry_name="op-1")],
+    [output_entry("y", "op-1")], {"op-1": unit})
 
 
 def _run(layer_type: str, params: dict, x: np.ndarray, *,
          channels: int, width: int, height: int = 1,
          return_details: bool = False):
   """Run x ([C,H,W] fp16), decoding output with the runtime-reported strides."""
-  invoker = _ensure_invoker()
+  invoker = ensure_invoker("rank_invoker")
   x = np.asarray(x, dtype=np.float16)
   with tempfile.TemporaryDirectory(prefix=f"ane_{layer_type.lower()}_") as ws:
     ws = Path(ws)
@@ -95,18 +41,11 @@ def _run(layer_type: str, params: dict, x: np.ndarray, *,
       plistlib.dump(plist, f, fmt=plistlib.FMT_BINARY)
     (ws / "weights.0").write_bytes(b"\x00" * 1024)
     (ws / "in_x.f16").write_bytes(x.tobytes())
-    cmd = [
-      str(invoker), "--net-plist", str(ws / "net.plist"),
-      "--weights", str(ws / "weights.0"),
-      "--input", f"x={ws / 'in_x.f16'}",
-      "--output-raw", f"y={ws / 'out_y.bin'}",
-      "--output-bytes", "65536",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    line = [l for l in proc.stdout.splitlines() if l.strip().startswith("{")]
-    if not line: raise RuntimeError(f"no JSON from invoker:\n{proc.stdout}\n{proc.stderr}")
-    info = json.loads(line[-1])
-    if info.get("status") != "ok": raise RuntimeError(f"invoker status={info.get('status')}: {info}")
+    info = invoke_netplist(
+      invoker, ws / "net.plist",
+      weights=[ws / "weights.0"], inputs=[("x", ws / "in_x.f16")],
+      repeats=None, warmup=None,
+      extra=["--output-raw", f"y={ws / 'out_y.bin'}", "--output-bytes", "65536"])
     oi = info["live_outputs"][0]
     ps, rs = oi["PlaneStride"], oi["RowStride"]
     ch, hh, wd = oi["Channels"], oi["Height"], oi["Width"]

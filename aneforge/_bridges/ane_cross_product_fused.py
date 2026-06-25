@@ -4,7 +4,6 @@ See docs/developer/bridges.md."""
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -17,27 +16,19 @@ def cross_product_fused(x: np.ndarray, z: np.ndarray) -> np.ndarray:
   """Return `cross(x, z)` (length-3 fp16) for two 3-vectors, on the ANE."""
   x = np.asarray(x, dtype=np.float16).reshape(3)
   z = np.asarray(z, dtype=np.float16).reshape(3)
-  from ._netplist import write_model, ensure_invoker
+  from ._netplist import write_model, ensure_invoker, invoke_netplist
 
   with tempfile.TemporaryDirectory(prefix="ane_xprod_") as d:
     wd = Path(d)
     write_model("cross_product", wd)
     (wd / "in_x.f16").write_bytes(x.tobytes())
     (wd / "in_z.f16").write_bytes(z.tobytes())
-    cmd = [
-      str(ensure_invoker("sdpa_invoker")),
-      "--net-plist", str(wd / "net.plist"),
-      "--weights", str(wd / "weights.0"),
-      "--input", f"x={wd / 'in_x.f16'}",
-      "--input", f"z={wd / 'in_z.f16'}",
-      "--output", f"y={wd / 'out_y.f16'}",
-      "--repeats", "1", "--warmup", "0",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-      raise RuntimeError(f"cross_product invoker failed:\n{proc.stderr}\n{proc.stdout}")
-    info = json.loads(proc.stdout.strip().splitlines()[-1])
-    if info.get("status") != "ok": raise RuntimeError(f"cross_product non-ok: {info}")
+    invoke_netplist(
+      ensure_invoker("sdpa_invoker"), wd / "net.plist",
+      weights=[wd / "weights.0"],
+      inputs=[("x", wd / "in_x.f16"), ("z", wd / "in_z.f16")],
+      outputs=[("y", wd / "out_y.f16")], warmup=0,
+    )
     return np.frombuffer((wd / "out_y.f16").read_bytes(), dtype=np.float16).copy()
 
 

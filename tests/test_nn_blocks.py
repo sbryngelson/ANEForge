@@ -3,16 +3,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from _corpus import Case, run_corpus  # noqa: E402
-import aneforge as af  # noqa: E402
+from _corpus import Case, run_corpus
+from _helpers import f16
+import aneforge as af
 
 rng = np.random.default_rng(7)
-
-
-def f16(*shape, scale=1.0, pos=False):
-  a = rng.standard_normal(shape).astype(np.float32) * scale
-  if pos: a = np.abs(a) + 0.5
-  return a.astype(np.float16)
 
 
 # numpy reference primitives
@@ -116,9 +111,9 @@ def np_upsample_nn(x, scale):
 
 # cases
 def _conv_stack():
-  W1 = f16(8, 3, 3, 3, scale=0.2); b1 = f16(8, scale=0.1)
-  W2 = f16(16, 8, 3, 3, scale=0.2); b2 = f16(16, scale=0.1)
-  x = f16(1, 3, 16, 16)
+  W1 = f16(rng, 8, 3, 3, 3, scale=0.2); b1 = f16(rng, 8, scale=0.1)
+  W2 = f16(rng, 16, 8, 3, 3, scale=0.2); b2 = f16(rng, 16, scale=0.1)
+  x = f16(rng, 1, 3, 16, 16)
 
   def build(xt):
     h = af.conv(xt, W1, pad=1, bias=b1).relu()
@@ -134,10 +129,10 @@ def _conv_stack():
 
 
 def _cnn_classifier():
-  W1 = f16(8, 3, 3, 3, scale=0.2); b1 = f16(8, scale=0.1)
-  W2 = f16(16, 8, 3, 3, scale=0.2); b2 = f16(16, scale=0.1)
-  Wfc = f16(16, 10, scale=0.2)  # [in=16, out=10] for x @ W
-  x = f16(1, 3, 16, 16)
+  W1 = f16(rng, 8, 3, 3, 3, scale=0.2); b1 = f16(rng, 8, scale=0.1)
+  W2 = f16(rng, 16, 8, 3, 3, scale=0.2); b2 = f16(rng, 16, scale=0.1)
+  Wfc = f16(rng, 16, 10, scale=0.2)  # [in=16, out=10] for x @ W
+  x = f16(rng, 1, 3, 16, 16)
 
   def build(xt):
     h = af.conv(xt, W1, pad=1, bias=b1).relu()
@@ -156,15 +151,15 @@ def _cnn_classifier():
 
 def _transformer_encoder():
   S, D, H, Dff = 8, 16, 2, 32
-  Wq = f16(D, D, scale=0.2); bq = f16(D, scale=0.1)
-  Wk = f16(D, D, scale=0.2); bk = f16(D, scale=0.1)
-  Wv = f16(D, D, scale=0.2); bv = f16(D, scale=0.1)
-  Wo = f16(D, D, scale=0.2); bo = f16(D, scale=0.1)
-  g1 = f16(D, pos=True); b1 = f16(D, scale=0.1)
-  g2 = f16(D, pos=True); b2 = f16(D, scale=0.1)
-  Wg = f16(2 * Dff, D, scale=0.15); bg = f16(2 * Dff, scale=0.1)   # GEGLU
-  Wp = f16(D, Dff, scale=0.15); bp = f16(D, scale=0.1)             # FFN out
-  x = f16(S, D, scale=1.0)
+  Wq = f16(rng, D, D, scale=0.2); bq = f16(rng, D, scale=0.1)
+  Wk = f16(rng, D, D, scale=0.2); bk = f16(rng, D, scale=0.1)
+  Wv = f16(rng, D, D, scale=0.2); bv = f16(rng, D, scale=0.1)
+  Wo = f16(rng, D, D, scale=0.2); bo = f16(rng, D, scale=0.1)
+  g1 = f16(rng, D, pos=True); b1 = f16(rng, D, scale=0.1)
+  g2 = f16(rng, D, pos=True); b2 = f16(rng, D, scale=0.1)
+  Wg = f16(rng, 2 * Dff, D, scale=0.15); bg = f16(rng, 2 * Dff, scale=0.1)   # GEGLU
+  Wp = f16(rng, D, Dff, scale=0.15); bp = f16(rng, D, scale=0.1)             # FFN out
+  x = f16(rng, S, D, scale=1.0)
 
   def build(xt):
     h = xt.layer_norm(g1, b1)
@@ -200,9 +195,9 @@ def _transformer_encoder():
 
 def _rms_norm_block():
   D = 32
-  g = f16(D, pos=True)
-  Wp = f16(D, D, scale=0.2)
-  x = f16(6, D)
+  g = f16(rng, D, pos=True)
+  Wp = f16(rng, D, D, scale=0.2)
+  x = f16(rng, 6, D)
 
   def build(xt):
     return (xt.rms_norm(g) @ Wp).silu()
@@ -217,9 +212,9 @@ def _rms_norm_block():
 
 def _group_norm_block():
   C = 8
-  g = f16(C, pos=True); b = f16(C, scale=0.1)
-  W = f16(C, C, 3, 3, scale=0.2)
-  x = f16(1, C, 12, 12)
+  g = f16(rng, C, pos=True); b = f16(rng, C, scale=0.1)
+  W = f16(rng, C, C, 3, 3, scale=0.2)
+  x = f16(rng, 1, C, 12, 12)
 
   def build(xt):
     h = xt.group_norm(g, b, num_groups=4)
@@ -234,10 +229,10 @@ def _group_norm_block():
 
 def _batch_norm_block():
   C = 8
-  g = f16(C, pos=True); b = f16(C, scale=0.1)
-  m = f16(C, scale=0.5); v = f16(C, pos=True)
-  W = f16(16, C, 3, 3, scale=0.2)
-  x = f16(1, C, 12, 12)
+  g = f16(rng, C, pos=True); b = f16(rng, C, scale=0.1)
+  m = f16(rng, C, scale=0.5); v = f16(rng, C, pos=True)
+  W = f16(rng, 16, C, 3, 3, scale=0.2)
+  x = f16(rng, 1, C, 12, 12)
 
   def build(xt):
     h = af.batch_norm(xt, g, b, m, v, eps=1e-3)
@@ -252,8 +247,8 @@ def _batch_norm_block():
 
 def _upsample_conv_sr():
   Cin, Cout = 4, 3
-  W = f16(Cout, Cin, 3, 3, scale=0.2); b = f16(Cout, scale=0.1)
-  x = f16(1, Cin, 8, 8)
+  W = f16(rng, Cout, Cin, 3, 3, scale=0.2); b = f16(rng, Cout, scale=0.1)
+  x = f16(rng, 1, Cin, 8, 8)
 
   def build(xt):
     h = xt.upsample(scale=2)
@@ -270,8 +265,8 @@ def _pixel_shuffle_sr():
   # SR-style sub-pixel conv: conv to C*r*r channels, then pixel_shuffle.
   r = 2
   Cin, Cmid = 4, 3
-  W = f16(Cmid * r * r, Cin, 3, 3, scale=0.2); b = f16(Cmid * r * r, scale=0.1)
-  x = f16(1, Cin, 8, 8)
+  W = f16(rng, Cmid * r * r, Cin, 3, 3, scale=0.2); b = f16(rng, Cmid * r * r, scale=0.1)
+  x = f16(rng, 1, Cin, 8, 8)
 
   def build(xt):
     h = af.conv(xt, W, pad=1, bias=b)
@@ -288,8 +283,8 @@ def _pixel_shuffle_sr():
 
 def _conv_transpose_decoder():
   Cin, Cout = 4, 3
-  W = f16(Cin, Cout, 2, 2, scale=0.2)  # [Cin, Cout, kH, kW]
-  x = f16(1, Cin, 8, 8)
+  W = f16(rng, Cin, Cout, 2, 2, scale=0.2)  # [Cin, Cout, kH, kW]
+  x = f16(rng, 1, Cin, 8, 8)
 
   def build(xt):
     return af.conv_transpose(xt, W, stride=2).relu()
@@ -303,8 +298,8 @@ def _conv_transpose_decoder():
 # new primitives: norms / vision / einsum
 def _instance_norm_block():
   C = 8
-  g = f16(C, scale=0.5, pos=True); b = f16(C, scale=0.3)
-  x = f16(1, C, 8, 8)
+  g = f16(rng, C, scale=0.5, pos=True); b = f16(rng, C, scale=0.3)
+  x = f16(rng, 1, C, 8, 8)
 
   def build(xt):
     return af.instance_norm(xt, g, b).relu()
@@ -341,8 +336,8 @@ def _lrn_block():
 
 def _einsum_native_block():
   B, C, H, W1, W2 = 1, 4, 3, 6, 5
-  Wb = f16(B, W1, H, W2, scale=0.3)
-  x = f16(B, C, H, W1)
+  Wb = f16(rng, B, W1, H, W2, scale=0.3)
+  x = f16(rng, B, C, H, W1)
 
   def build(xt):
     return af.einsum_native("nchw,nwhu->nchu", xt, Wb).relu()
@@ -354,7 +349,7 @@ def _einsum_native_block():
 
 
 def _space_depth_roundtrip():
-  x = f16(1, 4, 8, 8)
+  x = f16(rng, 1, 4, 8, 8)
 
   def build(xt):
     h = af.space_to_depth(xt, 2)      # (1, 16, 4, 4)
@@ -368,7 +363,7 @@ def _space_depth_roundtrip():
 
 
 def _crop_resize_block():
-  x = f16(1, 3, 8, 8)
+  x = f16(rng, 1, 3, 8, 8)
 
   def build(xt):
     h = af.crop(xt, 1, 1, 1, 1)               # (1,3,6,6)
@@ -386,7 +381,7 @@ def _crop_resize_block():
 
 
 def _upsample_bilinear_block():
-  x = f16(1, 3, 4, 4)
+  x = f16(rng, 1, 3, 4, 4)
 
   def build(xt):
     return af.upsample_bilinear(xt, 2)        # half-pixel bilinear

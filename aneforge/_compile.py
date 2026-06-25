@@ -25,11 +25,12 @@ _BUILD_INFO = (
 )
 
 
-def _topo(out: Tensor) -> list[Tensor]:
-  # iterative post-order DFS so deep unrolled graphs don't hit the recursion limit.
+def _topo_multi(*outs: Tensor) -> list[Tensor]:
+  # iterative post-order DFS over one-or-more roots so deep unrolled graphs don't hit
+  # the recursion limit. Single-root order is identical to seeding from just that root.
   seen: set[int] = set()
   order: list[Tensor] = []
-  stack: list = [(out, False)]
+  stack: list = [(o, False) for o in reversed(outs)]
   while stack:
     t, processed = stack.pop()
     if processed:
@@ -41,6 +42,10 @@ def _topo(out: Tensor) -> list[Tensor]:
     for src in t.srcs:
       if id(src) not in seen: stack.append((src, False))
   return order
+
+
+def _topo(out: Tensor) -> list[Tensor]:
+  return _topo_multi(out)
 
 
 # --------------------------------------------------------------------------- #
@@ -329,6 +334,28 @@ def _e_bmm(em, t, n, s):
       f'x = {s[0]}, y = {s[1]})[name = string("{n}")];')
 
 
+# shared const/param preambles - byte-identical MIL across the conv & pool emitters.
+def _const_pt(em, n):
+  em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
+
+
+def _const_i32_pair(em, n, suf, v):
+  em.line(f'tensor<int32, [2]> {n}_{suf} = const()[name = string("{n}_{suf}"), val = tensor<int32, [2]>([{v}, {v}])];')
+
+
+def _const_pad4(em, n, p):
+  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{p}, {p}, {p}, {p}])];')
+
+
+def _emit_conv_params(em, n, p, st, dl, g):   # pt, st, pd, dl, g (conv/dynamic_conv/conv_transpose)
+  _const_pt(em, n); _const_i32_pair(em, n, "st", st); _const_pad4(em, n, p); _const_i32_pair(em, n, "dl", dl)
+  em.line(f'int32 {n}_g = const()[name = string("{n}_g"), val = int32({g})];')
+
+
+def _emit_pool_params(em, n, k, st, p):       # pt, ks, st, pd (max_pool/avg_pool)
+  _const_pt(em, n); _const_i32_pair(em, n, "ks", k); _const_i32_pair(em, n, "st", st); _const_pad4(em, n, p)
+
+
 @op("conv")
 def _e_conv(em, t, n, s):
   a = t.attrs
@@ -336,11 +363,7 @@ def _e_conv(em, t, n, s):
   # conv operand directly, no +0 bridge); per-node `int8` attr overrides the global flag.
   w = em.weight(f"{n}_w", a["weight"], allow_int8=True, int8=a.get("int8"), allow_int4=True, allow_sparse=True)
   p, st, dl, g = a["pad"], a["stride"], a["dilation"], a["groups"]
-  em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
-  em.line(f'tensor<int32, [2]> {n}_st = const()[name = string("{n}_st"), val = tensor<int32, [2]>([{st}, {st}])];')
-  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{p}, {p}, {p}, {p}])];')
-  em.line(f'tensor<int32, [2]> {n}_dl = const()[name = string("{n}_dl"), val = tensor<int32, [2]>([{dl}, {dl}])];')
-  em.line(f'int32 {n}_g = const()[name = string("{n}_g"), val = int32({g})];')
+  _emit_conv_params(em, n, p, st, dl, g)
   em.line(f'{em.ty(t.shape)} {n} = conv(dilations = {n}_dl, groups = {n}_g, pad = {n}_pd, '
       f'pad_type = {n}_pt, strides = {n}_st, weight = {w}, x = {s[0]})[name = string("{n}")];')
   if "bias" in a:
@@ -355,11 +378,7 @@ def _e_dynamic_conv(em, t, n, s):
   # by construction (batch>=2 dynamic-weight conv is unsupported).
   a = t.attrs
   p, st, dl, g = a["pad"], a["stride"], a["dilation"], a["groups"]
-  em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
-  em.line(f'tensor<int32, [2]> {n}_st = const()[name = string("{n}_st"), val = tensor<int32, [2]>([{st}, {st}])];')
-  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{p}, {p}, {p}, {p}])];')
-  em.line(f'tensor<int32, [2]> {n}_dl = const()[name = string("{n}_dl"), val = tensor<int32, [2]>([{dl}, {dl}])];')
-  em.line(f'int32 {n}_g = const()[name = string("{n}_g"), val = int32({g})];')
+  _emit_conv_params(em, n, p, st, dl, g)
   em.line(f'{em.ty(t.shape)} {n} = conv(dilations = {n}_dl, groups = {n}_g, pad = {n}_pd, '
       f'pad_type = {n}_pt, strides = {n}_st, weight = {s[1]}, x = {s[0]})[name = string("{n}")];')
 
@@ -367,10 +386,7 @@ def _e_dynamic_conv(em, t, n, s):
 @op("max_pool")
 def _e_max_pool(em, t, n, s):
   k, st, p = t.attrs["k"], t.attrs["stride"], t.attrs["pad"]
-  em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
-  em.line(f'tensor<int32, [2]> {n}_ks = const()[name = string("{n}_ks"), val = tensor<int32, [2]>([{k}, {k}])];')
-  em.line(f'tensor<int32, [2]> {n}_st = const()[name = string("{n}_st"), val = tensor<int32, [2]>([{st}, {st}])];')
-  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{p}, {p}, {p}, {p}])];')
+  _emit_pool_params(em, n, k, st, p)
   em.line(f'bool {n}_cm = const()[name = string("{n}_cm"), val = bool(false)];')
   em.line(f'{em.ty(t.shape)} {n} = max_pool(ceil_mode = {n}_cm, kernel_sizes = {n}_ks, pad = {n}_pd, '
       f'pad_type = {n}_pt, strides = {n}_st, x = {s[0]})[name = string("{n}")];')
@@ -379,10 +395,7 @@ def _e_max_pool(em, t, n, s):
 @op("avg_pool")
 def _e_avg_pool(em, t, n, s):
   k, st, p = t.attrs["k"], t.attrs["stride"], t.attrs["pad"]
-  em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
-  em.line(f'tensor<int32, [2]> {n}_ks = const()[name = string("{n}_ks"), val = tensor<int32, [2]>([{k}, {k}])];')
-  em.line(f'tensor<int32, [2]> {n}_st = const()[name = string("{n}_st"), val = tensor<int32, [2]>([{st}, {st}])];')
-  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{p}, {p}, {p}, {p}])];')
+  _emit_pool_params(em, n, k, st, p)
   em.line(f'bool {n}_ep = const()[name = string("{n}_ep"), val = bool(false)];')
   em.line(f'bool {n}_cm = const()[name = string("{n}_cm"), val = bool(false)];')
   em.line(f'{em.ty(t.shape)} {n} = avg_pool(ceil_mode = {n}_cm, exclude_padding_from_average = {n}_ep, '
@@ -394,11 +407,7 @@ def _e_conv_transpose(em, t, n, s):
   a = t.attrs
   w = em.weight(f"{n}_w", a["weight"], allow_int8=False)         # [Cin, Cout, kH, kW]; int4 unverified here -> fp16
   p, st, dl, g = a["pad"], a["stride"], a["dilation"], a["groups"]
-  em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
-  em.line(f'tensor<int32, [2]> {n}_st = const()[name = string("{n}_st"), val = tensor<int32, [2]>([{st}, {st}])];')
-  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{p}, {p}, {p}, {p}])];')
-  em.line(f'tensor<int32, [2]> {n}_dl = const()[name = string("{n}_dl"), val = tensor<int32, [2]>([{dl}, {dl}])];')
-  em.line(f'int32 {n}_g = const()[name = string("{n}_g"), val = int32({g})];')
+  _emit_conv_params(em, n, p, st, dl, g)
   em.line(f'{em.ty(t.shape)} {n} = conv_transpose(dilations = {n}_dl, groups = {n}_g, pad = {n}_pd, '
       f'pad_type = {n}_pt, strides = {n}_st, weight = {w}, x = {s[0]})[name = string("{n}")];')
   if "bias" in a:
@@ -913,19 +922,7 @@ class MultiModel:
 def compile_multi(outs, build_dir=None) -> MultiModel:
   """Lower a multi-output graph into one fused program with N named output ports (the
     multi-output `compile`, for the resident training step). fp16 only; no opt/compress."""
-  seen: set[int] = set()
-  order: list[Tensor] = []
-  stack: list = [(o, False) for o in reversed(outs)]    # iterative post-order (deep-graph safe)
-  while stack:
-    t, processed = stack.pop()
-    if processed:
-      order.append(t)
-      continue
-    if id(t) in seen: continue
-    seen.add(id(t))
-    stack.append((t, True))
-    for src in t.srcs:
-      if id(src) not in seen: stack.append((src, False))
+  order = _topo_multi(*outs)
   if any(t.op in NETPLIST_OPS for t in order):
     raise NotImplementedError("compile_multi: native-SDPA/netplist ops not supported")
   bad = sorted({t.op for t in order if t.op != "input" and t.op not in _EMIT})
@@ -938,14 +935,8 @@ def compile_multi(outs, build_dir=None) -> MultiModel:
   for t in order:
     if t.op != "input": _EMIT[t.op](em, t, t._name, [src._name for src in t.srcs])
 
-  sig = ", ".join(f"{_sig_ty(em, t)} {t._name}" for t in inputs)
   out_vars = ", ".join(o._name for o in outs)
-  mil = (f"program(1.3)\n{_BUILD_INFO}\n{{\n    func main<ios18>({sig}) {{\n"
-     + "\n".join(em.lines) + f"\n    }} -> ({out_vars});\n}}\n")
-  d = Path(build_dir) if build_dir else Path(tempfile.mkdtemp(prefix="aneforge_"))
-  d.mkdir(parents=True, exist_ok=True)
-  (d / "model.mil").write_text(mil)
-  (d / "weights.bin").write_bytes(em.blob.build())
+  d = _emit_program_dir(em, inputs, out_vars, None, build_dir)
   prog = E5RT.compile(mil_path=d / "model.mil", cache_dir=str(d / "cache"),
             inputs={t._name: t.shape for t in inputs},
             outputs={o._name: o.shape for o in outs}, device_mask=ANE_MASK,

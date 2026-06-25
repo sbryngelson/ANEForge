@@ -5,14 +5,9 @@ import numpy as np
 
 import aneforge as af
 from _corpus import Case
+from _helpers import f16
 
 rng = np.random.default_rng(7)
-
-
-def f16(*shape, scale=1.0, pos=False):
-  a = rng.standard_normal(shape).astype(np.float32) * scale
-  if pos: a = np.abs(a) + 0.5
-  return a.astype(np.float16)
 
 
 # ---- numpy fp32 golden references --------------------------------------------
@@ -60,7 +55,7 @@ def np_softmax(x, axis=-1):
 # ---- A. SDPA across sequence length (the native-accuracy envelope) -----------
 def _sdpa_case(S, H=4, D=64):
   sc = 1.0 / D ** 0.5
-  q, k, v = f16(1, H, S, D), f16(1, H, S, D), f16(1, H, S, D)
+  q, k, v = f16(rng, 1, H, S, D), f16(rng, 1, H, S, D), f16(rng, 1, H, S, D)
   return Case(f"sdpa_S{S}", "shape",
               lambda qt, kt, vt: af.sdpa(qt, kt, vt),
               lambda qa, ka, va: np_sdpa(qa, ka, va, sc),
@@ -69,7 +64,7 @@ def _sdpa_case(S, H=4, D=64):
 
 # ---- B. matmul contraction across K (wide accumulator should hold) -----------
 def _matmul_case(K, N=256):
-  x = f16(1, K, scale=1.0); W = f16(N, K, scale=1.0 / np.sqrt(K))
+  x = f16(rng, 1, K, scale=1.0); W = f16(rng, N, K, scale=1.0 / np.sqrt(K))
   return Case(f"matmul_K{K}", "shape",
               lambda xt: xt.linear(W, None),
               lambda xa: xa.astype(np.float32) @ W.astype(np.float32).T,
@@ -79,7 +74,7 @@ def _matmul_case(K, N=256):
 # ---- C. conv across channels x spatial ---------------------------------------
 def _conv_case(C, HW, Cout=None):
   Cout = Cout or C
-  x = f16(1, C, HW, HW, scale=1.0); W = f16(Cout, C, 3, 3, scale=1.0 / np.sqrt(C * 9))
+  x = f16(rng, 1, C, HW, HW, scale=1.0); W = f16(rng, Cout, C, 3, 3, scale=1.0 / np.sqrt(C * 9))
   return Case(f"conv_C{C}_{HW}x{HW}", "shape",
               lambda xt: af.conv(xt, W, pad=1),
               lambda xa: np_conv(xa, W, pad=1),
@@ -88,7 +83,7 @@ def _conv_case(C, HW, Cout=None):
 
 # ---- D. group_norm across feature-map (documented large-map wall) ------------
 def _gn_case(C, HW, groups, xfail=""):
-  g = f16(C, pos=True); b = f16(C, scale=0.1); x = f16(1, C, HW, HW)
+  g = f16(rng, C, pos=True); b = f16(rng, C, scale=0.1); x = f16(rng, 1, C, HW, HW)
   return Case(f"group_norm_C{C}_{HW}x{HW}", "shape",
               lambda xt: xt.group_norm(g, b, num_groups=groups),
               lambda xa: np_group_norm(xa, g, b, groups),
@@ -97,7 +92,7 @@ def _gn_case(C, HW, groups, xfail=""):
 
 # ---- E. layer_norm across width ----------------------------------------------
 def _ln_case(D):
-  g = f16(D, pos=True); b = f16(D, scale=0.1); x = f16(8, D)
+  g = f16(rng, D, pos=True); b = f16(rng, D, scale=0.1); x = f16(rng, 8, D)
   return Case(f"layer_norm_D{D}", "shape",
               lambda xt: xt.layer_norm(g, b),
               lambda xa: np_layer_norm(xa, g, b),
@@ -106,7 +101,7 @@ def _ln_case(D):
 
 # ---- F. softmax / reduction over a long axis (fp16 accumulation) -------------
 def _softmax_case(N):
-  x = f16(4, N, scale=2.0)
+  x = f16(rng, 4, N, scale=2.0)
   return Case(f"softmax_N{N}", "shape",
               lambda xt: xt.softmax(-1),
               lambda xa: np_softmax(xa, -1),
@@ -115,7 +110,7 @@ def _softmax_case(N):
 
 def _reduce_case(N):
   # pos=True keeps the reference mean away from 0 (a ~0 mean makes relative error a knife-edge)
-  x = f16(1, N, scale=1.0, pos=True)
+  x = f16(rng, 1, N, scale=1.0, pos=True)
   return Case(f"reduce_mean_N{N}", "shape",
               lambda xt: xt.mean((1,)),
               lambda xa: xa.astype(np.float32).mean(1, keepdims=True),  # ANE keeps the reduced dim

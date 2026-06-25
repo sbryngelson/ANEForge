@@ -4,7 +4,6 @@ See docs/developer/bridges.md."""
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -21,7 +20,7 @@ def cross_correlation_fused(x: np.ndarray, template: np.ndarray) -> np.ndarray:
   H, W = x.shape
   Th, Tw = template.shape
   out_h, out_w = H - Th + 1, W - Tw + 1
-  from ._netplist import write_model, ensure_invoker
+  from ._netplist import write_model, ensure_invoker, invoke_netplist
 
   with tempfile.TemporaryDirectory(prefix="ane_xcorr_") as d:
     wd = Path(d)
@@ -33,20 +32,12 @@ def cross_correlation_fused(x: np.ndarray, template: np.ndarray) -> np.ndarray:
     )
     x.tofile(wd / "in_x.f16")
     template.reshape(-1).astype(np.float16).tofile(wd / "in_t.f16")
-    cmd = [
-      str(ensure_invoker("sdpa_invoker")),
-      "--net-plist", str(wd / "net.plist"),
-      "--weights", str(wd / "weights.0"),
-      "--input", f"x={wd / 'in_x.f16'}",
-      "--input", f"template={wd / 'in_t.f16'}",
-      "--output", f"y={wd / 'out_y.f16'}",
-      "--repeats", "1", "--warmup", "0",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-      raise RuntimeError(f"cross_correlation invoker failed:\n{proc.stderr}\n{proc.stdout}")
-    info = json.loads(proc.stdout.strip().splitlines()[-1])
-    if info.get("status") != "ok": raise RuntimeError(f"cross_correlation non-ok: {info}")
+    invoke_netplist(
+      ensure_invoker("sdpa_invoker"), wd / "net.plist",
+      weights=[wd / "weights.0"],
+      inputs=[("x", wd / "in_x.f16"), ("template", wd / "in_t.f16")],
+      outputs=[("y", wd / "out_y.f16")], warmup=0,
+    )
     y = np.frombuffer((wd / "out_y.f16").read_bytes(), dtype=np.float16)
     return y.reshape(out_h, out_w).copy()
 
