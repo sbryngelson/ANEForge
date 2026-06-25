@@ -149,7 +149,7 @@ def test_dynamic_dim_raises():  # symbolic dim_param -> static-shapes-only error
   with pytest.raises(ValueError): af.onnx_to_tensor(m)
 
 def test_unsupported_op_raises():  # unregistered op type fails loudly
-  m = _model([helper.make_node("LRN", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  m = _model([helper.make_node("Cos", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
 def test_conv_non_uniform_strides_raises():
@@ -252,6 +252,71 @@ def test_space_to_depth_builds():  # [1,3,8,8] bs=2 -> [1,12,4,4]
   m = _model([n], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 12, 4, 4])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 12, 4, 4) and out.op == "space_to_depth"
 
+def _empty_f32(name): return onnx.numpy_helper.from_array(np.array([], dtype=np.float32), name)
+def _cos(a, b): return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+def test_lrn_builds():  # shape unchanged
+  n = helper.make_node("LRN", ["x"], ["y"], size=5, alpha=1e-4, beta=0.75, bias=1.0)
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8, 4, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 4, 4) and out.op == "local_response_norm"
+
+def test_depth_to_space_builds():  # [1,8,2,2] bs=2 -> [1,2,4,4]
+  n = helper.make_node("DepthToSpace", ["x"], ["y"], blocksize=2)  # default mode=DCR
+  m = _model([n], [_vi("x", [1, 8, 2, 2])], [_vi("y", [1, 2, 4, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 2, 4, 4) and out.op == "depth_to_space"
+
+def test_depth_to_space_crd_raises():  # ANE matches DCR only
+  n = helper.make_node("DepthToSpace", ["x"], ["y"], blocksize=2, mode="CRD")
+  m = _model([n], [_vi("x", [1, 8, 2, 2])], [_vi("y", [1, 2, 4, 4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_resize_nearest_builds():  # sizes input -> [1,4,16,16]
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="nearest",
+                       coordinate_transformation_mode="asymmetric")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 16, 16) and out.op == "resize_nearest_neighbor"
+
+def test_resize_linear_builds():  # sizes input, linear+asymmetric -> bilinear
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="linear",
+                       coordinate_transformation_mode="asymmetric")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 16, 16) and out.op == "resize_bilinear"
+
+def test_resize_scales_builds():  # scales input (no sizes) -> round(2*8)=16
+  scales = onnx.numpy_helper.from_array(np.array([1, 1, 2, 2], dtype=np.float32), "scales")
+  n = helper.make_node("Resize", ["x", "roi", "scales"], ["y"], mode="nearest",
+                       coordinate_transformation_mode="asymmetric")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), scales])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 16, 16) and out.op == "resize_nearest_neighbor"
+
+def test_resize_cubic_raises():
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="cubic")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_resize_linear_half_pixel_raises():  # ANE bilinear does not match half_pixel
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="linear",
+                       coordinate_transformation_mode="half_pixel")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_resize_nearest_half_pixel_raises():  # ANE nearest matches asymmetric only
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="nearest",
+                       coordinate_transformation_mode="half_pixel")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
 @requires_ane
 def test_resnet18_onnx_matches_onnxruntime(tmp_path):
   """End-to-end: import a torch-exported ResNet-18 ONNX, run on the ANE, match onnxruntime (fp16 cosine)."""
@@ -267,3 +332,52 @@ def test_resnet18_onnx_matches_onnxruntime(tmp_path):
   ref = np.asarray(onnxruntime.InferenceSession(path).run(None, {"x": x.numpy()})[0]).astype(np.float32).ravel()
   cos = float(np.dot(got, ref) / (np.linalg.norm(got) * np.linalg.norm(ref)))
   assert cos > 0.999, f"resnet18 ANE vs onnxruntime cosine={cos}"
+
+def _run_vs_ort(m, x):
+  """Compile m on the ANE (fp16) and onnxruntime (fp32), return their flattened outputs."""
+  net = af.load_onnx(m)
+  got = np.asarray(net(x.astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnx_run(m, x)).astype(np.float32).ravel()
+  return got, ref
+
+def onnx_run(m, x):  # run an in-memory model through onnxruntime
+  import onnxruntime
+  return onnxruntime.InferenceSession(m.SerializeToString()).run(None, {"x": x})[0]
+
+@requires_ane
+def test_lrn_onnx_matches_onnxruntime():  # alpha=1 (sum-of-squares dominates) so the alpha mapping is exercised
+  rng = np.random.default_rng(0); x = (rng.standard_normal((1, 8, 4, 4)).astype(np.float32)) * 2.0
+  n = helper.make_node("LRN", ["x"], ["y"], size=5, alpha=1.0, beta=0.75, bias=1.0)
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 8, 4, 4])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"LRN ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_depth_to_space_onnx_matches_onnxruntime():  # DCR is a pure permutation -> near-exact
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 8, 2, 2)).astype(np.float32)
+  n = helper.make_node("DepthToSpace", ["x"], ["y"], blocksize=2, mode="DCR")
+  m = _model([n], [_vi("x", [1, 8, 2, 2])], [_vi("y", [1, 2, 4, 4])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.999, f"DepthToSpace ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_resize_nearest_onnx_matches_onnxruntime():  # nearest+asymmetric is the ANE-matched config
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="nearest",
+                       coordinate_transformation_mode="asymmetric", nearest_mode="floor")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"Resize nearest ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_resize_linear_onnx_matches_onnxruntime():  # linear+asymmetric is the ANE-matched config
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], dtype=np.int64), "sizes")
+  n = helper.make_node("Resize", ["x", "roi", "scales", "sizes"], ["y"], mode="linear",
+                       coordinate_transformation_mode="asymmetric")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])],
+             inits=[_empty_f32("roi"), _empty_f32("scales"), sizes])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"Resize linear ANE vs onnxruntime cosine={cos}"

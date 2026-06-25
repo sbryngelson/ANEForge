@@ -34,7 +34,9 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool` |
 | Linear | `Gemm`, `MatMul` |
 | Normalization | `BatchNormalization`, `InstanceNormalization` |
-| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat`, `SpaceToDepth` |
+| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat`, `SpaceToDepth`, `DepthToSpace` |
+| Normalization (cross-channel) | `LRN` |
+| Resampling | `Resize` (nearest / linear) |
 | Misc | `Softmax`, `Constant`, `Identity` |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
@@ -70,3 +72,17 @@ mis-lower:
 - **PRelu:** slope is a per-channel initializer (`[C]`, `[C,1,1]`, or scalar, flattened
   to `[C]`); input must be rank>=3 `[N,C,...]`.
 - **InstanceNormalization:** `[N,C,H,W]` input with `scale`/`B` initializers `[C]`.
+- **LRN:** the ANE `local_response_norm` folds the `alpha/size` scaling internally, so
+  ONNX `alpha` maps straight through and `bias` maps to `k` (validated on-device against
+  onnxruntime, cosine ~1.0). `size`/`beta` pass through unchanged.
+- **DepthToSpace:** `DCR` mode only (the ONNX default, which the ANE op matches exactly);
+  `CRD` channel ordering raises.
+- **Resize:** `[N,C,H,W]`, opset 11+, target from `sizes` (preferred) or `scales`. Only
+  the coordinate conventions the ANE actually matches are accepted, each validated
+  on-device (cosine ~1.0); every other config raises rather than silently mis-resize:
+    - `mode="nearest"` requires `coordinate_transformation_mode="asymmetric"`.
+    - `mode="linear"` requires `asymmetric` (-> half-pixel-off bilinear) or
+      `align_corners`.
+    - `half_pixel`/`pytorch_half_pixel` sampling and `mode="cubic"` are **not** matched by
+      the ANE resamplers and raise. Note the ONNX default `coordinate_transformation_mode`
+      is `half_pixel`, so a `Resize` must set `asymmetric`/`align_corners` explicitly.

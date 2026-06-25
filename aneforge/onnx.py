@@ -6,6 +6,8 @@ from math import prod
 import numpy as np
 from .graph import Tensor, input as _input, conv as _conv, batch_norm as _bn, concat as _concat
 from .graph import instance_norm as _instnorm, space_to_depth as _s2d
+from .graph import local_response_norm as _lrnorm, depth_to_space as _d2s
+from .graph import resize_bilinear as _rbilin, resize_nearest_neighbor as _rnn
 from . import _compile
 
 _ONNX: dict[str, Callable] = {}
@@ -124,6 +126,11 @@ def _clip(node, ins, a, i):
   if lo == 0.0 and hi >= 3.4e38: return ins[0].relu()
   return ins[0].clip(float(lo), float(hi))
 
+def _sattr(a, name, default):                 # ONNX string attrs arrive as bytes
+  v = a.get(name)
+  if v is None: return default
+  return v.decode() if isinstance(v, bytes) else v
+
 def _uniform(vals, op, default=1):            # ONNX gives per-axis lists; ANE takes a scalar
   if vals is None: return default             # spec default for strides/dilations is 1 per axis
   v = list(vals)
@@ -208,3 +215,38 @@ def _const(node, ins, a, i):
   return numpy_helper.to_array(a["value"])         # returns np.ndarray (folded by consumers)
 @onnx_op("Identity")
 def _identity(node, ins, a, i): return ins[0]      # pass-through (Tensor or array)
+@onnx_op("LRN")
+def _lrn(node, ins, a, i):
+  """LRN; ANE local_response_norm folds alpha/size internally, so ONNX alpha maps raw and k=bias (validated on-device)."""
+  return _lrnorm(ins[0], size=int(a["size"]), alpha=float(a.get("alpha", 1e-4)),
+                 beta=float(a.get("beta", 0.75)), k=float(a.get("bias", 1.0)))
+@onnx_op("DepthToSpace")
+def _depth_to_space(node, ins, a, i):
+  """DepthToSpace; ANE matches ONNX 'DCR' (the default) only - 'CRD' channel order is unsupported."""
+  mode = _sattr(a, "mode", "DCR")
+  if mode != "DCR": raise NotImplementedError(f"ONNX DepthToSpace: mode={mode!r} not supported (ANE matches 'DCR' only)")
+  return _d2s(ins[0], int(a["blocksize"]))
+@onnx_op("Resize")
+def _resize(node, ins, a, i):
+  """Resize (opset 11+): nearest/linear at the coord modes the ANE matches; cubic + half-pixel raise (validated on-device)."""
+  x = ins[0]
+  sizes = ins[3] if len(ins) > 3 and ins[3] is not None else None
+  if sizes is not None and np.asarray(sizes).size:
+    s = [int(v) for v in np.asarray(sizes)]; th, tw = s[-2], s[-1]
+  else:
+    scales = ins[2] if len(ins) > 2 and ins[2] is not None else None
+    if scales is None or not np.asarray(scales).size:
+      raise NotImplementedError("ONNX Resize: needs a non-empty scales or sizes input")
+    sc = [float(v) for v in np.asarray(scales)]
+    th = int(round(sc[-2] * x.shape[-2])); tw = int(round(sc[-1] * x.shape[-1]))
+  mode = _sattr(a, "mode", "nearest"); ctm = _sattr(a, "coordinate_transformation_mode", "half_pixel")
+  if mode == "cubic": raise NotImplementedError("ONNX Resize: mode='cubic' not supported")
+  if mode == "nearest":
+    if ctm != "asymmetric":
+      raise NotImplementedError(f"ONNX Resize nearest: coordinate_transformation_mode={ctm!r} not supported (ANE matches 'asymmetric')")
+    return _rnn(x, th, tw)
+  if mode == "linear":
+    if ctm == "asymmetric": return _rbilin(x, th, tw, align_corners=False)
+    if ctm == "align_corners": return _rbilin(x, th, tw, align_corners=True)
+    raise NotImplementedError(f"ONNX Resize linear: coordinate_transformation_mode={ctm!r} not supported (ANE matches 'asymmetric'/'align_corners' only)")
+  raise NotImplementedError(f"ONNX Resize: mode={mode!r} not supported")
