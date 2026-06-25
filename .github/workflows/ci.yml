@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: pip install ruff pylint
       - run: ruff check
       # Lock the tinygrad-compact 2-space style: W0311 (bad indentation) + C0303
@@ -45,6 +47,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       # pyright must resolve the lazily-imported OPTIONAL deps so it doesn't report
       # them as missing: scipy (dsp/special reference paths) and the model-loader
       # stack (torch/torchvision/transformers/huggingface_hub via the `models` extra).
@@ -62,6 +66,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: pip install build twine
       - run: python -m build
       - run: twine check dist/*
@@ -80,6 +86,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       # Every module byte-compiles (no import, so no dylib/ANE needed).
       - run: python -m compileall -q aneforge
       # The package imports with only NumPy and builds a graph; compile/dispatch is lazy
@@ -97,6 +105,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]"
       # The compile-backoff rate-limiter is a pure unit test (fake clock, no ANE).
       - run: pytest tests/test_compile_breaker.py -q
@@ -111,6 +121,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: pip install -r docs/requirements.txt
       - run: mkdocs build --strict
 
@@ -124,6 +136,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       # The Objective-C++ dispatch shim links Apple frameworks and only builds on macOS;
       # this proves it compiles. The hosted runner has no ANE, so it is never dispatched
       # (the dylib loads lazily on first dispatch, which does not happen here).
