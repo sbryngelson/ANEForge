@@ -4,7 +4,6 @@ See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -28,13 +27,11 @@ def fps_fused(points: np.ndarray, centroid_count: int, *, metric: str = "L1") ->
     width=N, centroid_count=int(centroid_count), distance_metric=metric, output_channels=3,
   )
   (d / "points.f16").write_bytes(np.ascontiguousarray(pts_cw, dtype=np.float16).tobytes())
-  cmd = [
-    str(g.ensure_invoker("sdpa_invoker")), "--net-plist", str(d / "net.plist"), "--weights", str(d / "weights.0"),
-    "--input", f"points={d / 'points.f16'}", "--output", f"y={d / 'out.f16'}",
-    "--repeats", "1", "--warmup", "0",
-  ]
-  p = subprocess.run(cmd, capture_output=True, text=True)
-  if p.returncode != 0: raise RuntimeError(f"fps invoker failed:\n{p.stderr}")
+  g.invoke_netplist(
+    g.ensure_invoker("sdpa_invoker"), d / "net.plist",
+    weights=[d / "weights.0"], inputs=[("points", d / "points.f16")],
+    outputs=[("y", d / "out.f16")], warmup=0,
+  )
   y = np.frombuffer((d / "out.f16").read_bytes(), dtype=np.float16)
   return y.reshape(3, centroid_count).T  # (k, 3)
 

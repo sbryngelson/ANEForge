@@ -4,57 +4,30 @@ KernelChannel internally. See docs/developer/bridges.md for the conventions."""
 
 from __future__ import annotations
 
-import json
 import plistlib
-import subprocess
 import tempfile
 from pathlib import Path
 
 import numpy as np
 
-from ._netplist import bin_dir
-
-_INVOKER = bin_dir() / "layer_invoker"
-_INVOKER_SRC = Path(__file__).resolve().parents[1] / "_invokers" / "layer_invoker.mm"
+from ._netplist import build_plist, ensure_invoker, input_entry, invoke_netplist, output_entry
 
 
 def fp16_bits(value: float) -> int:
   return int(np.array(value, dtype=np.float16).view(np.uint16).item())
 
 
-def _ensure_invoker() -> Path:
-  if _INVOKER.exists() and _INVOKER.stat().st_mtime >= _INVOKER_SRC.stat().st_mtime:
-    return _INVOKER
-  _INVOKER.parent.mkdir(parents=True, exist_ok=True)
-  cmd = ["xcrun", "clang++", "-O2", "-fobjc-arc", "-std=gnu++17",
-         "-framework", "Foundation", "-framework", "IOSurface",
-         str(_INVOKER_SRC), "-o", str(_INVOKER)]
-  p = subprocess.run(cmd, capture_output=True, text=True)
-  if p.returncode != 0: raise RuntimeError(p.stderr)
-  return _INVOKER
-
-
 def _plist(channels, height, width, kernel_channel, alpha_bits, beta, k) -> dict:
-  net = "network_lrn-1"
   unit = {"Bottom": ["x"], "InputType": ["Float16"], "Name": "op-1",
           "OutputChannels": channels, "OutputType": "Float16",
           "Type": "LocalResponseNormalization",
           "Params": {"Type": "Channel", "KernelWidth": 1, "KernelHeight": 1,
                      "KernelChannel": kernel_channel, "Alpha": alpha_bits,
                      "Beta": beta, "K": k}}
-  inp = {"BatchSize": 1, "InputChannels": channels, "InputDepth": 1,
-         "InputHeight": height, "InputInterleave": 1, "InputName": "x",
-         "InputType": "Float16", "InputWidth": width, "Name": "op-1",
-         "OperationName": "op0"}
-  return {"Version": "1.0.10", "Networks": [net],
-          "ProcedureList": [{"Name": "procedure_lrn-1", "InputList": [inp],
-              "OperationList": [{"NetworkName": net, "OperationName": "op0"}],
-              "OutputList": [{"Name": "op-1", "OperationName": "op0",
-                              "OutputInterleave": 1, "OutputName": "y",
-                              "OutputType": "Float16"}]}],
-          net: {"op-1": unit, "Units": ["op-1"], "Weights": ["weights.0"],
-                "y": {"Bottom": "op-1", "OutputInterleave": 1,
-                      "OutputName": "y", "OutputType": "Float16"}}}
+  return build_plist(
+    "network_lrn-1", "op-1",
+    [input_entry("x", width=width, height=height, channels=channels, entry_name="op-1")],
+    [output_entry("y", "op-1")], {"op-1": unit})
 
 
 def lrn_fused(x: np.ndarray, *, alpha: float = 1.0, beta: float = 0.75,
@@ -70,7 +43,7 @@ def lrn_fused(x: np.ndarray, *, alpha: float = 1.0, beta: float = 0.75,
   if x.ndim != 4: raise ValueError("x must be (B,C,H,W)")
   B, C, H, W = x.shape
   if B != 1: raise ValueError("B=1 only")
-  invoker = _ensure_invoker()
+  invoker = ensure_invoker("layer_invoker")
   # ANE divides parsed alpha by KernelChannel; pre-multiply to recover `alpha`.
   alpha_bits = fp16_bits(alpha * C)
   x5 = x.reshape(1, C, 1, H, W)
@@ -81,15 +54,11 @@ def lrn_fused(x: np.ndarray, *, alpha: float = 1.0, beta: float = 0.75,
                     fmt=plistlib.FMT_BINARY)
     (cd / "weights.0").write_bytes(b"\x00" * 1024)
     (cd / "in_x.bin").write_bytes(x5.astype(np.float16).tobytes())
-    cmd = [str(invoker), "--net-plist", str(cd / "net.plist"),
-           "--weights", str(cd / "weights.0"), "--input", f"x={cd / 'in_x.bin'}",
-           "--output", f"y={cd / 'out_y.bin'}",
-           "--raw-output", f"y={cd / 'out_raw.bin'}", "--repeats", "1"]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    lines = [l for l in p.stdout.splitlines() if l.strip().startswith("{")]
-    if not lines: raise RuntimeError(f"no JSON from invoker:\n{p.stdout}\n{p.stderr}")
-    info = json.loads(lines[-1])
-    if info.get("status") != "ok": raise RuntimeError(f"lrn invoker failed: {info}")
+    invoke_netplist(
+      invoker, cd / "net.plist",
+      weights=[cd / "weights.0"], inputs=[("x", cd / "in_x.bin")],
+      outputs=[("y", cd / "out_y.bin")], warmup=0,
+      extra=["--raw-output", f"y={cd / 'out_raw.bin'}"])
     raw = (cd / "out_y.bin").read_bytes()
     return np.frombuffer(raw[:C * H * W * 2], dtype=np.float16).reshape(C, H, W)
 

@@ -4,7 +4,6 @@ See docs/developer/bridges.md."""
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -22,7 +21,7 @@ def cost_volume_fused(aux: np.ndarray, ref: np.ndarray,
   ref = np.asarray(ref, dtype=np.float16).reshape(-1)
   Wa, Wr = aux.size, ref.size
   R = int(disparity_range)
-  from ._netplist import write_model, ensure_invoker
+  from ._netplist import write_model, ensure_invoker, invoke_netplist
 
   with tempfile.TemporaryDirectory(prefix="ane_costvol_") as d:
     wd = Path(d)
@@ -34,20 +33,12 @@ def cost_volume_fused(aux: np.ndarray, ref: np.ndarray,
     )
     aux.tofile(wd / "in_aux.f16")
     ref.tofile(wd / "in_ref.f16")
-    cmd = [
-      str(ensure_invoker("sdpa_invoker")),
-      "--net-plist", str(wd / "net.plist"),
-      "--weights", str(wd / "weights.0"),
-      "--input", f"aux={wd / 'in_aux.f16'}",
-      "--input", f"ref={wd / 'in_ref.f16'}",
-      "--output", f"y={wd / 'out_y.f16'}",
-      "--repeats", "1", "--warmup", "0",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-      raise RuntimeError(f"cost_volume invoker failed:\n{proc.stderr}\n{proc.stdout}")
-    info = json.loads(proc.stdout.strip().splitlines()[-1])
-    if info.get("status") != "ok": raise RuntimeError(f"cost_volume non-ok: {info}")
+    invoke_netplist(
+      ensure_invoker("sdpa_invoker"), wd / "net.plist",
+      weights=[wd / "weights.0"],
+      inputs=[("aux", wd / "in_aux.f16"), ("ref", wd / "in_ref.f16")],
+      outputs=[("y", wd / "out_y.f16")], warmup=0,
+    )
     y = np.frombuffer((wd / "out_y.f16").read_bytes(), dtype=np.float16)
     return y.reshape(R + 1, Wa).copy()
 

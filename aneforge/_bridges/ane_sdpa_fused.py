@@ -6,40 +6,13 @@ from __future__ import annotations
 
 import math
 import plistlib
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 
-from ._netplist import bin_dir, invoke_netplist
-
-
-_INVOKER_BIN = bin_dir() / "sdpa_invoker"
-_INVOKER_SRC = Path(__file__).resolve().parents[1] / "_invokers" / "sdpa_invoker.mm"
-
-
-def _ensure_invoker() -> Path:
-  """Build the SDPA invoker once if missing/stale."""
-  if (
-    _INVOKER_BIN.exists()
-    and _INVOKER_SRC.exists()
-    and _INVOKER_BIN.stat().st_mtime >= _INVOKER_SRC.stat().st_mtime
-  ):
-    return _INVOKER_BIN
-  _INVOKER_BIN.parent.mkdir(parents=True, exist_ok=True)
-  cmd = [
-    "xcrun", "clang++", "-O2", "-Wall", "-Wextra",
-    "-fobjc-arc", "-std=gnu++17",
-    "-framework", "Foundation",
-    "-framework", "IOSurface",
-    str(_INVOKER_SRC),
-    "-o", str(_INVOKER_BIN),
-  ]
-  proc = subprocess.run(cmd, capture_output=True, text=True)
-  if proc.returncode != 0: raise RuntimeError(f"failed to build sdpa invoker:\n{proc.stderr}")
-  return _INVOKER_BIN
+from ._netplist import ensure_invoker, invoke_netplist
 
 
 def _write_netplist(
@@ -128,7 +101,7 @@ def sdpa_fused(
   K_ane = np.ascontiguousarray(K.transpose(0, 2, 1, 3))
   V_ane = np.ascontiguousarray(V.transpose(0, 2, 1, 3))
 
-  invoker = _ensure_invoker()
+  invoker = ensure_invoker("sdpa_invoker")
 
   with tempfile.TemporaryDirectory(prefix="ane_sdpa_") as workdir_str:
     workdir = Path(workdir_str)

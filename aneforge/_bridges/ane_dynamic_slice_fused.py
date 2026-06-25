@@ -4,7 +4,6 @@ See docs/developer/bridges.md."""
 from __future__ import annotations
 
 import struct
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -28,14 +27,11 @@ def dynamic_slice_fused(x: np.ndarray, start: int, *, slice_size: int = 2) -> np
   g.write_model("dynamic_slice_const_u16", d, width=4, height=1, channels=1)
   (d / "weights.1").write_bytes(struct.pack("<H", int(start)))
   (d / "in_x.f16").write_bytes(x.tobytes())
-  cmd = [
-    str(g.ensure_invoker("sdpa_invoker")), "--net-plist", str(d / "net.plist"),
-    "--weights", str(d / "weights.0"), "--weights", str(d / "weights.1"),
-    "--input", f"x={d / 'in_x.f16'}", "--output", f"y={d / 'out.f16'}",
-    "--repeats", "1", "--warmup", "0",
-  ]
-  p = subprocess.run(cmd, capture_output=True, text=True)
-  if p.returncode != 0: raise RuntimeError(f"dynamic_slice invoker failed:\n{p.stderr}")
+  g.invoke_netplist(
+    g.ensure_invoker("sdpa_invoker"), d / "net.plist",
+    weights=[d / "weights.0", d / "weights.1"],
+    inputs=[("x", d / "in_x.f16")], outputs=[("y", d / "out.f16")], warmup=0,
+  )
   return np.frombuffer((d / "out.f16").read_bytes(), dtype=np.float16)
 
 
