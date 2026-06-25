@@ -264,9 +264,7 @@ _LIMITS = {
 def limit(name: str, family: int) -> int:
   """Measured numeric limit for `name` on the given target family."""
   table = _LIMITS[name]
-  val = None
-  for thresh in sorted(table):
-    if int(family) >= int(thresh): val = table[thresh]
+  val = next((table[t] for t in sorted(table, reverse=True) if int(family) >= int(t)), None)
   if val is None: raise ValueError(f"family {family} below the floor for limit {name!r}")
   return val
 
@@ -299,10 +297,7 @@ _HAL_FIELDS = {
 
 def _field_for(name: str, family: int) -> int:
   table = _HAL_FIELDS[name]
-  val = None
-  for thresh in sorted(table):
-    if int(family) >= int(thresh): val = table[thresh]
-  return val
+  return next((table[t] for t in sorted(table, reverse=True) if int(family) >= int(t)), None)
 
 
 # Op-kind classes the predictor recognizes, mapped to the divergence axis they ride.

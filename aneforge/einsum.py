@@ -50,6 +50,7 @@ from __future__ import annotations
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+from collections import Counter
 
 import numpy as np
 
@@ -84,10 +85,7 @@ def _parse(equation: str, n_operands: int) -> tuple[list[str], str]:
             if not ch.isalpha():
                 raise ValueError(f"einsum: subscript '{s}' has a non-letter index {ch!r}")
     if rhs is None:
-        counts: dict[str, int] = {}
-        for s in ins:
-            for ch in s:
-                counts[ch] = counts.get(ch, 0) + 1
+        counts = Counter("".join(ins))
         rhs = "".join(sorted(ch for ch, c in counts.items() if c == 1))
     else:
         for ch in rhs:
