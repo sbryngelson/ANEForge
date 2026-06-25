@@ -1,15 +1,4 @@
-"""compile(target=...) - gate lowering on the target ANE family.
-
-The gate runs once at the top of compile(): resolve the family, substitute below-floor
-ops that have an in-graph decomposition (sin/cos -> special.py), and raise a clear
-compile-time error on an op the family cannot run (instead of a dispatch-time crash).
-
-On the M5 dev host (family 5) everything is native, so target=None is a no-op fast path
-and existing compiles are byte-identical. The decompose path IS verifiable here, because
-the rewritten graph (sin -> mul/exp polynomial) is all-native and runs on the M5.
-
-Run: PYTHONPATH=. python3 -m pytest tests/test_compile_targets.py -q
-"""
+"""compile(target=...) - gate lowering on the target ANE family (decompose / reject / saturation / preflight)."""
 import numpy as np
 import pytest
 
@@ -17,8 +6,7 @@ import aneforge as af
 
 
 def test_compile_decomposes_sin_for_h13_and_runs():
-  # target='h13' (family 2) -> native sin is unavailable -> compile substitutes the
-  # special.py polynomial. The rewritten graph runs on this M5 and matches numpy.
+  # h13 lacks native sin -> compile substitutes the special.py polynomial; runs on M5
   xv = np.linspace(-1.0, 1.0, 64).astype(np.float16).reshape(1, 64)
   net = af.compile(af.input((1, 64)).sin(), target="h13")
   out = np.asarray(net(xv)).astype(np.float32)
@@ -46,7 +34,7 @@ def test_compile_rejects_below_mil_floor():
 
 
 def test_compile_default_target_is_native_noop_on_m5():
-  # no target -> detect host (M5/family 5) -> sin is native, no rewrite, runs as before
+  # no target -> host M5: sin native, no rewrite
   xv = np.linspace(-1.0, 1.0, 64).astype(np.float16).reshape(1, 64)
   net = af.compile(af.input((1, 64)).sin())
   out = np.asarray(net(xv)).astype(np.float32)
@@ -63,8 +51,7 @@ def _saturation_warnings(graph, target):
 
 
 def test_h13_last_axis_offset_slice_warns():
-  # a last-axis-offset slice routes through the H13 Q.4 fixed-point DMA that saturates
-  # at 4094 (=65504/16); on M1 this must warn loudly (it silently corrupts otherwise).
+  # last-axis-offset slice routes through the H13 Q.4 DMA that saturates at 4094; must warn
   g = af.input((1, 8)).slice_by_size([0, 2], [1, 4])   # last-axis begin=2 > 0
   assert _saturation_warnings(g, "h13")
 
@@ -83,10 +70,7 @@ def test_m5_offset_slice_does_not_warn():
 
 # --- cross_compile_check: static preflight pre-gate (family-cap CI keystone) ---
 def test_cross_compile_check_rejects_family_cap_violation_statically(monkeypatch):
-  # A conv with kW=14 fits A16 (<=15) but exceeds the A13 cap (<=13). cross_compile_check
-  # for h13 must reject it from preflight ALONE - not lean on the host cross-compiler,
-  # which may not enforce a different family's dim caps. The e5rt compiler must not even
-  # be reached for a statically-rejectable graph.
+  # conv kW=14 fits A16 (<=15) but exceeds A13 cap (<=13); preflight must reject without compiling
   from aneforge import _compile, _runtime
   g = af.conv(af.input((1, 3, 32, 32)), np.zeros((8, 3, 3, 14), np.float32), pad=0)
 
@@ -97,8 +81,7 @@ def test_cross_compile_check_rejects_family_cap_violation_statically(monkeypatch
 
 
 def test_cross_compile_check_passes_valid_graph_to_compiler(monkeypatch):
-  # A graph with no static violation must still flow through to the e5rt compiler and
-  # return its verdict (here stubbed to success) - the pre-gate is a filter, not a wall.
+  # no static violation -> flows through to the (stubbed) e5rt compiler verdict
   from aneforge import _compile, _runtime
   g = af.conv(af.input((1, 3, 32, 32)), np.zeros((8, 3, 3, 11), np.float32), pad=0)
   monkeypatch.setattr(_runtime, "compile_check", lambda *a, **k: 0)

@@ -1,7 +1,4 @@
-"""Per-op coverage: one case per exposed aneforge op. Each compiles +
-runs on the ANE; ops with a computable numpy reference are checked for correctness
-(cos > 0.99 / allclose), the rest assert a finite, correctly-shaped output. M1-walled
-bridge ops (per the op catalog) are xfail-skipped. ~100 ops."""
+"""Per-op coverage: one case per exposed aneforge op, run on the ANE and checked vs numpy or for finite shape."""
 from __future__ import annotations
 import math
 import numpy as np

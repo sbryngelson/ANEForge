@@ -1,22 +1,4 @@
-"""On-device validation of the optimizer's equivalence-route registry.
-
-The optimizer's coverage guarantee is: *every surfaced capability is either ROUTE-
-SELECTABLE (the autotuner picks its cheapest equivalent lowering by measured cost) or
-EXPLICITLY SINGLE-ROUTE.* This test proves the SELECTABLE half is accurate - every route
-the optimizer is willing to flip a bridge node to is mathematically equivalent on real
-ANE silicon, the same proof class as the metamorphic ``mha_vs_sdpa`` /
-``reduce_sum_vs_matmul`` transforms.
-
-For each route in the registry it compiles BOTH lowerings (the native bridge and the
-fused decomposition) on the device, runs them on identical inputs, and asserts they
-agree within fp16 op-noise. It also reconciles the three closed tables so they cannot
-drift: the route registry (``_capabilities.route_registry``), the executable builders
-(``_rewrite._BRIDGE_DECOMPOSERS``), and the optimizer's route-id detector
-(``_optimize._route_ids``).
-
-Run standalone:
-    PYTHONPATH=. python3 tests/test_routes.py
-"""
+"""On-device validation of the optimizer's equivalence-route registry: each selectable route's bridge and fused lowerings agree."""
 import sys
 from pathlib import Path
 
@@ -29,10 +11,7 @@ from aneforge import _capabilities as cap
 from aneforge._rewrite import _BRIDGE_DECOMPOSERS, decompose_bridge
 
 
-# fp16 op-noise ceiling: a single fused op sits at ~1e-3 relerr; a short chain (the
-# minmax decomposition is sub/divide) stays well under this. Same scale as the
-# metamorphic mha_vs_sdpa tol (0.06). A genuine semantic break is orders of magnitude
-# larger, so this never hides a real bug.
+# fp16 op-noise ceiling: well above per-op rounding, far below a semantic break
 _TOL = 5e-3
 
 

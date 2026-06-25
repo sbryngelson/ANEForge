@@ -1,14 +1,4 @@
-"""Pytest coverage for the on-ANE linear-algebra kernels (aneforge.linalg).
-
-These kernels are fp16, fixed-iteration, and (for the factorizations) UNROLLED into one
-program, so they have shape- and conditioning-dependent envelopes. This suite validates
-each against the numpy/scipy reference within its envelope, and deliberately sweeps
-SHAPES (tall / wide / square) for the SVD/QR/LU family - the wide case is what hid the
-``svd`` Gram-matrix bug (it only ever formed A^T A, fine for tall A, a huge graph for wide
-A). Sizes are kept small: several kernels compile a deep unrolled graph.
-
-Run: PYTHONPATH=. .venv/bin/python -m pytest tests/test_linalg.py -q
-"""
+"""Pytest coverage for the on-ANE linear-algebra kernels (aneforge.linalg)."""
 from __future__ import annotations
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -144,8 +134,7 @@ def test_eigh_full_spectrum(cond):
 
 
 def test_eigh_iterate_matches_unrolled():
-  # iterate=True host-loops ONE compiled sweep; same rotations on the same engine as the
-  # unrolled one-program path, so at small n the two must agree to fp16 exactness.
+  # iterate path and unrolled path use the same rotations -> fp16-exact at small n
   A = _sym_gapped(8, 1e1, 19)
   un = L.eigh(f16(A), sweeps=8)
   it = L.eigh(f16(A), sweeps=8, iterate=True)
@@ -154,9 +143,7 @@ def test_eigh_iterate_matches_unrolled():
 
 
 def test_eigh_iterate_beyond_unrolled_ceiling():
-  # n=32 exceeds the ~n=20 cap of the unrolled program; only the iterate path reaches it
-  # (measured 1.4e-2 here; n=48 at ~1.2-1.8e-2 stays a documented probe - ~220s is too
-  # heavy for the gate).
+  # n=32 exceeds the ~n=20 unrolled cap; only the iterate path reaches it
   A = _sym_gapped(32, 1e1, 32)
   ref = np.sort(np.linalg.eigvalsh(A))
   assert relerr(L.eigh(f16(A), sweeps=10, iterate=True), ref) <= 3e-2
@@ -207,12 +194,8 @@ def test_lu_reconstruction(cond):
 
 
 def test_factorizations_large_entries():
-  # Entries ABOVE the A13/A14 slice-x16 saturation threshold (4094) but inside fp16 range:
-  # a direct [i,j] width-offset element slice would return +/-inf on that silicon (confirmed on
-  # BOTH: M2/A14 non-finite pre-fix at max|A|>=4500; M1/A13 a [0,3] slice of an 8000 element
-  # returns inf vs the routed accessor's exact 8000). The _els_routed accessor keeps every slice begin's
-  # last axis at 0, so chol/lu stay finite + accurate up to the kernels' intrinsic fp16 range.
-  # (qr/eigh/eigvals are NOT tested hot: they overflow fp16 intrinsically at max|A| ~ 1e2.)
+  # entries above the slice-x16 saturation threshold (4094) but inside fp16 range: the
+  # routed accessor keeps chol/lu finite where a direct width-offset slice returns inf
   for mx in (4500.0, 8000.0):
     A = _spd(6, 1e1, 31); A = A / np.abs(A).max() * mx
     Lc = L.cholesky(f16(A))

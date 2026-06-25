@@ -1,9 +1,4 @@
-"""Finite-difference VJP sweep over unary/elementwise ops.
-
-Checks aneforge's on-ANE autograd gradients against numerical (central-difference)
-gradients for a spread of ops (exp, sqrt, inverse, erf, clip, l2_norm, ...). Each op is
-its own parametrized case. Moved here from the standalone op_validation/vjp_sweep.py script.
-"""
+"""Finite-difference VJP sweep: on-ANE autograd gradients vs central differences over unary/elementwise ops."""
 import math
 
 import numpy as np

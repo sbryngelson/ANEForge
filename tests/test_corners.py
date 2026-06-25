@@ -1,13 +1,4 @@
-"""Adversarial / corner cases for the aneforge corpus - the part an optimizer is
-most likely to break:
-
-  - extreme-but-legal shapes (axis sizes near 1 and large, within [1, 65536]),
-  - very deep op chains fused into ONE program (30+ ops),
-  - graphs that MIX fused-MIL and netplist-bridge ops (conv -> ... -> argmax/sdpa
-    -> ... -> fc) so the SegmentedModel graph-cut path is exercised,
-  - multi-input graphs,
-  - the SAME graph compiled fp16 vs int8 (both within their own tol).
-"""
+"""Adversarial / corner cases for the aneforge corpus (extreme shapes, deep chains, graph cuts, multi-input, fp16-vs-int8)."""
 from __future__ import annotations
 
 import numpy as np
@@ -98,11 +89,7 @@ def _big_channel_conv():
 
 # very deep chain fused into one program
 def _deep_chain():
-  # 32 ops fused into ONE program. The sin/cos/tanh cycle (interleaved with a
-  # *1.4 rescale) is magnitude-PRESERVING: values stay O(1) so relerr stays a
-  # meaningful metric. (A contractive chain would collapse into the fp16
-  # denormal floor and make relative error explode - that is a test-design
-  # trap, not an aneforge bug.)
+  # 32 ops fused into ONE program; sin/cos/tanh + *1.4 is magnitude-preserving (O(1)) so relerr stays meaningful
   x = f16(4, 16, scale=1.0)
   n = 32
 
@@ -139,8 +126,7 @@ def _deep_chain():
 
 # mixed fused-MIL + netplist-bridge (graph cut -> SegmentedModel)
 def _conv_argmax_cut():
-  # conv -> relu -> reduce to [C,W] -> argmax (netplist cut). Exercises the
-  # SegmentedModel split: e5rt region feeds a native argmax sub-program.
+  # conv -> relu -> reduce -> argmax (netplist cut); exercises the SegmentedModel split
   W = f16(4, 3, 3, 3, scale=0.2)
   x = f16(1, 3, 8, 8)
 
@@ -176,8 +162,7 @@ def _np_conv(x, w, b=None, stride=1, pad=0):
 
 
 def _sdpa_sandwich():
-  # linear -> reshape to [1,H,S,D] -> af.sdpa (native cut) -> reshape -> linear.
-  # Exercises a netplist cut in the MIDDLE of a fused graph (region/cut/region).
+  # linear -> sdpa (native cut) -> linear; exercises a netplist cut in the MIDDLE of a fused graph
   H, S, Dh = 2, 6, 8
   D = H * Dh
   Wi = f16(D, D, scale=0.2)

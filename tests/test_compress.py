@@ -72,13 +72,8 @@ def test_weight_int4_falls_back_when_inaccurate():
 
 
 def test_int4_gate_not_bypassed_by_fp16_norm_overflow():
-  """Regression: an fp16 weight whose self-norm OVERFLOWS fp16 must still be gated.
-    The rel-error denominator ||W|| was once computed in fp16, so a large-magnitude
-    weight gave ||W||=inf -> rel_error=0 -> the int4 gate was silently bypassed and a
-    too-lossy int4 weight emitted. The error metric must compute in fp32."""
-  # fp16 input (the natural case), values up to ~1785: each is fp16-representable but
-  # W.dot(W) ~ 2.7e8 overflows fp16 (max 65504). 16 LUT levels cannot represent 256
-  # spread values within a tight budget, so the gate MUST reject int4.
+  """Regression: an fp16 weight whose self-norm OVERFLOWS fp16 must still be gated (rel-error in fp32)."""
+  # values fp16-representable but W.dot(W)~2.7e8 overflows fp16; 16 LUT levels can't fit -> reject int4
   W = (np.arange(256, dtype=np.float32) * 7.0).reshape(1, 256).astype(np.float16)
   em = _compile._Emitter(int8=False, compress="int4", compress_atol=1e-3)
   em.weight("w", W, allow_int8=True, allow_int4=True)
@@ -285,13 +280,12 @@ def test_auto_falls_to_int8_then_fp16():
 
 @requires_ane
 def test_auto_none_byte_identical():
-  """compress="auto" picking fp16 on a real graph does not regress; AND compress=None
-    stays byte-identical to the historical default (re-confirms the byte-identity test)."""
+  """compress="auto" picking fp16 does not regress; compress=None stays byte-identical to default."""
   import aneforge as af
   from pathlib import Path
   import tempfile
   rng = np.random.default_rng(22)
-  # a tiny norm-like weight (rms_norm gamma): forced to fp16 (allow_int8=False, no int4/sparse)
+  # rms_norm gamma: forced to fp16 (allow_int8=False, no int4/sparse)
   g = rng.standard_normal((16,)).astype(np.float32)
   x = rng.standard_normal((1, 16)).astype(np.float32)
   base = af.compile(af.input((1, 16)).rms_norm(g), compress=None)
@@ -326,31 +320,26 @@ def test_auto_matmul_runs_on_ane():
   net.release()
 
 
-# Feature - family-aware compress="auto": only encodings that STREAM natively on
-# the target family are auto candidates (h13/M1 streams int4-LUT + sparse;
-# int8/blockwise fold to dense fp16 there - accuracy cost, no bandwidth win).
+# Feature - family-aware compress="auto": only natively-streaming encodings are auto candidates
 def test_native_streams_table():
   from aneforge import _targets as TG
-  # M1: int4-LUT + sparse stream (round-9: compress="sparse" -> constexpr_sparse_to_dense,
-  # live-measured ~1.6x on genuinely-sparse weights; distinct from the HAL kernel-format gate).
+  # M1: only int4-LUT + sparse stream
   assert TG.native_streams(TG.Family.A13) == frozenset({"int4", "sparse"})
-  # A14 (M2 silicon-measured): int4/int8/sparse stream, blockwise FOLDS (no win).
+  # A14 (M2): int4/int8/sparse stream, blockwise folds
   assert TG.native_streams(TG.Family.A14) == frozenset({"int4", "int8", "sparse"})
-  # A16 (M5): the broad set streams.
+  # A16 (M5): the broad set streams
   assert TG.native_streams(TG.Family.A16) == frozenset({"int4", "int8", "sparse", "blockwise"})
 
 
 def _sparse_int4able_weight():
-  """A weight that is BOTH >=50% zeros (sparse-eligible) and int4-representable
-    under a generous budget."""
+  """A weight both >=50% zeros (sparse-eligible) and int4-representable."""
   W = np.random.default_rng(30).standard_normal((32, 64)).astype(np.float32)
   W[np.abs(W) < 1.0] = 0.0                        # ~68% zeros
   return W
 
 
 def test_auto_on_h13_streams_sparse():
-  # sparse streams on h13 (round-9 table), so auto keeps the package-wide
-  # sparse-before-int4 precedence there; the h13 filter bites on int8/blockwise.
+  # sparse streams on h13, so auto keeps sparse-before-int4 precedence; filter bites on int8/blockwise
   em = _compile._Emitter(int8=False, compress="auto", compress_atol=0.5, family=2)
   em.weight("w", _sparse_int4able_weight(), allow_int8=True, allow_int4=True, allow_sparse=True)
   mil = "\n".join(em.lines)
@@ -359,8 +348,7 @@ def test_auto_on_h13_streams_sparse():
 
 
 def test_auto_on_h13_int4_reject_falls_to_fp16_not_int8():
-  # int4-unfit weight (256 widely-spread values vs a tight budget): on h13 int8
-  # would FOLD (accuracy loss, no bandwidth win) so auto must fall to fp16.
+  # int4-unfit weight: on h13 int8 would fold, so auto must fall to fp16
   W = (np.arange(256, dtype=np.float32) * 7.0).reshape(1, 256)
   em = _compile._Emitter(int8=False, compress="auto", compress_atol=1e-4, family=2)
   em.weight("w", W, allow_int8=True, allow_int4=True, allow_sparse=True)
@@ -388,10 +376,7 @@ def test_explicit_modes_not_filtered_by_family():
 
 @requires_ane
 def test_auto_target_h13_compiles_native_stream():
-  """End-to-end plumbing: af.compile(compress='auto', target='h13') routes the
-    family into the emitter - the sparse-eligible weight comes out sparse (a
-    native h13 stream, preferred over int4), int8/blockwise never appear (they
-    fold on h13), and the program still runs (sparse is family-2-native)."""
+  """End-to-end: compile(compress='auto', target='h13') -> sparse-eligible weight comes out sparse, runs."""
   import aneforge as af
   from pathlib import Path
   import tempfile

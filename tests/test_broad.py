@@ -1,11 +1,4 @@
-"""Broader corpus part 2: multi-op COMPOSITIONS and BATCH variation at scale.
-
-test_shapes.py sweeps single ops across shapes; this sweeps realistic op
-*compositions* (attention block, MLP/FFN, conv->group_norm->relu residual) and
-batch/leading-dim variation at sizes larger than the existing small nn-block
-cases - where fusion + cross-op numerical interactions compound. Every case is
-validated against a numpy fp32 golden. Folded into ALL_CASES (run_corpus.py).
-"""
+"""Broader corpus part 2: multi-op compositions and batch variation at scale, vs numpy fp32."""
 from __future__ import annotations
 
 import numpy as np
@@ -117,12 +110,7 @@ def _deep_chain_case(D, depth):
       h = 0.5 * h * (1 + np.vectorize(erf)(h / np.sqrt(2))) if i % 2 == 0 else np.maximum(h, 0.0)
     return h
 
-  # A deep fp16 chain drifts vs fp32: each layer's activations are re-rounded to
-  # fp16 and the gelu/relu nonlinearity compounds it across layers (the wide matmul
-  # accumulator only helps WITHIN a matmul, not across them). Measured ~0.15 at
-  # depth 12, D=512 - an fp16-dataplane characteristic, not a bug. This case pins
-  # that the deep fused program compiles + runs within that drift band; a real
-  # regression would push it well past 0.2.
+  # tol=0.2: deep fp16 chain drifts ~0.15 (depth 12, D=512); a regression blows past 0.2.
   return Case(f"deep_chain_D{D}_d{depth}", "broad", build, ref, [x], tol=0.2)
 
 

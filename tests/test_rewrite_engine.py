@@ -102,10 +102,7 @@ def test_canon_noop_keeps_identity():
   assert canonicalize(y) is y
 
 def test_graph_rewrite_deep_graph_no_recursion():
-  # Iterative-solver graphs (eigh/svd unrolls) are thousands of nodes deep; the
-  # walk must not blow Python's recursion limit (_topo is iterative for the same
-  # reason). 4000 deep >> sys.getrecursionlimit() (default 1000). The add_zero
-  # canon rule drops every node, so a stack-unsafe walk would RecursionError here.
+  # 4000-deep chain >> recursion limit: the walk must stay iterative (no RecursionError)
   x = af.input((10, 1)); y = x
   for _ in range(4000): y = y.adds(0.0)                # deep chain of no-op adds
   out = canonicalize(y)                                # must not RecursionError

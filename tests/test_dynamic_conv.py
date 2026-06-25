@@ -1,5 +1,4 @@
-"""af.dynamic_conv - native conv with a runtime-tensor (dynamic) weight, lowering to the
-ANE's dynamic-kernel path. Batch-1 only (B>=2 is unsupported, guarded at build)."""
+"""af.dynamic_conv: native conv with a runtime-tensor weight (batch-1 only)."""
 from __future__ import annotations
 import numpy as np
 import pytest
@@ -34,13 +33,12 @@ def _cos(a, b):
 
 
 def test_dynamic_conv_b2_guard_and_dtype():
-  # batch>=2 is unsupported -> rejected at build time
+  # batch>=2 rejected at build time
   with pytest.raises(ValueError, match="batch N=1"):
     af.dynamic_conv(af.input((2, 1, 8, 8)), af.input((8, 1, 3, 3)))
-  # a constant (numpy) weight is the wrong call - use af.conv
+  # constant numpy weight is the wrong call (use af.conv)
   with pytest.raises(TypeError, match="must be a Tensor"):
     af.dynamic_conv(af.input((1, 1, 8, 8)), np.ones((8, 1, 3, 3), np.float32))
-  # builds at B=1 with the right output shape
   assert af.dynamic_conv(af.input((1, 2, 8, 8)), af.input((4, 2, 3, 3))).shape == (1, 4, 6, 6)
 
 
@@ -55,7 +53,7 @@ def test_dynamic_conv_fed_weight():
 
 @requires_ane
 def test_dynamic_conv_hypernetwork():
-  # a code vector generates the conv kernel ON-ENGINE (linear -> reshape -> conv), one program
+  # code vector generates the conv kernel on-engine (linear -> reshape -> conv)
   xv = rng.standard_normal((1, 2, 8, 8)).astype(np.float16)
   cv = rng.standard_normal((1, 8)).astype(np.float16)
   Wgen = (rng.standard_normal((8, 4 * 2 * 3 * 3)) * 0.1).astype(np.float32)

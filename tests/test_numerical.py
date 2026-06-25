@@ -1,32 +1,4 @@
-"""Numerical-computing corpus for aneforge - the "arbitrary sequences of ops" probe.
-
-Two halves:
-
-1. KERNELS - iterative / composed numerical kernels (power iteration, a CG step,
-   Horner polynomial eval, a PDE stencil, n-body normals, a Monte-Carlo reduction,
-   a Gram/SYRK product). Each is built as an aneforge graph, compiled + run on the
-   ANE, and validated against a numpy fp32 golden at an fp16-appropriate tolerance.
-   Tolerances are LOOSER where iteration compounds rounding - and where they are
-   loosened, the case docstring SAYS so and distinguishes "fp16 compounding" from
-   "wrong" (a wrong kernel blows past any sane tol; compounding stays O(few %)).
-
-2. LAPACK FEASIBILITY PROBES - corner probes (QR/Cholesky-style
-   orthonormalization, triangular back-substitution, a small linear solve). These
-   ask "what classical linear algebra actually fits the ANE's fp16 feed-forward
-   dataflow?" They are tagged works / arch-limited / fp16-unstable with evidence
-   (relerr vs scipy, or the compile/runtime error). A "no" here is the finding.
-
-Every case carries two extra tags beyond the harness ``Case`` fields:
-  - cost character: floor | bandwidth | compute | reduction | mixed
-  - feasibility:    works | arch-limited | fp16-unstable
-
-We reuse the shared harness (Case, eval_case, run_corpus) verbatim; the cost/
-feasibility tags are kept in a side table keyed by case name and printed by our
-own runner, so we don't touch _corpus.py.
-
-Run:
-    PYTHONPATH=. python3 tests/test_numerical.py
-"""
+"""Numerical-computing corpus for aneforge: composed kernels + LAPACK feasibility probes vs numpy goldens."""
 from __future__ import annotations
 
 import sys
@@ -50,8 +22,7 @@ rng = np.random.default_rng(1234)
 def f16(*shape, scale=1.0): return (rng.standard_normal(shape).astype(np.float32) * scale).astype(np.float16)
 
 
-# tag side-table: name -> (cost_character, feasibility)                        #
-# Populated as cases are constructed; printed by the runner.                   #
+# tag side-table: name -> (cost_character, feasibility); printed by the runner
 TAGS: dict[str, tuple[str, str]] = {}
 
 
@@ -175,8 +146,6 @@ def _horner():
   cvec = coeffs.reshape(1, D + 1)
 
   def build(xt, ct):
-    # ct is [1, D+1]; _col(ct, i) selects coeff i as a [1,1] tensor that
-    # broadcasts over the 32 lanes, so the whole recurrence stays fused.
     acc = None
     for i in range(D, -1, -1):
       ci = _col(ct, i)                  # [1,1] -> broadcasts over the 32 lanes
@@ -362,20 +331,9 @@ def _gram_syrk():
                 "compute", "works")
 
 
-# LAPACK FEASIBILITY PROBES - classify correctly, do not fake a pass.
-#
-# Background (from the reverse-engineering corpus RE of the MatrixDecomposition layer):
-#   * aneforge's __all__ exposes NO decomposition op. The hardware
-#     `MatrixDecomposition` unit exists in the netplist ISA (Type=NonQRGivens,
-#     a Givens-rotation orthogonalizer), and `MatrixDecomposition->MatMul`
-#     CARRIERS compile + run (matdecomp_matmul_fused.py), but the exact
-#     factorization COMPOSITE is `not_currently_callable`
-#     (ane_matdecomp_frontier_report.py: "carriers runtime-proven ... but exact
-#     composite evidence is absent"). So a *usable factorization* (extract Q/R/L)
-#     is NOT reachable from the public frontend or the cracked bridge today.
-#
-# We therefore probe what IS reachable - building factorizations out of the
-# available feed-forward ops - and tag each corner with evidence.
+# LAPACK FEASIBILITY PROBES - classify correctly, do not fake a pass. The native
+# MatrixDecomposition composite is not_currently_callable, so we probe what IS
+# reachable from feed-forward ops and tag each corner with evidence.
 
 def _qr_givens_probe():
   """QR via explicit Givens rotations on a small fixed matrix.

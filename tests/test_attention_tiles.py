@@ -1,9 +1,4 @@
-"""Attention query-tile autotune: heuristic by default, exact across counts, cached.
-
-The autotune only changes HOW the [H,S,T] score is fissioned, never the result, so the
-key safety property is that the tile count does not change the output. Uses a temp cache
-dir so the test sees no previously-tuned values.
-"""
+"""Attention query-tile autotune: heuristic by default, output-invariant across counts, cached."""
 import os
 import tempfile
 os.environ["ANEFORGE_CACHE_DIR"] = tempfile.mkdtemp()      # hermetic: no prior tuned values

@@ -42,12 +42,8 @@ def test_conv2d_pad_grad_matches_torch():
   x = af.input(x_np.shape); x.attrs["value"] = x_np
   w = af.conv_param(w_np)
   y = af.conv2d(x, w, pad=1)
-  # Reduce only over the batch dim. A full mean over all 4 dims divides the
-  # gradient by N*Cout*H*W (=1280), pushing input-grad magnitudes down to ~1e-4
-  # where the ANE's fp16 MAC accumulator loses relative precision in the
-  # transposed-conv input-grad path (cosine drops to ~0.95 even though the math
-  # is correct). Mean-over-batch keeps grads in fp16's normal range so the
-  # comparison is meaningful while still exercising the padded backward + a mean.
+  # mean over batch only: a full 4-dim mean shrinks grads to ~1e-4 where fp16 loses
+  # precision; mean-over-batch keeps them in fp16's normal range
   loss = (y * y).mean((0,))
   grads = agrad.backward(loss, [x, w], loss_scale=1.0)
   gx_ane = _eval(grads[x])

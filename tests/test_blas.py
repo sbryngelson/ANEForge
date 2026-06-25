@@ -1,40 +1,4 @@
-"""BLAS test corpus for aneforge: BLAS-1/2/3 operations expressed as aneforge
-graphs, each compiled + run on the Apple Neural Engine and validated against a
-numpy fp32 reference at fp16-appropriate tolerance.
-
-The point of this corpus is twofold:
-
-  1. CORRECTNESS - confirm that the classic dense-linear-algebra kernels lower to
-     the ANE and match numpy within fp16 round-off.
-  2. COST-MODEL DATA - every case carries a ``cost character`` tag in its
-     ``category`` field, one of:
-
-       floor      - tiny problem, dominated by per-dispatch fixed cost
-       bandwidth  - memory-bound (BLAS-1: O(n) flops over O(n) bytes, AI~1)
-       compute    - arithmetic-bound (BLAS-3 GEMM: O(n^3) over O(n^2) bytes)
-       reduction  - a sum/contraction collapse (dot/asum/nrm2/Gram diagonal);
-                    accuracy-sensitive because the accumulation length grows
-
-     so the corpus doubles as labelled validation data for a cost model.
-
-Run::
-
-    PYTHONPATH=. python3 tests/test_blas.py
-
-The shared harness (tests/_corpus.py) does build->compile->run->compare. We reuse
-its ``Case`` record, ``eval_case`` and the gate accounting, and add a BLAS-specific
-runner that also prints the cost-character distribution and an N/M size summary.
-
-API notes that shape these graphs (see aneforge/graph.py):
-  - scalar multiply is ``x * float`` (the ``muls`` op); binary +,-,*,/, maximum,
-    minimum need TWO graph Tensors. axpy/scal therefore fold the scalar into muls.
-  - ``x @ W`` with a numpy ``W`` is a streamed weight matmul (W stored as W.T);
-    ``x @ y`` with two Tensors is a bmm (activation x activation).
-  - reductions (sum/amax/...) keep dims (the reduced axis becomes 1). dot is
-    ``(x*y).sum(axis)``; asum is ``x.abs().sum(axis)``; nrm2 is
-    ``(x*x).sum(axis).sqrt()`` (axis convention: the reduced axis -> size 1).
-  - ger (rank-1 outer product) is a broadcast multiply u[M,1] * v[1,N] -> [M,N].
-"""
+"""BLAS-1/2/3 corpus: aneforge graphs run on the ANE vs numpy fp32, tagged with cost character."""
 from __future__ import annotations
 
 import numpy as np
@@ -50,12 +14,9 @@ def f16(*shape, scale=1.0):
 def fp32(a): return np.asarray(a, np.float32)
 
 
-# BLAS-1 : vector ops (bandwidth / floor bound; dot/asum/nrm2 are reductions)
-# aneforge has no rank-1 vector type; we carry vectors as [1, N] row tensors so
-# they fit the 2D activation layout. The cost character is unchanged.
+# BLAS-1: vector ops carried as [1, N] row tensors (no rank-1 vector type).
 
 def _axpy(N, tag):
-  # y = alpha*x + y  ->  (x * alpha) + y   (muls then add of two Tensors)
   alpha = 1.7
   x = f16(1, N); y = f16(1, N)
   def build(xt, yt): return (xt * alpha) + yt
@@ -64,7 +25,6 @@ def _axpy(N, tag):
 
 
 def _scal(N, tag):
-  # x = alpha*x  (pure muls; the cheapest BLAS-1, read+write one vector)
   alpha = 0.5
   x = f16(1, N)
   def build(xt): return xt * alpha
@@ -73,12 +33,7 @@ def _scal(N, tag):
 
 
 def _dot(N, tag, tol, abserr=None):
-  # dot = sum(x*y)  (a reduction; accumulation length N). The output is a single
-  # scalar from a sum of signed products, so it is cancellation-prone: the true
-  # value can be near zero while the absolute fp16 error stays small. For such
-  # near-zero scalars relerr (|err|/|value|) is the wrong metric, so small-N dots
-  # validate on an absolute tolerance instead (the accumulation is wide/fp32 on
-  # the ANE, so the abs error is governed by input fp16 round-off, ~1e-3).
+  # cancellation-prone scalar output: small-N dots validate on abserr, not relerr.
   x = f16(1, N, scale=0.5); y = f16(1, N, scale=0.5)
   def build(xt, yt): return (xt * yt).sum(1)
   def ref(xa, ya): return (xa * ya).sum(1, keepdims=True)
@@ -86,7 +41,6 @@ def _dot(N, tag, tol, abserr=None):
 
 
 def _asum(N, tag, tol):
-  # asum = sum(|x|)  (reduction; all-positive accumulands, length N)
   x = f16(1, N)
   def build(xt): return xt.abs().sum(1)
   def ref(xa): return np.abs(xa).sum(1, keepdims=True)
@@ -94,7 +48,6 @@ def _asum(N, tag, tol):
 
 
 def _nrm2(N, tag, tol):
-  # nrm2 = sqrt(sum(x^2))  (reduction then sqrt)
   x = f16(1, N, scale=0.3)
   def build(xt): return (xt * xt).sum(1).sqrt()
   def ref(xa): return np.sqrt((xa * xa).sum(1, keepdims=True))
@@ -102,19 +55,17 @@ def _nrm2(N, tag, tol):
 
 
 def _l2norm(N, tag, tol):
-  # the fused reduce_l2_norm op: x / sqrt(sum(x^2,axis)+eps). Bandwidth-ish
-  # (O(n) work, O(n) output) but contains a reduction; tagged reduction.
+  # fused reduce_l2_norm: contains a reduction, so tagged reduction.
   x = f16(1, N, scale=0.3)
   def build(xt): return xt.l2_norm(1)
   def ref(xa): return xa / np.sqrt((xa * xa).sum(1, keepdims=True) + 1e-12)
   return Case(f"l2norm_n{N}", tag, build, ref, [x], tol=tol)
 
 
-# BLAS-2 : matrix-vector (mixed; small=floor, large=bandwidth)
+# BLAS-2: matrix-vector.
 
 def _gemv(M, K, tag):
-  # y = A @ x, A[M,K], x[K].  Express as x_row[1,K] @ W with W=A.T (numpy weight
-  # path stores W as W.T, so x_row @ A.T == (A @ x) as a [1,M] row).
+  # y = A@x via x_row[1,K] @ A.T (numpy weight path stores W as W.T).
   A = f16(M, K, scale=0.3); x = f16(1, K)
   AT = A.T.astype(np.float16)
   def build(xt): return xt @ AT                      # [1,K] @ [K,M] -> [1,M]
@@ -123,7 +74,7 @@ def _gemv(M, K, tag):
 
 
 def _ger(M, N, tag):
-  # rank-1 outer product: u[M,1] * v[1,N] -> [M,N] (broadcast multiply).
+  # rank-1 outer product via broadcast multiply u[M,1] * v[1,N].
   u = f16(M, 1, scale=0.5); v = f16(1, N, scale=0.5)
   def build(ut, vt): return ut * vt
   def ref(ua, va): return ua * va
@@ -131,8 +82,7 @@ def _ger(M, N, tag):
 
 
 def _symv(M, K, tag):
-  # symmetric matrix-vector: y = S @ x with S = S^T. Same lowering as gemv;
-  # the symmetry is in the data, not the graph. Validates A@x on a symmetric A.
+  # symmetric matrix-vector: same lowering as gemv, symmetry is in the data.
   base = f16(M, K, scale=0.3)
   S = ((fp32(base) @ fp32(base).T) / K).astype(np.float16)  # [M,M] symmetric
   x = f16(1, M)
@@ -142,10 +92,10 @@ def _symv(M, K, tag):
   return Case(f"symv_{M}x{M}", tag, build, ref, [x], tol=0.02)
 
 
-# BLAS-3 : matrix-matrix (compute bound at size; floor when tiny)
+# BLAS-3: matrix-matrix.
 
 def _gemm(M, K, N, tag, tol, int8_ok=False):
-  # C = A @ B (activation A times streamed weight B). The canonical compute case.
+  # C = A @ B (activation A times streamed weight B).
   scale = 1.0 / max(1.0, K ** 0.5)        # keep products O(1) so fp16 is well-conditioned
   A = f16(M, K, scale=1.0); B = f16(K, N, scale=scale)
   def build(at): return at @ B
@@ -154,7 +104,7 @@ def _gemm(M, K, N, tag, tol, int8_ok=False):
 
 
 def _gemm_aa(M, K, N, tag, tol):
-  # activation x activation GEMM (bmm path), both operands are graph inputs.
+  # activation x activation GEMM (bmm path).
   scale = 1.0 / max(1.0, K ** 0.5)
   A = f16(M, K, scale=1.0); B = f16(K, N, scale=scale)
   def build(at, bt): return at @ bt
@@ -163,7 +113,7 @@ def _gemm_aa(M, K, N, tag, tol):
 
 
 def _syrk(M, K, tag, tol):
-  # C = A @ A^T (Gram matrix), A[M,K] activation. transpose + bmm.
+  # C = A @ A^T (Gram matrix) via transpose + bmm.
   scale = 1.0 / max(1.0, K ** 0.5)
   A = f16(M, K, scale=1.0) * np.float16(scale)
   def build(at): return at @ at.transpose([1, 0])    # [M,K] @ [K,M] -> [M,M]
@@ -171,11 +121,7 @@ def _syrk(M, K, tag, tol):
   return Case(f"syrk_{M}x{K}", tag, build, ref, [A], tol=tol)
 
 
-# case list
-# Sizes span regimes. Reduction tolerance loosens with accumulation length
-# (fp16 round-off on long sums); the cost-model knees referenced in the project
-# notes are K up to 2048 for matmul.
-
+# case list (reduction tolerance loosens with accumulation length)
 CASES = [
   # ---- BLAS-1 ---------------------------------------------------------- #
   # scal/axpy: read+write a vector, pure bandwidth; tiny N = floor.
@@ -216,7 +162,7 @@ CASES = [
 ]
 
 
-# runner - mirrors _corpus.run_corpus but adds cost-character + N/M summaries
+# runner - mirrors _corpus.run_corpus plus cost-character summaries
 
 def run_blas(cases, verbose: bool = True):
   all_results = []

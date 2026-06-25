@@ -1,50 +1,4 @@
-"""Iterative-numerical-methods corpus for aneforge - PDE/ODE/root-finding/series.
-
-The question it maps is: *which iterative scientific methods fit the ANE's
-fixed-dataflow, feed-forward, fp16 engine, and which need control flow it lacks?*
-
-Three families:
-
-1. PDE / STENCILS (conv-based) - the marquee scientific-compute fit. The ANE is a
-   convolution engine, so explicit stencil sweeps (Jacobi, heat, wave, multigrid
-   smoothing) lower to native conv and run on its home turf. cost: COMPUTE.
-
-2. ODE INTEGRATORS & ROOT FINDERS - forward-Euler, RK4, Newton, fixed-point. These
-   are RECURRENCES advanced a FIXED number of steps, with the RHS / f / f' / g built
-   as aneforge ops. cost: MIXED (composed elementwise + small matmul/reduction).
-
-3. SERIES / SPECIAL-FUNCTION APPROX - exp/erf/log via Horner-form polynomial chains,
-   checked against numpy's exact special function. cost: FLOOR/FUSION (deep dependent
-   mul/add chain fused into one program).
-
-THE ARCHITECTURAL BOUNDARY (the finding). The ANE has NO data-dependent control
-flow: no in-graph loop, no convergence test, no adaptive timestep, no scalar
-feedback. Every method here is therefore built with a FIXED iteration count, fully
-unrolled into a static graph. Where a real method needs a *convergence test* (stop
-when ||residual|| < tol) or an *adaptive step* (shrink dt on local error), that form
-is ARCH-LIMITED and tagged as such, with a note on exactly what control flow is
-missing. The fixed-iteration version of the same method WORKS; the adaptive/
-convergent version does not. That split IS the capability map.
-
-On error: the iterative kernels COMPOUND fp16 rounding: the ANE iterate and
-the numpy-fp32 reference iterate are genuinely different trajectories, so they drift
-a little per step. Where a tol is loosened, the docstring says so and distinguishes
-*compounding* (O(few %), grows ~linearly in step count, stays bounded) from a *bug*
-(a wrong kernel blows past any sane tol by O(1)). We keep step counts modest so the
-compounding stays interpretable.
-
-Tags (side table, like test_numerical.py - we do not touch _corpus.py):
-  - cost character: floor | bandwidth | compute | reduction | mixed
-  - feasibility:    works | arch-limited
-
-Constants. aneforge has no scalar add/sub op (only scalar MULTIPLY via ``* float``),
-so additive constants are fed as extra graph inputs (a constant array supplied at run
-time) and indexed with a one-hot ``@`` select - exactly the pattern test_numerical.py
-uses for Horner coefficients. The reference applies the identical constants.
-
-Run:
-    PYTHONPATH=. python3 tests/test_pde_ode.py
-"""
+"""Iterative-numerical-methods corpus for aneforge: PDE/ODE/root-finding/series, fixed-iteration kernels vs numpy goldens."""
 from __future__ import annotations
 
 import math
@@ -608,14 +562,8 @@ def _log_series():
                 "floor/fusion", "works")
 
 
-# 4. ARCH-LIMITED PROBES - the control-flow boundary, made explicit
-#
-# The cases above all run the FIXED-iteration form (which works). The two probes
-# below document the boundary directly: they are the SAME methods but in the form a
-# real solver needs (run-to-convergence / adaptive). We cannot express the
-# data-dependent stop, so we encode the boundary as an xfail with the reason - the
-# corpus records WHY, not a silent omission. The xfail keeps the gate green while
-# making the architectural limit a visible result.
+# 4. ARCH-LIMITED PROBES - same methods in their convergent/adaptive form, xfail'd
+# because the data-dependent stop is inexpressible on the feed-forward engine.
 
 def _newton_to_convergence_archlimited():
   """Newton run-TO-CONVERGENCE (stop when |f(x)| < tol) - the form a real root

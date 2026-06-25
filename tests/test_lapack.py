@@ -1,18 +1,4 @@
-"""LAPACK-on-the-ANE characterization corpus.
-
-LAPACK is built on three things the ANE cannot do: PIVOTING (data-dependent argmax +
-row swap), a SEQUENTIAL data-sized inner recurrence, and fp64. So LAPACK's *routines*
-do not port. But each LAPACK *problem* has a fixed-iteration / matmul-dominated method
-that IS static dataflow, and those UNROLL into a single on-ANE program (no host compute).
-
-This file is the map: for each LAPACK problem family it runs the ANE method fully on the
-engine, validates against the numpy fp64 reference on the SAME fp16-rounded system, and
-records the conditioning envelope. The families whose only method is a pivoted/recursive
-DIRECT factorization (full spectrum, pivoted LU/QR) are the documented walls - listed,
-not run. Accumulation is via matmul (the ANE's wide >=fp32 accumulator).
-
-Run: PYTHONPATH=. python3 tests/test_lapack.py
-"""
+"""LAPACK-on-the-ANE characterization corpus: per-family ANE method vs numpy fp64, with fp16 conditioning envelope."""
 from __future__ import annotations
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -154,8 +140,7 @@ CASES = [
 
 REACHABLE_UNBUILT: list = []   # QR / Cholesky / LU now built (above); nothing left in this tier
 
-# The genuine walls - they need data-dependent CONTROL FLOW or OUTPUT SIZE, which static
-# dataflow cannot express even with fixed iteration:
+# genuine walls: need data-dependent control flow or output size
 WALLED = [
     ("rank-revealing / adaptive-tolerance", "data-dependent OUTPUT SIZE (how many values > tol) - "
         "cannot emit a runtime-sized result; only all-n + a mask. The one irreducible wall."),

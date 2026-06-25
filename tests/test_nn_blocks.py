@@ -1,11 +1,4 @@
-"""NN-block cases for the aneforge corpus: realistic network fragments an
-optimizer must not break - conv stacks, a transformer encoder block, a small
-CNN->GAP->fc classifier, group/batch norm, upsample+conv (SR-style), and
-conv_transpose.
-
-Each case ships its own numpy golden reference. ``CASES`` is imported by
-tests/run_corpus.py; this file also runs standalone.
-"""
+"""NN-block cases for the aneforge corpus: realistic network fragments vs numpy goldens."""
 from __future__ import annotations
 
 import numpy as np
@@ -370,8 +363,7 @@ def _space_depth_roundtrip():
   def ref(xa):
     return xa.astype(np.float32)
 
-  # the reorder is value-preserving; a sub-ULP fp16 residual (~1e-5) keeps it from
-  # being bit-exact, so gate on a tight relerr rather than exact equality.
+  # value-preserving reorder with a sub-ULP fp16 residual -> tight relerr, not exact
   return Case("space_depth_roundtrip", "nn", build, ref, [x], tol=1e-4)
 
 

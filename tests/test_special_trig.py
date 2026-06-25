@@ -1,16 +1,4 @@
-"""sin/cos as fused fp16 polynomials + the cos-free _const fix (aneforge.special).
-
-Two things this guards:
-1. ``_const`` must NOT depend on cos. The native cos op is A15+ (family 4), so a
-   cos-based ``_const`` silently breaks EVERY special function on M1/H13 (family 2).
-   Switching to the F0-native ``exp(0)==1`` makes the whole module M1-capable.
-2. ``special.sin`` / ``special.cos`` give a portable trig path on chips where native
-   sin/cos do not exist. Domain is [-pi/2, pi/2] (documented, like every other
-   function in special.py). The decomposition uses only mul/sub/exp - native on M1 - so
-   it is validated here on the M5 against numpy; the same graph runs on M1.
-
-Run: PYTHONPATH=. python3 -m pytest tests/test_special_trig.py -q
-"""
+"""sin/cos as fused fp16 polynomials + the cos-free _const fix (aneforge.special)."""
 import numpy as np
 
 import aneforge as af
