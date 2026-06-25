@@ -53,3 +53,15 @@ Export at `opset_version=13` with constant folding on (the default), which resol
 - **NCHW.** Channels-first layout, matching ONNX's convolution convention.
 - **Uniform/symmetric conv params.** Per-axis strides, dilations, and pads must be
   uniform and symmetric; a non-uniform value raises rather than silently mis-lowering.
+
+## Limitations
+
+These attribute forms fall outside the supported subset and raise rather than
+mis-lower:
+
+- **Gemm:** only `alpha=1`, `beta=1`, `transA=0` (`transB` is honored).
+- **Conv:** explicit `pads` only - `auto_pad` (`SAME_UPPER`/`SAME_LOWER`/`VALID`) raises.
+- **Pooling:** `ceil_mode=0` (floor) only; `AveragePool` rejects `count_include_pad=1`
+  and `MaxPool` rejects `dilations != 1`.
+- **Elementwise.** `Add`/`Sub`/`Mul`/`Div` are tensor-tensor only; a constant operand
+  raises (exporters usually fold these into the adjacent `Conv`/`BatchNormalization`).

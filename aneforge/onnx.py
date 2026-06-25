@@ -56,7 +56,9 @@ def onnx_to_tensor(path):
     outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
     outs = outs if isinstance(outs, (list, tuple)) else [outs]
     for name, val in zip(node.output, outs): vals[name] = val
-  out = vals[g.output[0].name]
+  name = g.output[0].name
+  if name not in vals: raise ValueError(f"onnx: graph output '{name}' was never produced")
+  out = vals[name]
   if not isinstance(out, Tensor): raise TypeError("onnx: graph output is not a Tensor")
   return graph_inputs, out
 
@@ -71,14 +73,18 @@ def _relu(node, ins, attrs, inits): return ins[0].relu()
 def _sig(node, ins, a, i): return ins[0].sigmoid()
 @onnx_op("Tanh")
 def _tanh(node, ins, a, i): return ins[0].tanh()
+def _two(ins, op):                                 # aneforge elementwise is tensor-tensor only
+  if not isinstance(ins[0], Tensor) or not isinstance(ins[1], Tensor):
+    raise NotImplementedError(f"ONNX {op}: a constant operand is not supported (tensor-tensor elementwise only)")
+  return ins[0], ins[1]
 @onnx_op("Add")
-def _add(node, ins, a, i): return ins[0] + ins[1]
+def _add(node, ins, a, i): x, y = _two(ins, "Add"); return x + y
 @onnx_op("Sub")
-def _sub(node, ins, a, i): return ins[0] - ins[1]
+def _sub(node, ins, a, i): x, y = _two(ins, "Sub"); return x - y
 @onnx_op("Mul")
-def _mul(node, ins, a, i): return ins[0] * ins[1]
+def _mul(node, ins, a, i): x, y = _two(ins, "Mul"); return x * y
 @onnx_op("Div")
-def _div(node, ins, a, i): return ins[0] / ins[1]
+def _div(node, ins, a, i): x, y = _two(ins, "Div"); return x / y
 @onnx_op("Clip")
 def _clip(node, ins, a, i):
   """Clip; opset<11 reads min/max attrs, opset>=11 reads inputs 2/3. (0,6)->relu6, (0,inf)->relu."""
@@ -103,16 +109,23 @@ def _sympad(pads, op):                         # pads = [top,left,bottom,right];
 
 @onnx_op("Conv")
 def _conv_h(node, ins, a, i):
+  ap = a.get("auto_pad")
+  if ap is not None and (ap.decode() if isinstance(ap, bytes) else ap) != "NOTSET":
+    raise NotImplementedError(f"ONNX Conv: auto_pad={ap!r} not supported (use explicit pads)")
   x = ins[0]; w = np.asarray(ins[1]); b = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else None
   return _conv(x, w, stride=_uniform(a.get("strides"), "Conv"), pad=_sympad(a.get("pads"), "Conv"),
                dilation=_uniform(a.get("dilations"), "Conv"), groups=int(a.get("group", 1)), bias=b)
 
 @onnx_op("MaxPool")
 def _maxpool(node, ins, a, i):
+  if int(a.get("ceil_mode", 0)): raise NotImplementedError("ONNX MaxPool: ceil_mode=1 not supported")
+  if _uniform(a.get("dilations"), "MaxPool") != 1: raise NotImplementedError("ONNX MaxPool: dilations != 1 not supported")
   return ins[0].max_pool(_uniform(a.get("kernel_shape"), "MaxPool"),
                          _uniform(a.get("strides"), "MaxPool"), _sympad(a.get("pads"), "MaxPool"))
 @onnx_op("AveragePool")
 def _avgpool(node, ins, a, i):
+  if int(a.get("ceil_mode", 0)): raise NotImplementedError("ONNX AveragePool: ceil_mode=1 not supported")
+  if int(a.get("count_include_pad", 0)): raise NotImplementedError("ONNX AveragePool: count_include_pad=1 not supported")
   return ins[0].avg_pool(_uniform(a.get("kernel_shape"), "AveragePool"),
                          _uniform(a.get("strides"), "AveragePool"), _sympad(a.get("pads"), "AveragePool"))
 @onnx_op("GlobalAveragePool")
@@ -120,6 +133,8 @@ def _gap(node, ins, a, i): return ins[0].mean((2, 3))     # keepdims -> [N,C,1,1
 
 @onnx_op("Gemm")
 def _gemm(node, ins, a, i):
+  if float(a.get("alpha", 1.0)) != 1.0 or float(a.get("beta", 1.0)) != 1.0 or int(a.get("transA", 0)):
+    raise NotImplementedError("ONNX Gemm: only alpha=1, beta=1, transA=0 supported")
   x = ins[0]; W = np.asarray(ins[1]); B = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else None
   if not int(a.get("transB", 0)): W = W.T            # x.linear expects [out,in]
   return x.linear(W, B)
@@ -147,7 +162,8 @@ def _transpose(node, ins, a, i):
 @onnx_op("Squeeze")
 def _squeeze(node, ins, a, i):
   axes = a.get("axes")                               # opset<13 attr; opset>=13 axes input
-  if not axes: axes = [int(v) for v in np.asarray(ins[1])]
+  if axes is None and len(ins) > 1 and ins[1] is not None: axes = [int(v) for v in np.asarray(ins[1])]
+  if axes is None: raise NotImplementedError("ONNX Squeeze: squeeze-all (no axes) not supported")
   return ins[0].squeeze(tuple(axes))
 @onnx_op("Unsqueeze")
 def _unsqueeze(node, ins, a, i):

@@ -1,4 +1,4 @@
-import numpy as np, onnx  # noqa: F401  (harness imports for later op tests)
+import numpy as np, onnx, pytest  # noqa: F401  (harness imports for later op tests)
 from onnx import helper, TensorProto
 import aneforge as af
 from _helpers import requires_ane  # noqa: F401  (on-device gate for later op tests)
@@ -119,6 +119,78 @@ def test_identity_builds():  # Identity passes its input straight through
   n = helper.make_node("Identity", ["x"], ["y"])
   m = _model([n], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4) and out.op == "input"
+
+def test_sub_builds():
+  m = _model([helper.make_node("Sub", ["a", "b"], ["y"])], [_vi("a", [1, 3]), _vi("b", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "sub"
+
+def test_mul_builds():
+  m = _model([helper.make_node("Mul", ["a", "b"], ["y"])], [_vi("a", [1, 3]), _vi("b", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "mul"
+
+def test_div_builds():  # aneforge lowers division to real_div
+  m = _model([helper.make_node("Div", ["a", "b"], ["y"])], [_vi("a", [1, 3]), _vi("b", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "real_div"
+
+def test_tanh_builds():
+  m = _model([helper.make_node("Tanh", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "tanh"
+
+def test_clip_opset11_input_form_builds():  # opset>=11 reads min/max from inputs 2/3
+  lo = onnx.numpy_helper.from_array(np.array(0.0, dtype=np.float32), "lo")
+  hi = onnx.numpy_helper.from_array(np.array(6.0, dtype=np.float32), "hi")
+  n = helper.make_node("Clip", ["x", "lo", "hi"], ["y"])
+  m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])], inits=[lo, hi])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "relu6"
+
+def test_dynamic_dim_raises():  # symbolic dim_param -> static-shapes-only error
+  m = _model([helper.make_node("Relu", ["x"], ["y"])],
+             [helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 4])], [_vi("y", [1, 4])])
+  with pytest.raises(ValueError): af.onnx_to_tensor(m)
+
+def test_unsupported_op_raises():  # unregistered op type fails loudly
+  m = _model([helper.make_node("Erf", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_conv_non_uniform_strides_raises():
+  w = _init(np.zeros((8, 3, 3, 3)), "W")
+  n = helper.make_node("Conv", ["x", "W"], ["y"], strides=[1, 2], pads=[1, 1, 1, 1])
+  m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 16, 32])], inits=[w])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_conv_asymmetric_pads_raises():
+  w = _init(np.zeros((8, 3, 3, 3)), "W")
+  n = helper.make_node("Conv", ["x", "W"], ["y"], pads=[1, 0, 1, 0])
+  m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 32, 31])], inits=[w])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_conv_auto_pad_raises():
+  w = _init(np.zeros((8, 3, 3, 3)), "W")
+  n = helper.make_node("Conv", ["x", "W"], ["y"], auto_pad="SAME_UPPER")
+  m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 32, 32])], inits=[w])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_gemm_alpha_raises():
+  w = _init(np.zeros((10, 16)), "W"); b = _init(np.zeros(10), "B")
+  n = helper.make_node("Gemm", ["x", "W", "B"], ["y"], transB=1, alpha=2.0)
+  m = _model([n], [_vi("x", [1, 16])], [_vi("y", [1, 10])], inits=[w, b])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_add_constant_operand_raises():  # elementwise is tensor-tensor only
+  c = _init(np.zeros((1, 3)), "c")
+  n = helper.make_node("Add", ["x", "c"], ["y"])
+  m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])], inits=[c])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_squeeze_no_axes_raises():  # squeeze-all has no static lowering
+  n = helper.make_node("Squeeze", ["x"], ["y"])
+  m = _model([n], [_vi("x", [1, 1, 4])], [_vi("y", [4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_maxpool_ceil_mode_raises():
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2], strides=[2, 2], ceil_mode=1)
+  m = _model([n], [_vi("x", [1, 8, 31, 31])], [_vi("y", [1, 8, 16, 16])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
 @requires_ane
 def test_resnet18_onnx_matches_onnxruntime(tmp_path):
