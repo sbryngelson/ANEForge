@@ -1,17 +1,6 @@
-"""A drop-in `SentenceTransformer` that runs the encoder on the Apple Neural Engine.
-
-    from aneforge.sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("BAAI/bge-small-en-v1.5")
-    emb = model.encode(["a query", "a passage"])     # [2, D] on the ANE
-
-The transformer layers run on the ANE as one fused e5rt program (cached per
-sequence length); embeddings match the reference to cosine ~1.0 at a fraction of
-the GPU's energy. The pooling mode (mean / cls / max) and whether the output is
-L2-normalised are read from the model's own sentence-transformers config, so a
-mean-pooled model (MiniLM, E5) and a cls-pooled model (BGE, GTE) both come out
-right. Only numpy + aneforge are needed; the sentence-transformers package is not
-imported (this mirrors its `.encode` surface, it does not wrap it).
-"""
+"""Drop-in `SentenceTransformer` running the encoder on the Apple Neural Engine;
+pooling/normalize are read from the model's sentence-transformers config (the
+package itself is not imported). See docs/developer/models.md."""
 from __future__ import annotations
 
 import json
@@ -34,7 +23,7 @@ def _read_text(name: str, rel: str) -> str | None:
 
 def _read_st_config(name: str) -> tuple[str, bool]:
   """Return (pooling_mode, has_normalize) from the model's sentence-transformers
-    config. Defaults to ("mean", False) for a raw model with no such config."""
+    config; defaults to ("mean", False) when absent."""
   pooling = "mean"
   pc = _read_text(name, "1_Pooling/config.json")
   if pc:
@@ -50,11 +39,8 @@ def _read_st_config(name: str) -> tuple[str, bool]:
 
 class SentenceTransformer:
   """`sentence_transformers.SentenceTransformer`-compatible encoder on the ANE.
-
-    `int8=True` streams int8 weights (half the size, cosine ~0.9999). The `device`
-    argument is accepted for signature parity and ignored: the encoder always runs
-    on the Neural Engine.
-    """
+    `int8=True` streams int8 weights (cosine ~0.9999); `device` is accepted for
+    parity and ignored. See docs/developer/models.md."""
 
   def __init__(self, model_name_or_path: str, *, int8: bool = False, device: str | None = None) -> None:
     self.pooling_mode, self._normalize_module = _read_st_config(model_name_or_path)
@@ -62,13 +48,9 @@ class SentenceTransformer:
 
   def encode(self, sentences, batch_size: int = 32, normalize_embeddings: bool = False,
              convert_to_numpy: bool = True, convert_to_tensor: bool = False, **kwargs):
-    """Encode `sentences` (a str or list of str) to embeddings on the ANE.
-
-        `batch_size` is accepted for parity; the ANE path is fused per sequence
-        length and cached, so it does not change the result. A model that ships a
-        Normalize module is L2-normalised regardless of `normalize_embeddings`,
-        matching sentence-transformers.
-        """
+    """Encode `sentences` (str or list of str) to embeddings on the ANE. `batch_size`
+        is accepted for parity only. A model shipping a Normalize module is always
+        L2-normalised regardless of `normalize_embeddings`. See docs/developer/models.md."""
     single = isinstance(sentences, str)
     texts = [sentences] if single else list(sentences)
     normalize = self._normalize_module or normalize_embeddings
