@@ -1,9 +1,4 @@
-"""Shared test helpers (plain importable module, NOT a test file).
-
-  Consolidates fixtures that had drifted across the suite: the fp16 random-input
-  factory, the one-hot static-index column selector, and the ANE-availability skip
-  marker. Importing this module has no side effects beyond importing numpy/pytest.
-  """
+"""Shared test helpers (plain importable module, NOT a test file)."""
 from __future__ import annotations
 
 import numpy as np
@@ -13,12 +8,7 @@ import aneforge as af
 
 
 def f16(rng, *shape, scale=1.0, pos=False):
-  """Random fp16 tensor of the given shape, drawn from ``rng`` (a numpy Generator).
-
-    Superset of the per-file variants: ``scale`` multiplies a standard normal; when
-    ``pos`` is set the values are made strictly positive via ``abs(.) + 0.5`` (the
-    behaviour of the files that took a ``pos`` flag).
-    """
+  """Random fp16 tensor of the given shape; scale multiplies a normal, pos makes values positive via abs(.)+0.5."""
   a = rng.standard_normal(shape).astype(np.float32) * scale
   if pos:
     a = np.abs(a) + 0.5
@@ -26,9 +16,7 @@ def f16(rng, *shape, scale=1.0, pos=False):
 
 
 def onehot_select(t: af.Tensor, i: int, w: int | None = None) -> af.Tensor:
-  """Select element ``i`` of a ``[1, W]`` tensor as a ``[1, 1]`` tensor via a matmul
-    against a folded one-hot column selector (a static-index trick that stays fused -
-    no dynamic_slice/gather, so it does not cut the graph)."""
+  """Select element i of a [1, W] tensor as [1, 1] via a folded one-hot column matmul (stays fused)."""
   W = w or t.shape[-1]
   sel = np.zeros((W, 1), np.float16)
   sel[i, 0] = 1.0

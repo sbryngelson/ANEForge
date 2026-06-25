@@ -1,4 +1,4 @@
-"""LAPACK-on-the-ANE characterization corpus: per-family ANE method vs numpy fp64, with fp16 conditioning envelope."""
+"""LAPACK-on-ANE corpus: per-family ANE method vs numpy fp64, with fp16 conditioning envelope."""
 from __future__ import annotations
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")

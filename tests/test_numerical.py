@@ -1,4 +1,4 @@
-"""Numerical-computing corpus for aneforge: composed kernels + LAPACK feasibility probes vs numpy goldens."""
+"""Numerical-computing corpus: composed kernels + LAPACK feasibility probes vs numpy goldens."""
 from __future__ import annotations
 
 import sys
@@ -32,18 +32,7 @@ def tagged(case: Case, cost: str, feasibility: str) -> Case:
 # KERNELS
 
 def _power_iteration():
-  """Power iteration: y = normalize(A @ x), K fixed iters (gemv + l2-normalize).
-
-    cost: MIXED (matmul + a reduction-driven normalize per step).
-    feasibility: WORKS.
-
-    Iteration compounds fp16 rounding: each step re-rounds the gemv product and the
-    normalize, and the reference does the *same* iteration in numpy fp32, so the two
-    diverge slightly per step (the fp16 iterate and the fp32 iterate are genuinely
-    different points). With K=4 and a well-separated spectrum the iterate direction
-    is stable, so we use tol=0.05 (5%) - generous vs the synthetic 2%, justified by
-    compounding, NOT to hide a bug. A wrong gemv would give ~O(1) direction error.
-    """
+  """Power iteration y=normalize(A@x), K=4 fixed iters; tol=0.05 is generous for fp16 iterate compounding, not to hide a bug."""
   N, K = 16, 4
   A = (rng.standard_normal((N, N)).astype(np.float32) * 0.25)
   A = (A + A.T)  # symmetric -> real dominant eigenvector, clean power iteration
@@ -70,23 +59,7 @@ def _power_iteration():
 
 
 def _cg_step():
-  """One conjugate-gradient iteration's vector algebra over a fixed SPD A.
-
-      Ap   = A @ p
-      alpha= (r.r) / (p.Ap)
-      x    = x + alpha*p
-      r2   = r - alpha*Ap
-      beta = (r2.r2) / (r.r)
-      p2   = r2 + beta*p
-    output = concat(x, r2, p2)  (the full updated CG state)
-
-    cost: MIXED (gemv + several dot products (reduce_sum of a product) + axpy).
-    feasibility: WORKS.
-
-    One iteration only, so no compounding; the dots are short (N=12) and the wide
-    ANE accumulator keeps the reductions clean. tol=0.04 covers fp16 rounding of the
-    two ratio divisions. The graph inputs are [x, r, p]; A is a folded constant.
-    """
+  """One CG iteration's vector algebra over a fixed SPD A; tol=0.04 covers fp16 rounding of the two ratio divisions (no compounding, single step)."""
   N = 12
   M = (rng.standard_normal((N, N)).astype(np.float32) * 0.2)
   A = (M @ M.T + N * np.eye(N)).astype(np.float32)   # SPD, well-conditioned
@@ -122,22 +95,7 @@ def _cg_step():
 
 
 def _horner():
-  """Horner polynomial eval p(x) = ((c_n*x + c_{n-1})*x + ... )*x + c_0.
-
-    Built as one long mul->add chain (a pure fusion test: the whole degree-D
-    Horner recurrence becomes ONE fused e5rt program, no graph cut).
-
-    cost: FLOOR / FUSION (tiny tensors, many dependent fused ops; dispatch-floor
-    bound, not compute/bandwidth bound - the point is fusing a deep dependency
-    chain into a single program).
-    feasibility: WORKS.
-
-    Coefficients are carried as a second graph input (the [1, D+1] coeff vector, fed
-    at run time); _col() selects each c_i as a [1,1] tensor that broadcasts over the
-    32 lanes. x is in [-1,1] to keep the powers from overflowing fp16. Degree 6.
-    tol=0.03: Horner is the *numerically stable* eval; the only error is fp16
-    rounding of ~6 fused mul/adds, so this stays tight.
-    """
+  """Degree-6 Horner poly eval as one fused mul->add chain; tol=0.03 (stable eval, only fp16 rounding of ~6 fused mul/adds)."""
   D = 6
   coeffs = (rng.standard_normal(D + 1).astype(np.float32) * 0.5).astype(np.float16)  # c_0..c_D
   x = (rng.uniform(-1, 1, size=(1, 32)).astype(np.float32)).astype(np.float16)
@@ -162,16 +120,7 @@ def _horner():
 
 
 def _stencil_laplacian():
-  """2D 5-point Laplacian (PDE diffusion step) as a fixed-kernel conv.
-
-    cost: COMPUTE (a real conv over a 1x1x32x32 field; the ANE's home turf).
-    feasibility: WORKS.
-
-    A single explicit-Euler diffusion step u <- u + dt*Laplacian(u) implemented as
-    conv with the [[0,1,0],[1,-4,1],[0,1,0]] stencil (+ identity*dt folded into the
-    kernel). tol=0.02 - it's one conv, the wide accumulator handles the small
-    integer-weight sum cleanly.
-    """
+  """Explicit-Euler 2D 5-point Laplacian diffusion step as a fixed-kernel conv; tol=0.02 (one conv, wide accumulator)."""
   dt = 0.1
   lap = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], np.float32)
   K = np.zeros((1, 1, 3, 3), np.float32)
@@ -197,18 +146,7 @@ def _stencil_laplacian():
 
 
 def _nbody_normals():
-  """Surface normal from two edge vectors via the cracked cross_product bridge:
-    n = cross(e1, e2), then L2-normalize on the host side of the reference.
-
-    cost: MIXED (the cross_product is a native ANE sub-program - a graph CUT - so
-    this is a bridge op surrounded by nothing; "mixed" flags the cut).
-    feasibility: WORKS (cross_product is RE-recovered and runtime-proven).
-
-    We validate the raw cross product (the bridge output) against numpy.cross at
-    fp16 tol=0.03. Normalization is trivially correct if the cross is correct, and
-    adding it would just chain an l2_norm in a *separate* e5rt segment; we keep the
-    probe focused on the bridge numerics.
-    """
+  """Surface normal via the cross_product bridge (a native sub-program / graph cut), validated vs numpy.cross at tol=0.03."""
   e1 = f16(rng, 3); e2 = f16(rng, 3)
 
   def build(a, b): return af.cross_product(a, b)
@@ -220,19 +158,7 @@ def _nbody_normals():
 
 
 def _mc_reduction():
-  """Monte-Carlo-style mean & variance over a large tensor (reduce_sum/mean).
-
-    Estimates E[g(x)] and Var[g(x)] for g(x)=x^2 over a big sample, the core of an
-    MC integrator. Output = concat(mean, var) as [1,2].
-
-    cost: REDUCTION (one big elementwise map then two reductions over 8192 lanes;
-    bandwidth+reduction bound).
-    feasibility: WORKS.
-
-    Variance via E[g^2]-E[g]^2 is the cancellation-prone form, but the ANE
-    accumulator is wide (>=fp32) so the reduction itself is clean; the residual
-    error is fp16 *input* rounding of the 8192 samples. tol=0.03.
-    """
+  """MC-style mean & variance (E[g^2]-E[g]^2) over 8192 lanes; tol=0.03 (wide accumulator keeps the reduction clean, residual is fp16 input rounding)."""
   Nn = 8192
   s = f16(rng, 1, Nn, scale=1.0)
 
@@ -254,30 +180,7 @@ def _mc_reduction():
 
 
 def _lrn_local():
-  """Cross-channel local response normalization (classic AlexNet LRN), the native
-    ANE LocalResponseNormalization layer (a graph CUT, like cross_product).
-
-    cost: MIXED (cut) - one native sub-program, no surrounding fusion.
-    feasibility: WORKS.
-
-    THE BUG THIS GUARDS (found by the fuzzer): af.lrn was DOCUMENTED as a
-    full-channel normalization ``y[c]=x[c]/(k+alpha*sum_{all j} x[j]^2)^beta`` but the
-    native layer applies a LOCAL channel window of size N=C, asymmetric-centered on c
-    and clipped at the boundaries:
-        window(c) = [max(0,c-(N-1)//2) : min(C, c+N//2+1)],  N = C.
-    Only the center channel sums all C channels; edge channels sum a partial set, so
-    the output diverges from the full-window formula (a [1,3,1,1] probe gave the ANE
-    [0.261,0.262,0.415] vs the old full-window [0.131,0.262,0.394]). The reference
-    below is the CORRECT local-window LRN; ``alpha`` is the true effective alpha (the
-    bridge handles the fp16-bits encoding and the internal /KernelChannel divide).
-
-    RE'd window/alpha mapping confirmed across C in {4..8}, alpha/beta/k sweeps, to
-    relerr ~1.6e-3 (the reverse-engineering corpus). C=8 (even N) pins the asymmetric centering:
-    the extra window element goes to the RIGHT (N//2 above, (N-1)//2 below). C>=16 is
-    arch-gated (rejected in graph.py), so we probe at C=8. tol=0.01: the only error is
-    fp16 rounding of the squared-sum reduction (the wide ANE accumulator keeps it
-    tight); the divergent FULL-window formula would miss by ~0.1, far past tol.
-    """
+  """Native AlexNet LRN (graph cut). Guards the fuzzer-found bug: the layer uses a LOCAL channel window of size N=C asymmetric-centered on c (extra element to the RIGHT), not a full-channel sum; ref below is the correct local-window LRN. tol=0.01."""
   C, H, W = 8, 4, 4
   alpha, beta, k = 1.0, 0.75, 1.0
   x = f16(rng, 1, C, H, W, scale=1.0)
@@ -300,16 +203,7 @@ def _lrn_local():
 
 
 def _gram_syrk():
-  """Gram matrix / SYRK: G = X @ X^T  (X is [M,K], G is [M,M]).
-
-    cost: COMPUTE (a dense GEMM; the ANE batched-GEMM sweet spot).
-    feasibility: WORKS.
-
-    X feeds as the activation; X^T is the second activation operand built by
-    transposing the same input, so this exercises the activation x activation bmm
-    path (not a folded weight). tol=0.03 for the K-length accumulation in fp16
-    (wide accumulator keeps it tight).
-    """
+  """Gram/SYRK G=X@X^T via the activation x activation bmm path; tol=0.03 for the K-length fp16 accumulation."""
   M, K = 24, 16
   X = f16(rng, M, K, scale=0.3)
 
@@ -321,30 +215,11 @@ def _gram_syrk():
                 "compute", "works")
 
 
-# LAPACK FEASIBILITY PROBES - classify correctly, do not fake a pass. The native
-# MatrixDecomposition composite is not_currently_callable, so we probe what IS
-# reachable from feed-forward ops and tag each corner with evidence.
+# LAPACK FEASIBILITY PROBES - the native MatrixDecomposition composite is
+# not_currently_callable, so probe what IS reachable from feed-forward ops.
 
 def _qr_givens_probe():
-  """QR via explicit Givens rotations on a small fixed matrix.
-
-    APPROACH that fits a feed-forward engine: QR by a *fixed, precomputed*
-    sequence of Givens rotations is data-dependent (each rotation angle depends on
-    the current entries), so it cannot be unrolled into a static graph for an
-    arbitrary input. To probe the dataflow we instead test the one
-    orthogonalization step that IS expressible: a single Householder/Gram-Schmidt
-    projection of column 2 against a normalized column 1, all from gemv + dot +
-    l2_norm + axpy. That is the atomic step a QR is built from.
-
-    Output: the orthogonalized, normalized second column q2 = normalize(a2 -
-    (q1.a2) q1), with q1 = normalize(a1). Reference: numpy.
-
-    VERDICT: WORKS for one MGS step; full QR is ARCH-LIMITED because the rotation
-    *count and angles* are runtime-data-dependent (no static unroll) AND the native
-    MatrixDecomposition composite is not_currently_callable. We tag this case
-    arch-limited and mark it xfail-NEGATIVE only conceptually: the single step
-    passes, so it is recorded as WORKS-for-the-step. cost MIXED.
-    """
+  """One Gram-Schmidt orthogonalization step (the atom QR is built from); full QR is arch-limited (data-dependent rotation count/angles, no static unroll). tol=0.05."""
   N = 8
   A = f16(rng, N, 2, scale=0.5)   # two columns a1, a2 as [N,2]
 
@@ -373,29 +248,7 @@ def _qr_givens_probe():
 
 
 def _cholesky_probe():
-  """Cholesky factorization probe.
-
-    Cholesky is inherently SEQUENTIAL: L[j,j] = sqrt(A[j,j] - sum_k L[j,k]^2), and
-    every later entry depends on earlier-computed L entries (a forward data
-    dependence whose length == matrix dimension). On a feed-forward dataflow engine
-    with no in-graph scalar feedback, the only way to express it is to fully unroll
-    the recurrence for a FIXED size - which we attempt here for N=3 (the smallest
-    non-trivial case) to see whether the unrolled chain compiles and is numerically
-    usable.
-
-    We unroll the 3x3 Cholesky as a static graph (sqrt, div, mul/add chains) on a
-    fixed SPD input fed as [1,9] (row-major A). Output = the 6 nonzero L entries.
-
-    VERDICT (confirmed by the run + a condition-number sweep, see module note):
-    the unrolled 3x3 chain compiles and passes at relerr < 1e-3, and is
-    SURPRISINGLY fp16-robust - a sweep to cond~1e4 keeps relerr < 1% (the wide
-    ANE accumulator absorbs the sqrt/div re-rounding). So fp16 is NOT the wall.
-    The class verdict is ARCH-LIMITED: Cholesky does NOT generalize to a
-    data-sized solver because the recurrence is strictly sequential and the engine
-    has no in-graph loop or scalar feedback - every size N needs a fresh per-N
-    static unroll, and the native MatrixDecomposition composite is
-    not_currently_callable. tol=0.06.
-    """
+  """3x3 Cholesky unrolled as a static graph (the recurrence is strictly sequential); arch-limited because each N needs a fresh per-N unroll, but fp16 is not the wall. tol=0.06."""
   N = 3
   M = (rng.standard_normal((N, N)).astype(np.float32) * 0.4)
   A = (M @ M.T + N * np.eye(N)).astype(np.float32)   # SPD, well-conditioned
@@ -427,20 +280,7 @@ def _cholesky_probe():
 
 
 def _triangular_solve_probe():
-  """Back-substitution / triangular solve L x = b (lower-triangular L).
-
-    This is the canonical SEQUENTIAL kernel: x[i] = (b[i] - sum_{j<i} L[i,j] x[j])
-    / L[i,i], strictly serial in i. A feed-forward dataflow engine has no in-graph
-    iteration, so the ONLY expression is a full static unroll for a fixed N. We
-    unroll N=4 to document the cost: the graph depth grows O(N), each step divides
-    in fp16 (re-rounding), and there is no way to size it to the data.
-
-    VERDICT: ARCH-LIMITED. Back-substitution is fundamentally serial; it is
-    expressible only by per-N static unrolling (no loop primitive). The N=4 unroll
-    compiles and is numerically clean in fp16 (relerr < 1e-3 for a strong-diagonal
-    L). The wall is architectural, not precision: there is no in-graph iteration to
-    size the solve to the data, so it does not scale. tol=0.06.
-    """
+  """Triangular solve Lx=b unrolled at N=4 (canonical sequential kernel); arch-limited (serial, per-N unroll only), the wall is architectural not precision. tol=0.06."""
   N = 4
   Lm = np.tril(rng.standard_normal((N, N)).astype(np.float32) * 0.3)
   Lm[np.diag_indices(N)] = np.abs(Lm[np.diag_indices(N)]) + 1.0   # strong diagonal
@@ -475,21 +315,7 @@ def _triangular_solve_probe():
 
 
 def _linear_solve_probe():
-  """Small dense linear solve A x = b via the explicit 2x2 closed form.
-
-    For a feed-forward engine, a *general* LU solve needs pivoting + a serial
-    elimination loop (data-dependent control flow + sequential dependence) - not
-    expressible. The only solves that fit are the FIXED closed forms (Cramer /
-    adjugate) for tiny N. We probe the 2x2 closed form:
-        x = (1/det) [[ d, -b], [-c, a]] @ rhs,  det = a d - b c.
-
-    VERDICT: ARCH-LIMITED. Closed-form 2x2/3x3 solves WORK (pure feed-forward
-    arithmetic), but a general N solve is arch-limited (needs pivoting + a serial
-    elimination loop the engine cannot express). A near-singularity sweep (cond up
-    to ~1.3e3) stayed fp16-clean here because det cancels between numerator and
-    denominator, so even 1/det is robust in practice - the ceiling is "tiny
-    closed-form only," set by the missing loop, not by fp16. tol=0.05.
-    """
+  """2x2 dense solve via the closed form (Cramer); arch-limited because a general N solve needs pivoting + a serial elimination loop the engine can't express. tol=0.05."""
   A2 = (rng.standard_normal((2, 2)).astype(np.float32) * 0.5)
   A2 = (A2 + 2.0 * np.eye(2)).astype(np.float16)   # well-conditioned 2x2
   Aflat = A2.reshape(1, 4)
@@ -552,14 +378,7 @@ def _annotate(case, rec):
 
 
 def run_numerical(cases, verbose: bool = True):
-  """Mirror of _corpus.run_corpus, extended to print the cost/feasibility tags
-    and a LAPACK-probe verdict block. Returns (results, exit_code).
-
-    Gate: PASS and XFAIL are green; FAIL, ERROR, XPASS are red. The feasibility
-    tag is reported alongside but does NOT change the gate - a probe tagged
-    arch-limited still "passes" if its tiny fixed-N instance is numerically correct;
-    the tag carries the *generalization* verdict.
-    """
+  """run_corpus plus a LAPACK-probe verdict block; the feasibility tag does NOT change the gate. Returns (results, exit_code)."""
   def verdict(all_results, relerrs):
     # ------- LAPACK feasibility verdict block ----------------------------- #
     print("\n" + "-" * 100)

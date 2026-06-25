@@ -1,4 +1,4 @@
-"""Native ANE causal SDPA + additive-mask bottom and query-tiled decomposition, vs softmax(QK^T*scale + mask)*V."""
+"""Native causal SDPA + additive mask + query-tiled decomposition vs softmax(QK^T*scale+mask)*V."""
 from __future__ import annotations
 import math
 import numpy as np
@@ -26,8 +26,7 @@ def _cos(a, b):
 
 @requires_ane
 def test_af_sdpa_is_causal_native_end_to_end():
-  # af.sdpa(is_causal=True) is native end-to-end: the causal sdpa stays on the native bridge
-  # route (the optimizer won't decompose it) and the mask rides the 5th SDPA bottom.
+  # af.sdpa(is_causal=True) stays on the native bridge route; mask rides the 5th SDPA bottom.
   for H, S, D in [(1, 4, 8), (2, 8, 16)]:
     scale = 1.0 / math.sqrt(D)
     Q = rng.standard_normal((1, H, S, D)).astype(np.float16)
@@ -42,7 +41,7 @@ def test_af_sdpa_is_causal_native_end_to_end():
 
 @requires_ane
 def test_native_sdpa_additive_mask_bridge():
-  # the native fused-attention layer's optional 5th 'mask' bottom (validated on M1)
+  # the native fused-attention layer's optional 5th 'mask' bottom
   from aneforge._bridges.ane_sdpa_fused import sdpa_fused
   H, S, D = 1, 4, 8
   scale = 1.0 / math.sqrt(D)
@@ -58,8 +57,7 @@ def test_native_sdpa_additive_mask_bridge():
 @requires_ane
 @pytest.mark.parametrize("H,Sq,Skv,D", [(1, 1, 4, 8), (2, 1, 8, 16), (2, 3, 8, 16)])
 def test_sdpa_kv_cache_decode_shape(H, Sq, Skv, D):
-  # KV-cache DECODE shape: Sq query tokens attend to Skv cached K/V (seq_q != seq_kv).
-  # The native SDPA validator allows it ("K,V same seq" + "Q,K same embed" - no Q-seq constraint).
+  # KV-cache decode: Sq query tokens attend to Skv cached K/V (seq_q != seq_kv).
   scale = 1.0 / math.sqrt(D)
   Q = rng.standard_normal((1, H, Sq, D)).astype(np.float16)
   K = rng.standard_normal((1, H, Skv, D)).astype(np.float16)
@@ -73,10 +71,8 @@ def test_sdpa_kv_cache_decode_shape(H, Sq, Skv, D):
 
 @requires_ane
 def test_af_sdpa_query_tiled_decomposition():
-  # At large seq the native layer is unreliable, so af.sdpa decomposes. The decomposition
-  # query-tiles: it materializes [tile, Skv] score tiles instead of the full [Sq, Skv],
-  # which is exact (each tile attends to all keys) and far faster on the ANE. Verify both
-  # the plain path and the runtime additive mask (sliced per query tile).
+  # At large seq af.sdpa decomposes, query-tiling [tile, Skv] score tiles (exact).
+  # Verify the plain path and the runtime additive mask (sliced per query tile).
   H, S, D = 4, 1500, 64                          # S >= 512 -> decomposes -> tiles the query
   scale = 1.0 / math.sqrt(D)
   Q = rng.standard_normal((1, H, S, D)).astype(np.float16)
@@ -97,8 +93,7 @@ def test_af_sdpa_query_tiled_decomposition():
 
 @requires_ane
 def test_af_mha_query_tiled():
-  # af.mha query-tiles its per-head score matrix at large S (the same fission as af.sdpa);
-  # verify the tiled path is exact against a numpy multi-head-attention reference.
+  # af.mha query-tiles its per-head score matrix at large S; verify vs numpy MHA.
   S, D, H = 1500, 256, 8                          # S >= 512 -> tiles the query
   dh = D // H
   w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)
@@ -118,9 +113,8 @@ def test_af_mha_query_tiled():
 
 @requires_ane
 def test_af_cross_attention_query_tiled():
-  # cross_attention query-tiles when query and context are both long (S >= 768, T >= 512),
-  # materializing [tile, T] score blocks instead of the full [H, S, T]; verify exact
-  # against a numpy cross-attention reference. (Small-T stays single-shot; same result.)
+  # cross_attention query-tiles when query and context are both long (S>=768, T>=512);
+  # verify vs numpy cross-attention. (Small-T stays single-shot; same result.)
   S, T, D, H = 768, 512, 256, 8                   # S>=768 and T>=512 -> tiles the query
   dh = D // H
   w = lambda *s: (rng.standard_normal(s) * 0.05).astype(np.float16)

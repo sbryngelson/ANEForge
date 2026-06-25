@@ -54,7 +54,6 @@ def test_compress_none_matches_int8_false_mil():
   import aneforge as af
   a = af.compile(_tiny_matmul_graph(), build_dir=None)       # historical default
   b = af.compile(_tiny_matmul_graph(), compress=None)        # new knob, off
-  # both compile and produce the same op count; emitted MIL is identical
   assert a.n_ops == b.n_ops
 
 
@@ -62,7 +61,7 @@ def test_compress_none_matches_int8_false_mil():
 def test_weight_int4_falls_back_when_inaccurate():
   """A weight 16 levels can't represent within budget falls back, never errors."""
   em = _compile._Emitter(int8=False, compress="int4", compress_atol=1e-4)
-  # 256 distinct widely-spread values in one row -> 16 centroids blow the budget
+  # 256 widely-spread values -> 16 centroids blow the budget
   W = (np.arange(256, dtype=np.float32) * 7.0).reshape(1, 256)
   name = em.weight("w", W, allow_int8=True, allow_int4=True)
   mil = "\n".join(em.lines)
@@ -72,8 +71,8 @@ def test_weight_int4_falls_back_when_inaccurate():
 
 
 def test_int4_gate_not_bypassed_by_fp16_norm_overflow():
-  """Regression: an fp16 weight whose self-norm OVERFLOWS fp16 must still be gated (rel-error in fp32)."""
-  # values fp16-representable but W.dot(W)~2.7e8 overflows fp16; 16 LUT levels can't fit -> reject int4
+  """Regression: fp16 weight whose self-norm overflows fp16 must still be gated (rel-error in fp32)."""
+  # fp16-representable values but W.dot(W)~2.7e8 overflows fp16; 16 LUT levels can't fit -> reject int4
   W = (np.arange(256, dtype=np.float32) * 7.0).reshape(1, 256).astype(np.float16)
   em = _compile._Emitter(int8=False, compress="int4", compress_atol=1e-3)
   em.weight("w", W, allow_int8=True, allow_int4=True)
@@ -441,8 +440,7 @@ def test_weight_blockwise_used_when_accurate():
 
 
 def test_weight_blockwise_falls_back_when_disallowed():
-  """blockwise needs allow_int8 (it is an int8 grid); conv weights (allow_int8=False)
-    fall to fp16, never error."""
+  """blockwise needs allow_int8; conv weights (allow_int8=False) fall to fp16, never error."""
   em = _compile._Emitter(int8=False, compress="blockwise")
   W = np.random.default_rng(33).standard_normal((16, 32)).astype(np.float32)
   name = em.weight("w", W, allow_int8=False)

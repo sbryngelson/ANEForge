@@ -1,4 +1,4 @@
-"""Iterative-numerical-methods corpus for aneforge: PDE/ODE/root-finding/series, fixed-iteration kernels vs numpy goldens."""
+"""Iterative-methods corpus: PDE/ODE/root-finding/series fixed-iteration kernels vs numpy goldens."""
 from __future__ import annotations
 
 import math
@@ -27,26 +27,7 @@ def tagged(case: Case, cost: str, feasibility: str) -> Case:
 # 1. PDE / STENCILS  (conv-based - the ANE's home turf)
 
 def _jacobi_iteration():
-  """Jacobi iteration for the 2D Poisson equation  -Lap(u) = f  (Dirichlet=0),
-    K FIXED sweeps. The Jacobi update on the 5-point Laplacian is
-
-        u_new[i,j] = (u[i-1,j] + u[i+1,j] + u[i,j-1] + u[i,j+1] + h^2 f[i,j]) / 4
-
-    The neighbour-sum is a conv with the [[0,1,0],[1,0,1],[0,1,0]] stencil (zero
-    center), then scale by 1/4. The h^2 f source term is a folded constant added via
-    conv bias (we bake f's contribution as a per-pixel constant is not conv-bias-able,
-    so we drop the source: f=0, pure Laplace smoothing, which is the Jacobi smoother
-    used inside multigrid). K=5 sweeps.
-
-    cost: COMPUTE (K convs over a 24x24 field).
-    feasibility: WORKS as a FIXED-sweep smoother.
-
-    ARCH boundary (noted, not failed here): a *solver* Jacobi runs until
-    ||u_new - u|| < tol - a data-dependent convergence test the engine cannot
-    express. We run K fixed sweeps (the smoother form). tol=0.02: each sweep is one
-    integer-weight conv + a scalar mul; the wide accumulator keeps it clean, and 5
-    sweeps of a contraction do not compound badly (Jacobi is a smoother, error decays).
-    """
+  """Jacobi smoother for 2D Poisson (f=0, K=5 fixed sweeps as neighbour-sum convs); tol=0.02 (a solver form would need a data-dependent convergence stop)."""
   H = W = 24; K = 5
   nbr = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], np.float32)
   Kw = (0.25 * nbr).reshape(1, 1, 3, 3).astype(np.float16)
@@ -75,17 +56,7 @@ def _jacobi_iteration():
 
 
 def _heat_step_2d():
-  """2D heat equation, explicit (forward-Euler) step:
-        u^{n+1} = u^n + (alpha*dt/h^2) * Lap(u^n),  Lap = 5-point stencil.
-
-    Single explicit step, folded into ONE conv: kernel = identity + r*[[0,1,0],
-    [1,-4,1],[0,1,0]] with r = alpha*dt/h^2 = 0.2 (inside the r<=0.25 stability
-    bound for the 2D explicit scheme). cost: COMPUTE. feasibility: WORKS.
-
-    tol=0.02: one conv, integer-ish weights, wide accumulator. Identical in form to
-    test_numerical.py's stencil case but parameterised as a real heat step with a
-    stable r.
-    """
+  """Explicit (forward-Euler) 2D heat step folded into one conv, r=0.2 (inside the r<=0.25 stability bound); tol=0.02."""
   H = W = 32; r = 0.2
   lap = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], np.float32)
   K = np.zeros((1, 1, 3, 3), np.float32)
@@ -110,18 +81,7 @@ def _heat_step_2d():
 
 
 def _wave_step_2d():
-  """2D wave equation, 2nd-order-in-time explicit (leapfrog) step. The scheme
-
-        u^{n+1} = 2 u^n - u^{n-1} + C^2 * Lap(u^n),   C = c*dt/h  (Courant number)
-
-    needs TWO time levels (u^n and u^{n-1}) - a second-order recurrence. We feed both
-    as graph inputs and produce u^{n+1}: a conv (C^2*Lap) on u^n, plus 2*u^n, minus
-    u^{n-1}. cost: COMPUTE (conv + two axpy maps). feasibility: WORKS.
-
-    The 2*u^n term is built so it stays fused: conv of u^n with the combined kernel
-    K = C^2*Lap + 2*I gives (2 u^n + C^2 Lap u^n) in one conv; then subtract u^{n-1}.
-    C=0.4 (well inside the 2D CFL bound C<=1/sqrt(2)~0.707). tol=0.02.
-    """
+  """2D wave leapfrog step (two time levels in, combined kernel K=C^2*Lap+2*I in one conv minus u^{n-1}), C=0.4 inside CFL; tol=0.02."""
   H = W = 24; C = 0.4
   lap = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], np.float32)
   K = np.zeros((1, 1, 3, 3), np.float32)
@@ -147,22 +107,7 @@ def _wave_step_2d():
 
 
 def _multigrid_smooth():
-  """One weighted-Jacobi (damped) multigrid SMOOTHING sweep on the 2D Laplacian:
-
-        u_new = (1 - omega) u + omega * (neighbour_avg(u)),   omega = 2/3.
-
-    This is the relaxation kernel at the heart of a multigrid V-cycle. It combines a
-    neighbour-average conv with a damping blend of the old field - a conv plus a
-    scalar-weighted residual map. We fold BOTH terms into one conv kernel:
-        K = (1-omega)*I + omega*0.25*[[0,1,0],[1,0,1],[0,1,0]]
-    so the whole damped sweep is a single conv. cost: COMPUTE. feasibility: WORKS.
-
-    ARCH boundary (noted): a real V-cycle also needs restriction/prolongation between
-    grids of DIFFERENT sizes and a recursion that bottoms out at the coarsest grid by
-    a *solve*; the inter-grid transfers are convs/pools (expressible), but the
-    recursion DEPTH and the coarse solve are control-flow / data-sized. We probe the
-    single smoothing sweep (the expressible atom). tol=0.02.
-    """
+  """One damped-Jacobi multigrid smoothing sweep (omega=2/3) folded into a single conv; tol=0.02 (a full V-cycle's recursion depth + coarse solve are arch-limited)."""
   H = W = 24; omega = 2.0 / 3.0
   nbr = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], np.float32)
   K = np.zeros((1, 1, 3, 3), np.float32)
@@ -189,20 +134,7 @@ def _multigrid_smooth():
 # 2. ODE INTEGRATORS & ROOT FINDERS  (fixed-step recurrences)
 
 def _forward_euler():
-  """Forward-Euler integration of a small LINEAR ODE system  y' = A y  for a FIXED
-    number of steps:  y_{n+1} = y_n + dt * (A y_n).
-
-    The RHS A y is a gemv (folded weight A); the step is an axpy. K=8 steps, dt=0.05.
-    A is scaled so the spectral radius keeps the explicit scheme stable. cost: MIXED
-    (gemv + axpy per step). feasibility: WORKS (fixed step count).
-
-    ARCH boundary (noted): an ADAPTIVE-step integrator (RKF45 etc.) shrinks dt when
-    the local error estimate exceeds a tolerance - a data-dependent branch + variable
-    step count the engine cannot express. The FIXED-step form is fully unrollable and
-    runs. tol=0.04: 8 steps compound fp16 rounding of the gemv+axpy; this is
-    COMPOUNDING (grows ~linearly, stays a few %), not a bug - a wrong RHS would
-    diverge by O(1) over 8 steps.
-    """
+  """Forward-Euler on a linear ODE y'=Ay, K=8 fixed steps (gemv+axpy); tol=0.04 covers bounded fp16 compounding (an adaptive-step integrator would be arch-limited)."""
   N, K, dt = 8, 8, 0.05
   A = (rng.standard_normal((N, N)).astype(np.float32) * 0.3)
   A = (A - A.T)                       # skew-symmetric -> norm-preserving, stable
@@ -227,22 +159,7 @@ def _forward_euler():
 
 
 def _rk4_step():
-  """Classic RK4 advancing a NONLINEAR scalar-field ODE a FIXED number of steps.
-
-    System: y' = f(y) = -y + 0.1*y^2  (a logistic-ish decay), applied elementwise to a
-    small vector y (independent scalar ODEs). RK4 per step:
-        k1 = f(y);  k2 = f(y + dt/2 k1);  k3 = f(y + dt/2 k2);  k4 = f(y + dt k3)
-        y <- y + dt/6 (k1 + 2k2 + 2k3 + k4)
-    f is built from aneforge ops (square + scalar muls + add). K=4 steps, dt=0.1.
-
-    cost: MIXED (the RHS f is a few elementwise ops; RK4 is 4 RHS evals + a weighted
-    combine per step). feasibility: WORKS (fixed step count).
-
-    ARCH boundary: same as Euler - adaptive RK (embedded error estimate + step
-    rejection) needs control flow; the fixed-step RK4 unrolls cleanly. tol=0.04:
-    RK4 is high-order-accurate so the trajectory error is tiny; the residual is fp16
-    COMPOUNDING over 4 steps x 4 RHS evals, not a bug.
-    """
+  """RK4 on a nonlinear scalar ODE y'=-y+0.1y^2, K=4 fixed steps; tol=0.04 (residual is fp16 compounding over 4 steps x 4 RHS evals, not a bug)."""
   N, K, dt = 12, 4, 0.1
 
   def f_ag(y):                              # f(y) = -y + 0.1 y^2  via aneforge ops
@@ -278,23 +195,7 @@ def _rk4_step():
 
 
 def _newton_scalar():
-  """Newton's method, FIXED iteration count, on a scalar function applied
-    elementwise:  solve f(x) = x^2 - a = 0  (i.e. compute sqrt(a)) via
-        x <- x - f(x)/f'(x) = x - (x^2 - a)/(2x) = 0.5*(x + a/x).
-    K=4 Newton steps from x0 = a (or 1), a fed as a graph input vector of positive
-    values. f and f' are aneforge ops (square, div, scalar muls).
-
-    cost: MIXED (square + div + axpy per step; tiny tensors). feasibility: WORKS
-    (fixed iteration count).
-
-    ARCH boundary (THE marquee one): real Newton iterates UNTIL |f(x)| < tol - a
-    data-dependent convergence test. The engine has no in-graph branch/loop, so we
-    must commit to a FIXED K up front and unroll. For quadratic convergence K=4 is
-    plenty here (a..~few), but a general solver that adapts K to the residual is
-    arch-limited. tol=0.02: Newton converges fast and the per-step ops are cheap, so
-    the only error is fp16 rounding of the final iterate, not compounding (it has
-    converged).
-    """
+  """Newton sqrt iter x<-0.5(x+a/x), K=4 fixed steps; tol=0.02 (converged, only fp16 rounding of the final iterate; run-to-tol would be arch-limited)."""
   N, K = 16, 4
   a = (rng.uniform(0.5, 4.0, size=(1, N)).astype(np.float32)).astype(np.float16)  # solve x^2=a
 
@@ -315,21 +216,7 @@ def _newton_scalar():
 
 
 def _newton_vector():
-  """Newton's method on a small VECTOR function via the explicit 2x2 Jacobian
-    inverse, FIXED K iterations. Solve F(x)=0 for
-        F(x) = [ x0^2 + x1^2 - r ,  x0 - x1 - s ],
-    Jacobian J = [[2 x0, 2 x1], [1, -1]], step  x <- x - J^{-1} F  with J^{-1} from the
-    2x2 closed form (det = -2x0 - 2x1). r, s fed as the constant pair input. K=4.
-
-    cost: MIXED (a few muls/divs + the 2x2 inverse arithmetic per step).
-    feasibility: WORKS for the fixed-N closed-form Jacobian.
-
-    ARCH boundary: (a) the convergence test is data-dependent (fixed K instead);
-    (b) a GENERAL N-D Newton needs a linear SOLVE of J dx = -F each step, which is
-    pivoted elimination - arch-limited (see test_numerical.py's solve probes). Only
-    the tiny closed-form Jacobian inverse fits. tol=0.03: converges in a few steps;
-    residual is fp16 rounding of the closed-form inverse, lightly compounding.
-    """
+  """Vector Newton via the explicit 2x2 Jacobian inverse, K=4 fixed steps; tol=0.03 (a general N-D Newton needs a linear solve each step = arch-limited)."""
   K = 4
   r, s = 2.0, 0.5                          # target constants
   rs = np.array([[r, s]], np.float16)
@@ -368,19 +255,7 @@ def _newton_vector():
 
 
 def _fixed_point():
-  """Fixed-point iteration  x = g(x), FIXED K iterations, with the classic
-    contraction g(x) = cos(x) (Banach fixed point -> the Dottie number ~0.739). g is
-    an aneforge op (cos). K=10 iters from x0 in [0,1] applied elementwise.
-
-    cost: MIXED (one transcendental per step; tiny tensors, dispatch/floor leaning).
-    feasibility: WORKS (fixed count).
-
-    ARCH boundary: a real fixed-point solver iterates UNTIL |x_{k+1}-x_k| < tol - the
-    same missing convergence test. We commit to K=10 (cos is a contraction with rate
-    ~|sin| < 1 near the fixed point, so 10 iters is well-converged). tol=0.02: error
-    is fp16 rounding of the converged value; cos itself is an fp16 transcendental
-    (its own approximation error is part of the ANE vs numpy gap, hence not tighter).
-    """
+  """Fixed-point iter x=cos(x), K=10 (Banach contraction -> Dottie number); tol=0.02 (converged value's fp16 rounding plus cos's own fp16 transcendental error)."""
   N, K = 16, 10
   x0 = (rng.uniform(0.0, 1.0, size=(1, N)).astype(np.float32)).astype(np.float16)
 
@@ -403,19 +278,7 @@ def _fixed_point():
 # 3. SERIES / SPECIAL-FUNCTION APPROXIMATION  (Horner chains vs exact)
 
 def _exp_taylor():
-  """exp(x) via a degree-8 Taylor series in Horner form, checked vs numpy.exp.
-
-        exp(x) ~ sum_{k=0..8} x^k / k!   (Horner: ((.../8 * x + 1/7!)*x + ...)*x + 1)
-
-    Coefficients 1/k! fed as a constant input (reversed: c[D..0]); built as a fused
-    mul/add chain via the one-hot column select. x in [-2,2] so the truncated series
-    is accurate AND the powers stay in fp16 range. cost: FLOOR/FUSION (deep dependent
-    chain -> one program). feasibility: WORKS.
-
-    tol=0.03: the gap vs numpy.exp is (a) degree-8 Taylor TRUNCATION on [-2,2] (~1e-3
-    relative at the ends) plus (b) fp16 rounding of the 8 fused mul/adds. This is a
-    genuine approximation+rounding gap, NOT a bug; a wrong chain misses by O(1).
-    """
+  """exp(x) via a degree-8 Taylor/Horner chain, x in [-2,2]; tol=0.03 covers truncation plus fp16 rounding of the 8 fused mul/adds (a genuine approx gap, not a bug)."""
   D = 8
   coeffs = np.array([1.0 / math.factorial(k) for k in range(D + 1)], np.float32)
   cvec = coeffs.astype(np.float16).reshape(1, D + 1)             # c[0..D] = 1/k!
@@ -440,18 +303,7 @@ def _exp_taylor():
 
 
 def _exp_vs_exact():
-  """exp(x) Taylor (deg 10) vs numpy's EXACT exp - measures TRUNCATION+fp16 jointly.
-
-    Unlike exp_taylor_deg8 (which compares the chain to the same fp32 chain, isolating
-    rounding), this case's reference is the true np.exp, so the relerr includes the
-    series truncation. x restricted to [-1.5,1.5] and degree 10 to keep truncation
-    small. cost: FLOOR/FUSION. feasibility: WORKS.
-
-    tol=0.03: deg-10 Taylor on [-1.5,1.5] truncates at ~1e-4 relative, so the budget is
-    dominated by fp16 rounding of 10 fused mul/adds near x=+1.5 where exp~4.5. The
-    point of THIS case is to show a Horner special-function approx can hit the exact
-    function to a few % in fp16 - the boundary of usable on-ANE special functions.
-    """
+  """deg-10 exp Taylor vs the EXACT np.exp (includes truncation), x in [-1.5,1.5]; tol=0.03 dominated by fp16 rounding of 10 fused mul/adds."""
   D = 10
   coeffs = np.array([1.0 / math.factorial(k) for k in range(D + 1)], np.float32)
   cvec = coeffs.astype(np.float16).reshape(1, D + 1)
@@ -471,21 +323,7 @@ def _exp_vs_exact():
 
 
 def _erf_series():
-  """erf(x) via its Maclaurin series (Horner), checked vs scipy/numpy exact erf.
-
-        erf(x) = (2/sqrt(pi)) * x * sum_{k=0..M} (-1)^k x^{2k} / (k!(2k+1))
-
-    We evaluate the inner polynomial P(u) in u = x^2 by Horner (coeffs fed as a
-    constant input), then multiply by (2/sqrt(pi)) * x. x in [-1.5,1.5] (the series
-    converges fast there; beyond ~2 it needs many terms / the complementary form).
-    M=8 terms. cost: FLOOR/FUSION. feasibility: WORKS on the convergent interval.
-
-    ARCH boundary (noted): erf for LARGE |x| needs a regime SWITCH to the
-    asymptotic/continued-fraction form - a data-dependent branch the engine lacks; a
-    single fixed series only covers a bounded interval. tol=0.03: deg-8 series on
-    [-1.5,1.5] plus fp16 rounding; the reference is the exact erf, so this includes
-    truncation. A wrong polynomial misses erf (which saturates near +-1) by O(1).
-    """
+  """erf(x) via its M=8 Maclaurin/Horner series vs exact erf, x in [-1.5,1.5]; tol=0.03 (large |x| would need a regime switch the engine lacks)."""
   M = 8
   u_coeffs = np.array([((-1.0) ** k) / (math.factorial(k) * (2 * k + 1))
                         for k in range(M + 1)], np.float32)            # poly in u=x^2
@@ -514,22 +352,7 @@ def _erf_series():
 
 
 def _log_series():
-  """log(1+z) via its series (Horner) for z in (-0.5, 0.5), vs numpy's exact log.
-
-        log(1+z) = sum_{k>=1} (-1)^{k+1} z^k / k  = z - z^2/2 + z^3/3 - ...
-
-    We feed z (small) and evaluate the degree-10 truncation in Horner form, comparing
-    to np.log1p(z) (exact). z restricted to (-0.5,0.5) where the alternating series
-    converges quickly. cost: FLOOR/FUSION. feasibility: WORKS on the convergent
-    interval.
-
-    ARCH boundary (noted): log over the FULL positive axis needs argument reduction
-    (factor out a power of 2, series on the mantissa) - the reduction picks an
-    exponent, a data-dependent integer branch the engine lacks. A single fixed series
-    only covers a bounded interval around 1. tol=0.03: deg-10 alternating series on
-    |z|<0.5 truncates at ~5e-4 relative; the rest is fp16 rounding. Reference is exact
-    log1p, so truncation is included.
-    """
+  """log(1+z) via a degree-10 Horner series vs exact log1p, z in (-0.5,0.5); tol=0.03 (full-axis log would need data-dependent argument reduction)."""
   D = 10
   # coeffs for poly in z, k=0..D ; c[0]=0 (no constant term), c[k]=(-1)^{k+1}/k
   coeffs = np.array([0.0] + [((-1.0) ** (k + 1)) / k for k in range(1, D + 1)], np.float32)
@@ -549,28 +372,13 @@ def _log_series():
                 "floor/fusion", "works")
 
 
-# 4. ARCH-LIMITED PROBES - same methods in their convergent/adaptive form, xfail'd
-# because the data-dependent stop is inexpressible on the feed-forward engine.
+# 4. ARCH-LIMITED PROBES - convergent/adaptive forms, xfail'd: the data-dependent stop is inexpressible.
 
 def _newton_to_convergence_archlimited():
-  """Newton run-TO-CONVERGENCE (stop when |f(x)| < tol) - the form a real root
-    solver uses. This needs a data-dependent loop/branch (variable iteration count),
-    which the feed-forward ANE cannot express. We mark it xfail with that reason.
-
-    To still produce a runnable graph, build() emits a FIXED-K unroll (so the case
-    executes and we can see it numerically converge), but the case is tagged
-    arch-limited and xfail: the POINT is that the convergent form's stopping rule is
-    inexpressible, not that the arithmetic is wrong. A fixed unroll that matched the
-    reference would XPASS rather than XFAIL, so to keep the semantics correct we set the
-    reference to the run-to-tol numpy result with a DIFFERENT (data-dependent) iteration
-    count: the fixed-K ANE graph and the variable-count reference then legitimately
-    differ at tight tol, demonstrating that you cannot match an adaptive method with a
-    fixed graph in general.
-    """
+  """Newton run-to-convergence (xfail): a fixed-K unroll cannot match the variable-count numpy reference, demonstrating the data-dependent stop is inexpressible."""
   N = 12
-  # Build a problem where convergence count VARIES across lanes: solve x^2 = a for a
-  # spread of a, run numpy to a tight residual (variable iters), but the ANE graph is
-  # a fixed K=2 (deliberately too few for the hardest lanes) -> genuine mismatch.
+  # convergence count varies across lanes: numpy runs to a tight residual, the ANE
+  # graph is fixed K=2 (too few for the hardest lanes) -> genuine mismatch.
   a = (rng.uniform(0.1, 50.0, size=(1, N)).astype(np.float32)).astype(np.float16)
   K_fixed = 2
 
@@ -604,16 +412,7 @@ def _newton_to_convergence_archlimited():
 
 
 def _adaptive_timestep_archlimited():
-  """Adaptive-timestep ODE integration (shrink dt on local error) - the form a real
-    stiff/accurate integrator uses. The step size and the number of steps depend on a
-    runtime local-error estimate, i.e. data-dependent control flow the ANE lacks.
-
-    We encode the boundary: build() does a FIXED coarse Euler (large dt, few steps);
-    the reference does an ADAPTIVE integration to a tight accuracy (many small steps
-    where the solution is stiff). The two legitimately disagree at tight tol because a
-    fixed coarse graph cannot adapt - that disagreement IS the finding, recorded as
-    xfail with the reason.
-    """
+  """Adaptive-timestep ODE (xfail): a fixed coarse Euler graph diverges from the accurate (exp) solution on stiff lanes, since dt/step-count are data-dependent control flow."""
   N = 8
   # y' = -k y (stiff for large k); a spread of k across lanes forces different ideal
   # step sizes per lane -> no single fixed dt works for all.
@@ -686,14 +485,7 @@ def _annotate(case, rec):
 
 
 def run_pde_ode(cases, verbose: bool = True):
-  """Mirror of _corpus.run_corpus, extended to print cost/feasibility tags and an
-    iterative-methods capability verdict block. Returns (results, exit_code).
-
-    Gate: PASS and XFAIL are green; FAIL, ERROR, XPASS are red. The arch-limited
-    cases are XFAIL (their convergent/adaptive form is inexpressible) and stay green;
-    their tag carries the capability verdict. A fixed-iteration kernel that drifts
-    past tol would FAIL (red) - that is how compounding-vs-bug is policed.
-    """
+  """run_corpus plus an iterative-methods capability verdict block; PASS/XFAIL green, FAIL/ERROR/XPASS red. Returns (results, exit_code)."""
   def verdict(all_results, relerrs):
     # ------- iterative-methods capability verdict block ------------------- #
     print("\n" + "-" * 110)

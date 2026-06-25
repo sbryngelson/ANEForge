@@ -1,4 +1,4 @@
-"""Spectral / signal / statistical scientific-kernel corpus for aneforge (the 'can the ANE do an FFT?' probe), vs fp32 goldens."""
+"""Spectral / signal / statistical scientific-kernel corpus ('can the ANE do an FFT?') vs fp32 goldens."""
 from __future__ import annotations
 
 import sys
@@ -26,29 +26,7 @@ def tagged(case: Case, cost: str, feasibility: str) -> Case:
 # SPECTRAL - the "can the ANE do an FFT?" probe (complex as real pairs)
 
 def _dft_matmul(N: int, tol: float):
-  """Discrete Fourier transform as a dense twiddle-matrix matmul, complex emulated
-    as a (real, imag) tensor pair.
-
-        X_k = sum_n x_n * exp(-2*pi*i*k*n/N) = x @ W^T,  W[k,n] = exp(-2*pi*i*k*n/N).
-
-    With x = xr + i*xi and W = Wr + i*Wi (Wr, Wi folded as fp16 weight constants):
-        Xr = xr @ Wr^T - xi @ Wi^T
-        Xi = xr @ Wi^T + xi @ Wr^T
-    Output = concat(Xr, Xi) as [1, 2N]. Two graph inputs: the real and imag parts of x.
-
-    cost: COMPUTE (two [1,N]@[N,N] GEMMs against folded twiddle weights, plus two more
-      for the imag channel; the O(N^2) twiddle matrix is the cost - this is the naive
-      DFT, not an FFT).
-    feasibility: WORKS, and SURPRISINGLY fp16-robust in N.
-
-    KEY FINDING (the marquee result): the DFT-matmul is fp16-CLEAN to large N because
-    the ANE matmul accumulator is wide (>=fp32) - the length-N twiddle sum does NOT
-    re-round per term, so the only error is fp16 rounding of the *inputs* and *twiddle
-    constants*, which does NOT compound with N. Empirically relerr stays ~3e-4..6e-4
-    FLAT from N=8 to N=2048 (verified on M5). So fp16 is not the wall for the transform
-    itself; the real ceiling is the O(N^2) weight-matrix size/bandwidth, not precision.
-    Tolerances are set just above the measured fp16 floor per N.
-    """
+  """DFT as a dense twiddle-matrix matmul, complex emulated as a (real, imag) pair; fp16-clean (wide accumulator), O(N^2) twiddle is the cost."""
   n = np.arange(N)
   k = n.reshape(-1, 1)
   W = np.exp(-2j * np.pi * k * n / N)                  # [N,N] DFT matrix
@@ -75,29 +53,7 @@ def _dft_matmul(N: int, tol: float):
 
 
 def _fft_butterfly_radix2(N: int, tol: float):
-  """Radix-2 decimation-in-time (Cooley-Tukey) FFT, FULLY UNROLLED as a static graph
-    over (real, imag) lane pairs - the genuine butterfly, not a matmul.
-
-    Inputs are bit-reversed (a static permutation, expressed via one-hot matmul lane
-    selects since the ANE has no gather), then log2(N) stages of butterflies combine
-    them. Each butterfly multiplies one operand by a CONSTANT twiddle w = e^{-2pi i j/size}
-    (complex mul expanded over real/imag) and forms (a+t, a-t). Output = concat of the
-    N real lanes then the N imag lanes.
-
-    cost: FLOOR/FUSION (many tiny dependent ops fused into ONE e5rt program - the whole
-      N*log2(N) butterfly network; dispatch-floor bound, the structural-expressibility
-      probe, NOT compute-bound at these small N).
-    feasibility: WORKS for small fixed N (verified correct at N=8, relerr ~1.8e-4).
-
-    STRUCTURAL VERDICT: the butterfly is *expressible and correct* via complex-as-real
-    pairs, but ONLY by a per-N static unroll - the ANE is feed-forward with no in-graph
-    loop, no scalar feedback, and no dynamic gather. The bit-reversal must be a folded
-    one-hot matrix and every stage hand-emitted. So it compiles for a fixed N but does
-    not scale to a data-sized FFT (same architectural wall as the LAPACK unrolls). For
-    actual use the dense DFT-matmul above is both simpler and just as fp16-clean; the
-    butterfly's only theoretical win (O(N log N)) is not realizable as a static graph at
-    useful N. fp16 is NOT the limiter here; the static-unroll requirement is.
-    """
+  """Radix-2 DIT FFT fully unrolled as a static graph over (real, imag) lane pairs; correct for small fixed N, but only as a per-N static unroll (no loop/gather)."""
   bits = int(round(np.log2(N)))
   assert (1 << bits) == N, "radix-2 requires power-of-two N"
 
@@ -139,16 +95,7 @@ def _fft_butterfly_radix2(N: int, tol: float):
 
 
 def _rfft_power_spectrum(N: int, tol: float):
-  """Real-input FFT power spectrum |X_k|^2 via the DFT-matmul (real x only).
-
-    A common DSP endpoint: feed a real signal, get the power spectrum. xi is identically
-    zero (real input), so Xr = x @ Wr^T, Xi = x @ Wi^T, and P = Xr^2 + Xi^2 (one fused
-    square+add after the two GEMMs). Output = [1, N] power spectrum.
-
-    cost: COMPUTE (two folded-twiddle GEMMs + a squared-magnitude map).
-    feasibility: WORKS (fp16-clean; |.|^2 squares the relerr scale but the wide
-      accumulator keeps the underlying DFT tight, so the power spectrum stays usable).
-    """
+  """Real-input FFT power spectrum |X_k|^2 = Xr^2+Xi^2 via the DFT-matmul; fp16-clean."""
   n = np.arange(N); k = n.reshape(-1, 1)
   W = np.exp(-2j * np.pi * k * n / N)
   Wr = np.ascontiguousarray(np.real(W)).astype(np.float16)
@@ -171,17 +118,7 @@ def _rfft_power_spectrum(N: int, tol: float):
 # SIGNAL - FIR filter and autocorrelation
 
 def _fir_filter(L: int, K: int, tol: float):
-  """FIR filter as a 1D convolution: y = conv(signal, taps), valid mode.
-
-    Built on the ANE conv layer with the signal as [1,1,1,L] and the taps as a
-    [1,1,1,K] kernel. NOTE the convention: the ANE conv is a CROSS-CORRELATION (no
-    kernel flip), matching ``np.correlate(sig, taps, 'valid')`` - verified on-device.
-    (A flipped reference, ``np.convolve``, mismatches by ~O(1), which is the convention
-    check, not an error.)
-
-    cost: COMPUTE (a real conv - the ANE's home turf).
-    feasibility: WORKS.
-    """
+  """FIR filter as a valid 1D conv; ANE conv is cross-correlation (no kernel flip)."""
   sig = f16(rng, 1, 1, 1, L)
   taps = f16(rng, 1, 1, 1, K, scale=0.5)
 
@@ -199,19 +136,7 @@ def _fir_filter(L: int, K: int, tol: float):
 
 
 def _autocorr_crosscorr(H: int, W: int, Th: int, Tw: int, tol: float):
-  """Template autocorrelation via the cracked CrossCorrelation bridge (native ANE
-    CrossCorrelation layer - a path Apple's MIL frontend rejects).
-
-    Valid (no-flip) correlation of a 2D map [H,W] with a smaller template [Th,Tw]:
-        y[i,j] = sum_{u,v} x[i+u, j+v] * template[u,v].
-    We feed the map and a template (the top-left patch of the map, so this is a true
-    autocorrelation-style match). The bridge requires the template strictly smaller
-    than the map (a same-size template fails ANECCompile - documented arch limit), so a
-    full single-lag inner product isn't this op; the windowed correlation is.
-
-    cost: MIXED (cut) - one native sub-program (graph cut), no surrounding fusion.
-    feasibility: WORKS (cross_correlation is RE-recovered and runtime-proven).
-    """
+  """Template autocorrelation via the native CrossCorrelation bridge; template must be strictly smaller than the map."""
   x = f16(rng, H, W)
   tmpl = np.ascontiguousarray(x[:Th, :Tw]).astype(np.float16)   # patch -> autocorr-style
 
@@ -231,22 +156,7 @@ def _autocorr_crosscorr(H: int, W: int, Th: int, Tw: int, tol: float):
 
 
 def _autocorr_conv(L: int, Lk: int, tol: float):
-  """Lagged autocorrelation r[k] = sum_n s[n] s[n+k], built as a 1D conv of the signal
-    against a prefix of ITSELF (that prefix folded as the conv kernel).
-
-    The signal [1,1,1,L] is convolved (valid) with its first ``Lk`` samples folded as a
-    [1,1,1,Lk] constant kernel; the activation is the full signal. This yields the
-    (L-Lk+1) windowed correlation values.
-
-    ARCH NOTE: the ANE conv backend supports only modest 1xK kernels here - a wide
-    kernel (e.g. K=16 on a length-32 row) is rejected ("Some ops are not supported on
-    any of the specified backends"), so the lag window Lk must stay small (Lk<=~12 on
-    these sizes). A short autocorrelation window is the typical DSP use anyway.
-
-    cost: COMPUTE (conv).
-    feasibility: WORKS (small lag window; wide windows are arch-limited by the conv
-      backend).
-    """
+  """Lagged autocorrelation as a valid 1D conv of the signal against a prefix of itself; lag window Lk must stay small (conv backend rejects wide 1xK kernels)."""
   sig = f16(rng, 1, 1, 1, L)
   kern = np.ascontiguousarray(sig[0, 0, 0, :Lk]).astype(np.float16).reshape(1, 1, 1, Lk)
 
@@ -265,17 +175,7 @@ def _autocorr_conv(L: int, Lk: int, tol: float):
 # MONTE CARLO - host-drawn samples (see module RANDOMNESS NOTE), ANE reduces
 
 def _mc_integral(M: int, tol: float):
-  """Monte-Carlo integral of g(x)=exp(-x^2) over [0,1]: I ~ mean(g(U)), U~Uniform.
-
-    Samples U are drawn on the HOST (aneforge exposes no on-device RNG; see module note)
-    and fed as a [1,M] input; the reference integrates over the SAME samples, so the
-    comparison is exact/deterministic (NOT a statistical tolerance). The ANE does the
-    map g and the mean reduction.
-
-    cost: REDUCTION (one elementwise map over M lanes then a mean; bandwidth+reduction).
-    feasibility: WORKS (the wide accumulator keeps the M-lane mean clean; residual is
-      fp16 input rounding).
-    """
+  """MC integral of exp(-x^2) over [0,1] as map+mean; samples host-drawn, ref uses the same samples (deterministic)."""
   u = rng.random((1, M)).astype(np.float16)
 
   def build(ut):
@@ -289,15 +189,7 @@ def _mc_integral(M: int, tol: float):
 
 
 def _mc_mean_var(M: int, tol: float):
-  """MC mean & variance over a large sample (the core MC estimator state).
-
-    Var via E[g^2]-E[g]^2 (the cancellation-prone form) - the wide ANE accumulator
-    keeps the two reductions clean so the residual is fp16 input rounding, not
-    catastrophic cancellation. Output = concat(mean, var) as [1,2]. Samples host-drawn.
-
-    cost: REDUCTION.
-    feasibility: WORKS.
-    """
+  """MC mean & variance via E[g^2]-E[g]^2; wide accumulator avoids catastrophic cancellation."""
   s = rng.standard_normal((1, M)).astype(np.float16)
 
   def build(st):
@@ -319,16 +211,7 @@ def _mc_mean_var(M: int, tol: float):
 # N-BODY - pairwise interactions via broadcast diff + reduction
 
 def _nbody_spring(N: int, tol: float):
-  """Pairwise spring (linear) net force on N points: F_i = sum_j (p_j - p_i).
-
-    The pairwise displacement is a broadcast: p[1,N,3] - p[N,1,3] -> [N,N,3], then sum
-    over j. This exercises the broadcast-diff + reduction pattern that underlies any
-    N-body kernel; the linear force keeps the reference clean (no 1/r^2 fp16 blow-up).
-
-    cost: MIXED (a broadcast outer-difference [N,N,3] then a reduction - bandwidth grows
-      O(N^2) in the intermediate, reduction over j).
-    feasibility: WORKS (small N).
-    """
+  """Pairwise linear net force F_i = sum_j (p_j - p_i) via broadcast-diff + reduction."""
   P = f16(rng, N, 3, scale=1.0)
 
   def build(pt):
@@ -346,16 +229,7 @@ def _nbody_spring(N: int, tol: float):
 
 
 def _nbody_invsq_potential(N: int, tol: float):
-  """Pairwise inverse-distance potential energy proxy: U_i = sum_{j!=i} 1/sqrt(|p_i-p_j|^2+eps).
-
-    Probes the squared-distance broadcast + rsqrt + reduction (the gravity/Coulomb
-    kernel shape). The self term j=i is killed by a large eps-shift via masking with a
-    folded diagonal constant added before rsqrt (so the diagonal -> ~0 contribution).
-    Points are spread out so |p_i-p_j| is O(1) (keeps 1/r in fp16 range).
-
-    cost: MIXED (broadcast [N,N,3] squared-distance reduction to [N,N], rsqrt, reduce).
-    feasibility: WORKS (fp16-limited near coincident points; we keep points separated).
-    """
+  """Pairwise inverse-distance potential U_i = sum_{j!=i} 1/sqrt(|p_i-p_j|^2+eps); self term killed by a folded diagonal mask."""
   P = (rng.standard_normal((N, 3)).astype(np.float32) * 1.5).astype(np.float16)
   eps = 0.5
   bigdiag = (np.eye(N, dtype=np.float32) * 1e3).astype(np.float16)   # folded mask
@@ -382,22 +256,7 @@ def _nbody_invsq_potential(N: int, tol: float):
 # QUADRATURE - weighted reduction (cumsum is unsupported: a boundary)
 
 def _simpson(n: int, tol: float):
-  """Composite Simpson integration of sin(x) on [0,pi] as a weighted reduction.
-
-    Simpson's rule is I ~ sum_k w_k f(x_k) with w = (h/3)*[1,4,2,4,...,4,1]. Both the
-    samples f(x_k) and the weights w_k are precomputed on the host and fed as [1,n+1]
-    inputs; the ANE forms the weighted sum (elementwise mul + reduce_sum). This is the
-    natural "integration = weighted reduction" shape.
-
-    cost: REDUCTION (one elementwise product then a sum).
-    feasibility: WORKS (relerr ~1e-5; the weighted sum is the wide-accumulator sweet
-      spot). True value is 2.0.
-
-    BOUNDARY NOTE: a *running* integral / prefix-sum (cumsum) is NOT expressible - the
-    ANE has no scan/cumsum primitive (reductions collapse the axis; there is no
-    inclusive-scan op and no in-graph loop). So definite integrals (one weighted
-    reduction) fit, but cumulative/indefinite integrals do not.
-    """
+  """Composite Simpson integration of sin(x) on [0,pi] as a weighted reduction (true value 2.0); cumsum/prefix-scan is not expressible (no scan op)."""
   a, b = 0.0, np.pi
   h = (b - a) / n
   x = np.linspace(a, b, n + 1)
@@ -416,15 +275,7 @@ def _simpson(n: int, tol: float):
 
 
 def _gauss_legendre(n: int, tol: float):
-  """Gauss-Legendre quadrature of exp(x) on [-1,1] as a weighted reduction.
-
-    Nodes/weights from numpy.polynomial.legendre.leggauss(n); samples exp(node) and the
-    weights are host-fed [1,n] inputs, the ANE forms sum_k w_k f(x_k). Same "weighted
-    reduction" shape as Simpson but with the optimal (non-uniform) nodes/weights.
-
-    cost: REDUCTION.
-    feasibility: WORKS (true value = e - 1/e ~ 2.3504).
-    """
+  """Gauss-Legendre quadrature of exp(x) on [-1,1] as a weighted reduction (true value e - 1/e ~ 2.3504)."""
   nodes, weights = np.polynomial.legendre.leggauss(n)
   fx = np.exp(nodes).astype(np.float16).reshape(1, n)
   wv = weights.astype(np.float16).reshape(1, n)
@@ -502,14 +353,7 @@ def _annotate(case, rec):
 
 
 def run_spectral(cases, verbose: bool = True):
-  """Mirror of _corpus.run_corpus, extended to print cost/feasibility tags and a
-    SPECTRAL verdict block. Returns (results, exit_code).
-
-    Gate: PASS and XFAIL are green; FAIL, ERROR, XPASS are red. The feasibility tag is
-    reported alongside but does NOT change the gate - an arch-limited probe still
-    "passes" if its tiny fixed-N instance is numerically correct; the tag carries the
-    *generalization* verdict.
-    """
+  """run_corpus extended to print cost/feasibility tags and a SPECTRAL verdict; returns (results, exit_code)."""
   def verdict(all_results, relerrs):
     dft_curve = [(int(r["name"].split("_N")[1]), r["metric"].split()[1])
                  for r in all_results
