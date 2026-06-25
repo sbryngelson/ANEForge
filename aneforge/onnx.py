@@ -3,7 +3,7 @@ docs. Public: load_onnx / onnx_to_tensor."""
 from __future__ import annotations
 from typing import Callable
 import numpy as np
-from .graph import Tensor, input as _input
+from .graph import Tensor, input as _input, conv as _conv
 from . import _compile
 
 _ONNX: dict[str, Callable] = {}
@@ -87,3 +87,32 @@ def _clip(node, ins, a, i):
   if lo == 0.0 and hi == 6.0: return ins[0].relu6()
   if lo == 0.0 and hi >= 3.4e38: return ins[0].relu()
   return ins[0].clip(float(lo), float(hi))
+
+def _uniform(vals, op):                       # ONNX gives per-axis lists; ANE takes a scalar
+  if vals is None: return 0
+  v = list(vals)
+  if len(set(v)) != 1: raise NotImplementedError(f"onnx {op}: non-uniform {v} not supported")
+  return int(v[0])
+
+def _sympad(pads, op):                         # pads = [top,left,bottom,right]; require symmetric+uniform
+  if pads is None: return 0
+  p = list(pads)
+  if len(set(p)) != 1: raise NotImplementedError(f"onnx {op}: asymmetric pads {p} not supported")
+  return int(p[0])
+
+@onnx_op("Conv")
+def _conv_h(node, ins, a, i):
+  x = ins[0]; w = np.asarray(ins[1]); b = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else None
+  return _conv(x, w, stride=_uniform(a.get("strides"), "Conv"), pad=_sympad(a.get("pads"), "Conv"),
+               dilation=_uniform(a.get("dilations"), "Conv"), groups=int(a.get("group", 1)), bias=b)
+
+@onnx_op("MaxPool")
+def _maxpool(node, ins, a, i):
+  return ins[0].max_pool(_uniform(a.get("kernel_shape"), "MaxPool"),
+                         _uniform(a.get("strides"), "MaxPool") or None, _sympad(a.get("pads"), "MaxPool"))
+@onnx_op("AveragePool")
+def _avgpool(node, ins, a, i):
+  return ins[0].avg_pool(_uniform(a.get("kernel_shape"), "AveragePool"),
+                         _uniform(a.get("strides"), "AveragePool") or None, _sympad(a.get("pads"), "AveragePool"))
+@onnx_op("GlobalAveragePool")
+def _gap(node, ins, a, i): return ins[0].mean((2, 3))     # keepdims -> [N,C,1,1]

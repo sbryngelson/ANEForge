@@ -28,3 +28,21 @@ def test_clip_relu6_builds():
   n = helper.make_node("Clip", ["x"], ["y"], min=0.0, max=6.0)
   m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "relu6"
+
+def _init(arr, name): return onnx.numpy_helper.from_array(arr.astype(np.float32), name)
+
+def test_conv_builds():
+  w = _init(np.zeros((8, 3, 3, 3)), "W"); b = _init(np.zeros(8), "B")
+  n = helper.make_node("Conv", ["x", "W", "B"], ["y"], strides=[1, 1], pads=[1, 1, 1, 1], dilations=[1, 1])
+  m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 32, 32])], inits=[w, b])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 32, 32) and out.op == "conv"
+
+def test_maxpool_builds():
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2], strides=[2, 2])
+  m = _model([n], [_vi("x", [1, 8, 32, 32])], [_vi("y", [1, 8, 16, 16])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 16, 16) and out.op == "max_pool"
+
+def test_global_average_pool_builds():
+  n = helper.make_node("GlobalAveragePool", ["x"], ["y"])
+  m = _model([n], [_vi("x", [1, 8, 32, 32])], [_vi("y", [1, 8, 1, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 1, 1) and out.op == "reduce_mean"
