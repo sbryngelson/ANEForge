@@ -46,3 +46,14 @@ def test_global_average_pool_builds():
   n = helper.make_node("GlobalAveragePool", ["x"], ["y"])
   m = _model([n], [_vi("x", [1, 8, 32, 32])], [_vi("y", [1, 8, 1, 1])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 1, 1) and out.op == "reduce_mean"
+
+def test_conv_default_strides_dilations():  # omitted strides/dilations -> ONNX default 1 (not 0)
+  w = _init(np.zeros((4, 3, 3, 3)), "W")
+  n = helper.make_node("Conv", ["x", "W"], ["y"], pads=[1, 1, 1, 1])  # no strides, no dilations
+  m = _model([n], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 4, 8, 8])], inits=[w])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 8, 8) and out.op == "conv"
+
+def test_maxpool_default_strides():  # omitted strides -> ONNX default 1 (not k)
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2])  # no strides
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 7, 7])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 7, 7) and out.op == "max_pool"

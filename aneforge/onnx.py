@@ -88,8 +88,8 @@ def _clip(node, ins, a, i):
   if lo == 0.0 and hi >= 3.4e38: return ins[0].relu()
   return ins[0].clip(float(lo), float(hi))
 
-def _uniform(vals, op):                       # ONNX gives per-axis lists; ANE takes a scalar
-  if vals is None: return 0
+def _uniform(vals, op, default=1):            # ONNX gives per-axis lists; ANE takes a scalar
+  if vals is None: return default             # spec default for strides/dilations is 1 per axis
   v = list(vals)
   if len(set(v)) != 1: raise NotImplementedError(f"onnx {op}: non-uniform {v} not supported")
   return int(v[0])
@@ -109,10 +109,10 @@ def _conv_h(node, ins, a, i):
 @onnx_op("MaxPool")
 def _maxpool(node, ins, a, i):
   return ins[0].max_pool(_uniform(a.get("kernel_shape"), "MaxPool"),
-                         _uniform(a.get("strides"), "MaxPool") or None, _sympad(a.get("pads"), "MaxPool"))
+                         _uniform(a.get("strides"), "MaxPool"), _sympad(a.get("pads"), "MaxPool"))
 @onnx_op("AveragePool")
 def _avgpool(node, ins, a, i):
   return ins[0].avg_pool(_uniform(a.get("kernel_shape"), "AveragePool"),
-                         _uniform(a.get("strides"), "AveragePool") or None, _sympad(a.get("pads"), "AveragePool"))
+                         _uniform(a.get("strides"), "AveragePool"), _sympad(a.get("pads"), "AveragePool"))
 @onnx_op("GlobalAveragePool")
 def _gap(node, ins, a, i): return ins[0].mean((2, 3))     # keepdims -> [N,C,1,1]
