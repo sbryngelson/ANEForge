@@ -1,10 +1,4 @@
-"""Layer-streamed (gradient-checkpointed) training for deep stacks of identical layers.
-
-Compile one layer's forward and backward ONCE and reuse them for every layer, so compile
-work is independent of depth (a monolithic compile grows superlinearly). Backward uses
-recompute-in-backward checkpointing; result is bit-identical to a monolithic `backward`.
-See docs/developer/compile-pipeline.md.
-"""
+"""Layer-streamed (gradient-checkpointed) training for deep stacks of identical layers: compile one layer's forward/backward once and reuse per layer (depth-independent compile)."""
 from __future__ import annotations
 
 import numpy as np
@@ -17,12 +11,7 @@ _F16 = np.float16
 
 
 class CheckpointedStack:
-  """A depth-independent compile for a stack of identical layers.
-
-    `layer_fn(params, x)` builds one layer (returns an output Tensor of the same shape as
-    `x`). `example_params` gives one layer's parameter shapes; `io_shape` is the activation
-    shape flowing between layers.
-    """
+  """A depth-independent compile for a stack of identical layers. `layer_fn(params, x)` builds one layer; `example_params` gives a layer's param shapes; `io_shape` is the inter-layer activation shape."""
 
   def __init__(self, layer_fn, example_params, io_shape):
     self.io_shape = tuple(io_shape)
@@ -36,8 +25,7 @@ class CheckpointedStack:
       raise ValueError(f"layer_fn output shape {y.shape} != io_shape {self.io_shape}")
     self._fwd = _compile(y)
 
-    # per-layer backward: given the upstream gradient at the output, return the
-    # param gradients and the input gradient (recompute-in-backward checkpointing).
+    # per-layer backward: return param grads + input grad (recompute-in-backward)
     self._xb = _g.input(self.io_shape)
     self._pb = [_ag.parameter(np.asarray(p, np.float32)) for p in example_params]
     self._gout = _g.input(self.io_shape)
@@ -53,15 +41,14 @@ class CheckpointedStack:
     self._bwd_consts = [(t, n) for t, n in self._bwd.input_ports if id(t) not in _fed]
 
   def forward(self, layers_params, x0):
-    """Run the stack. `layers_params[i]` is layer i's list of parameter arrays. Returns
-        `(output, checkpoints)`; `checkpoints[i]` is layer i's input activation (for `backward`)."""
+    """Run the stack; `layers_params[i]` is layer i's param arrays. Returns `(output, checkpoints)`, checkpoints[i] = layer i's input activation."""
     x = np.asarray(x0, np.float32)
     checkpoints = []
     for lp in layers_params:
       checkpoints.append(x)
       feed = {id(self._x): x.astype(_F16),
           **{id(t): np.asarray(v, _F16) for t, v in zip(self._p, lp)}}
-      # any other input port is a baked constant (e.g. a causal mask): feed its value
+      # other input ports are baked constants (e.g. a causal mask)
       assert isinstance(self._fwd, _Model)  # layer_fn never contains sdpa nodes
       vals = [feed[id(t)] if id(t) in feed else np.asarray(t.attrs["value"], _F16)
           for t in self._fwd._input_tensors]
@@ -69,9 +56,7 @@ class CheckpointedStack:
     return x, checkpoints
 
   def backward(self, layers_params, checkpoints, g_out):
-    """Backprop the stack from `g_out` (gradient at the output). Returns
-        `(param_grads, g_in)`: `param_grads[i]` is layer i's param gradients; `g_in` is the
-        gradient at the stack input."""
+    """Backprop the stack from `g_out`. Returns `(param_grads, g_in)`: param_grads[i] is layer i's grads, g_in the stack-input grad."""
     g = np.asarray(g_out, np.float32)
     param_grads: list[list[np.ndarray] | None] = [None] * len(layers_params)
     for i in range(len(layers_params) - 1, -1, -1):

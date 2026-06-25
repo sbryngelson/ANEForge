@@ -32,7 +32,7 @@ BYTES_FP16 = 2
 
 
 def build_block_ops(C, H, W):
-    """Return (op_specs, np_reference_fn) for the conv1x1->group_norm->gelu->gelu neck block."""
+    """Specs + numpy reference for the conv1x1->group_norm->gelu->gelu neck block."""
     rng = np.random.default_rng(17)
     Wc = (rng.standard_normal((C, C, 1, 1)).astype(np.float32)
           * np.sqrt(2.0 / C))
@@ -93,7 +93,7 @@ def run(window=0.0):
         n_ops = spec["n_ops"]
         print(f"\n=== neck block C={C} {H}x{W} ===", flush=True)
 
-        # fused: one program, one dispatch, intermediates on-chip
+        # fused: one program/dispatch, intermediates on-chip
         try:
             xin = af.input((1, C, H, W))
             net = af.compile(fused_block(xin, spec))

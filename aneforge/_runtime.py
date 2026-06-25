@@ -1,8 +1,4 @@
-"""aneforge's device runtime - a lean ctypes wrapper over libane_e5rt_dispatch.dylib, the
-only low-level dependency. Exposes just what the compiler needs: compile a MIL program,
-eval it (bind fp16 inputs, run, read fp16 outputs), release it. See
-docs/developer/compile-pipeline.md.
-"""
+"""Device runtime: a ctypes wrapper over libane_e5rt_dispatch.dylib exposing compile / eval (bind fp16 in, run, read fp16 out) / release."""
 from __future__ import annotations
 
 import ctypes
@@ -22,18 +18,13 @@ _DYLIB = "libane_e5rt_dispatch.dylib"
 
 
 def _find_dylib() -> Path:
-  """Locate libane_e5rt_dispatch.dylib, building it on first use if needed.
-
-    Order: ``ANEFORGE_DYLIB`` override, the package's `aneforge/_lib/` copy (canonical),
-    a legacy `<repo>/ane_build/lib/` build, then the per-version build cache; else compile
-    from packaged source and cache (so `pip install aneforge` works on first dispatch).
-    ``ANEFORGE_NO_AUTOBUILD=1`` requires an explicit `python -m aneforge.build`."""
+  """Locate libane_e5rt_dispatch.dylib, building on first use if needed. Order: ANEFORGE_DYLIB, packaged `_lib/`, legacy `ane_build/lib/`, build cache, else compile-and-cache. ANEFORGE_NO_AUTOBUILD=1 requires an explicit build."""
   override = os.environ.get("ANEFORGE_DYLIB")
   if override and Path(override).expanduser().exists(): return Path(override).expanduser()
   here = Path(__file__).resolve()
   bundled = here.parent / "_lib" / _DYLIB
   if bundled.exists(): return bundled
-  for up in range(len(here.parents)):                      # legacy: walk up to ane_build/lib
+  for up in range(len(here.parents)):                      # legacy ane_build/lib
     candidate = here.parents[up] / "ane_build" / "lib" / _DYLIB
     if candidate.exists(): return candidate
   from .build import _cache_dir, build_dylib
@@ -48,9 +39,7 @@ def _find_dylib() -> Path:
 
 
 class _Dylib:
-  """Lazy ctypes proxy for the e5rt dispatch dylib: loaded and ABI-bound on first
-    attribute access. Keeps `import aneforge` (and off-device tooling) working without the
-    built dylib; the dylib is needed only to compile or dispatch to the ANE."""
+  """Lazy ctypes proxy: the dylib is loaded and ABI-bound on first attribute access, so `import aneforge` works without it (only compile/dispatch needs the dylib)."""
 
   def __init__(self) -> None:
     self._lib = None
@@ -84,8 +73,7 @@ class _Dylib:
       ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint16), ctypes.c_size_t]
     lib.ane_e5rt_program_execute.restype = ctypes.c_int
     lib.ane_e5rt_program_execute.argtypes = [ctypes.c_void_p]
-    # Zero-copy: hand back the persistent CPU+ANE-visible buffer for a port (skip the
-    # per-call set_input/get_output memcpy).
+    # zero-copy: hand back the persistent CPU+ANE-visible buffer for a port
     for _fn in ("ane_e5rt_program_input_buffer", "ane_e5rt_program_output_buffer"):
       getattr(lib, _fn).restype = ctypes.c_int
       getattr(lib, _fn).argtypes = [
@@ -93,14 +81,12 @@ class _Dylib:
         ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_size_t)]
     lib.ane_e5rt_program_release.restype = None
     lib.ane_e5rt_program_release.argtypes = [ctypes.c_void_p]
-    # Resident-state support: rebind an input port to read another port's output buffer.
-    # Aliasing an op's own output onto its own input makes that tensor persist on-device
-    # across executes - the basis for resident optimizer state during training.
+    # resident state: rebind an input port to read another port's output buffer
+    # (aliasing own output->input keeps a tensor on-device across executes)
     lib.ane_e5rt_program_share_buffer.restype = ctypes.c_int
     lib.ane_e5rt_program_share_buffer.argtypes = [
       ctypes.c_void_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p]
-    # Compile-only cross-target check: compile a MIL for a TargetArchitecture without the
-    # device op, validating a graph compiles for another ANE family from this host.
+    # compile-only cross-target check: compile a MIL for another ANE family from this host
     lib.ane_e5rt_compile_check.restype = ctypes.c_int
     lib.ane_e5rt_compile_check.argtypes = [
       ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint64, ctypes.c_char_p]
@@ -113,8 +99,7 @@ _lib = _Dylib()
 
 
 def compile_check(mil_path, cache_dir, custom_ane_options=None, device_mask=ANE_MASK) -> int:
-  """Compile `mil_path` for `custom_ane_options` (e.g. `'TargetArchitecture=h13'`) without
-    creating the device op. Returns the dispatch rc: 0 = a library was produced."""
+  """Compile `mil_path` for `custom_ane_options` (e.g. `'TargetArchitecture=h13'`) without creating the device op. rc 0 = a library was produced."""
   opt = custom_ane_options.encode() if custom_ane_options else None
   return _lib.ane_e5rt_compile_check(
     str(mil_path).encode(), str(cache_dir).encode(), device_mask, opt)
@@ -130,14 +115,12 @@ def _fp16_bytes(shape: tuple[int, ...]) -> int:
   return _numel(shape) * 2
 
 
-# bytes-per-element of supported input dtypes (compute is fp16; uint8 image inputs are
-# dequantised in-graph, so only their port size/feed differs).
+# bytes-per-element of supported input dtypes (compute is fp16; uint8 dequant is in-graph)
 _DT_BYTES = {"fp16": 2, "uint8": 1}
 
 
 def _port_bytes(shape: tuple[int, ...], dtype: str) -> int:
-  """Byte size of an input port. uint8 ports round up to even (set_input copies in
-    2-byte units, so `_feed`'s padded uint16 view must fit)."""
+  """Byte size of an input port; uint8 rounds up to even (set_input copies in 2-byte units)."""
   n = _numel(shape) * _DT_BYTES[dtype]
   return n + (n % 2)
 
@@ -153,8 +136,7 @@ def _ptr(view: np.ndarray):
 
 
 class Program:
-  """A compiled, dispatch-ready ANE program. Output buffers are allocated once and reused
-    across `eval` calls (copy them to retain results)."""
+  """A compiled, dispatch-ready ANE program. Output buffers are reused across `eval` calls (copy to retain results)."""
 
   def __init__(self, handle: int, inputs: dict, outputs: dict, device_mask: int,
                input_dtypes: dict | None = None) -> None:
@@ -162,14 +144,12 @@ class Program:
     self._inputs = dict(inputs)
     self._outputs = dict(outputs)
     self._device_mask = device_mask
-    # per-port input dtype ("fp16" default, "uint8" for image inputs): only the feed
-    # differs; the in-graph cast does the dequant.
+    # per-port input dtype ("fp16" default, "uint8" for image inputs): only the feed differs
     self._input_dtypes = dict(input_dtypes or {})
     self._out_buffers = {name: np.zeros(shape, np.float16) for name, shape in outputs.items()}
 
   def _feed(self, name: str, arr: np.ndarray) -> None:
-    """Copy `arr` into input port `name`. fp16 ports take a fp16 view; uint8 image ports
-        take raw bytes via a uint16 view (set_input_fp16 copies in 2-byte units)."""
+    """Copy `arr` into input port `name` (fp16 view, or raw bytes via uint16 view for uint8 ports)."""
     if self._input_dtypes.get(name, "fp16") == "uint8":
       b = np.ascontiguousarray(np.asarray(arr, dtype=np.uint8)).reshape(-1)
       if b.size % 2:                                   # pad odd byte count for the uint16 view
@@ -195,14 +175,12 @@ class Program:
     return self._out_buffers
 
   # ---- resident-state primitives (granular set / execute / read + alias) ----
-  # `eval` binds all inputs and reads all outputs every call. For resident training we
-  # seed state ports once, alias each state output onto its input, then per step feed only
-  # the data ports and execute - no state copy.
+  # seed state ports once, alias each state output onto its input, then per step feed
+  # only the data ports and execute - no state copy.
 
   def share_buffer(self, src_op_idx: int, src_out_port: str,
                    dst_op_idx: int, dst_in_port: str) -> None:
-    """Rebind `dst`'s input port to read `src`'s output buffer. Aliasing a state tensor's
-        own output->input keeps it resident on-device across `execute` calls."""
+    """Rebind `dst`'s input port to read `src`'s output buffer (aliasing own output->input keeps state resident across `execute`)."""
     rc = _lib.ane_e5rt_program_share_buffer(
       self._handle, ctypes.c_size_t(src_op_idx), src_out_port.encode(),
       ctypes.c_size_t(dst_op_idx), dst_in_port.encode())
@@ -212,7 +190,7 @@ class Program:
         f"failed rc={rc}")
 
   def set_input(self, name: str, arr: np.ndarray) -> None:
-    """Write one input port (used to feed data ports / seed resident state)."""
+    """Write one input port (feed a data port / seed resident state)."""
     if name not in self._inputs: raise KeyError(f"unknown input port: {name!r}")
     if tuple(arr.shape) != self._inputs[name]:
       raise ValueError(f"input {name!r}: expected {self._inputs[name]}, got {tuple(arr.shape)}")
@@ -243,16 +221,12 @@ class Program:
     return raw.view(np.float16).reshape(shape)            # writable view onto ANE memory
 
   def input_view(self, name: str) -> np.ndarray:
-    """Writable fp16 view onto the persistent ANE-visible INPUT buffer. Write in place then
-        `execute()`: skips the per-call host->device copy (the only host overhead aneforge
-        can remove; the firmware round-trip dominates). Valid only while the Program is
-        alive; don't overwrite a `share_buffer`-bound resident-state port."""
+    """Writable fp16 view onto the persistent ANE-visible INPUT buffer; write in place then `execute()` (skips the host->device copy). Valid only while the Program is alive."""
     if name not in self._inputs: raise KeyError(f"unknown input port: {name!r}")
     return self._buffer_view(name, self._inputs[name], _lib.ane_e5rt_program_input_buffer)
 
   def output_view(self, name: str) -> np.ndarray:
-    """fp16 view onto the persistent ANE-visible OUTPUT buffer, valid after `execute()`.
-        Read directly (no copy); `.copy()` to retain across the next `execute()`."""
+    """fp16 view onto the persistent ANE-visible OUTPUT buffer (valid after `execute()`); `.copy()` to retain across the next `execute()`."""
     if name not in self._outputs: raise KeyError(f"unknown output port: {name!r}")
     return self._buffer_view(name, self._outputs[name], _lib.ane_e5rt_program_output_buffer)
 
@@ -275,8 +249,7 @@ class Program:
 
 
 class E5RT:
-  """Compiles a MIL program into a ready-to-run :class:`Program`. Stateless (each
-    `compile` is independent)."""
+  """Compiles a MIL program into a ready-to-run :class:`Program` (stateless)."""
 
   @staticmethod
   def compile(mil_path, *, cache_dir=os.path.join(os.path.expanduser("~"), ".cache", "aneforge", "e5rt"),
@@ -292,7 +265,7 @@ class E5RT:
       *[_port_bytes(inputs[n], input_dtypes.get(n, "fp16")) for n in in_names])
     out_n = (ctypes.c_char_p * len(out_names))(*[n.encode() for n in out_names])
     out_s = (ctypes.c_size_t * len(out_names))(*[_fp16_bytes(outputs[n]) for n in out_names])
-    # Pace consecutive compile failures (backstop for the autotuner's variant burst).
+    # pace consecutive compile failures (backstop for the autotuner's variant burst)
     from . import _circuit
     _circuit.guard_before_compile()
     handle = _lib.ane_e5rt_program_compile(

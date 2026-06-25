@@ -1,4 +1,4 @@
-"""Multi-layer GPT decode with every layer's KV-cache resident on the ANE matches numpy token-for-token."""
+"""Multi-layer GPT decode with resident per-layer KV-cache matches numpy token-for-token."""
 import os, sys
 import pytest
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def mil_encoding_tally(build_dir):
-    """Count weight encodings from the generated MIL (makes the int4 gate fallback visible), summed across model.mil files."""
+    """Count weight encodings in the generated MIL, summed across model.mil files."""
     counts = {"int4_lut": 0, "sparse": 0, "int8": 0, "fp16": 0}
     for mil in Path(build_dir).rglob("model.mil"):
         txt = mil.read_text()

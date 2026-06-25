@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Shared netplist author for the Path-A bridges: generate net.plist + weights.*
-programs (no CoreML / MLCompute) and dispatch them. See docs/developer/bridges.md."""
+"""Shared netplist author for the Path-A bridges: generate net.plist + weights.* programs (no CoreML / MLCompute) and dispatch them."""
 
 from __future__ import annotations
 
@@ -15,15 +14,12 @@ _INVOKERS_DIR = Path(__file__).resolve().parents[1] / "_invokers"     # aneforge
 
 
 def bin_dir() -> Path:
-  """Per-machine compiled-invoker binary cache, outside the package tree so the
-    bridges work from a read-only site-packages install."""
+  """Per-machine compiled-invoker binary cache, outside the package tree (read-only site-packages safe)."""
   return Path.home() / ".cache" / "aneforge" / "bin"
 
 
 def ensure_invoker(name: str) -> Path:
-  """Compile `_invokers/<name>.mm` -> `bin_dir()/<name>` on demand (rebuilt when
-    the source is newer); returns the binary path. `sdpa_invoker` is the generic
-    netplist invoker shared by the geometry/structural/rearrange ops."""
+  """Compile `_invokers/<name>.mm` -> `bin_dir()/<name>` on demand (rebuilt when source is newer); `sdpa_invoker` is the generic invoker shared by geometry/structural/rearrange ops."""
   src = _INVOKERS_DIR / f"{name}.mm"
   binp = bin_dir() / name
   if binp.exists() and src.exists() and binp.stat().st_mtime >= src.stat().st_mtime: return binp
@@ -37,11 +33,7 @@ def ensure_invoker(name: str) -> Path:
 
 
 def invoke_netplist(invoker, net_plist, *, weights=(), inputs=(), outputs=(), repeats: int | None = 1, warmup=None, extra=()):
-  """Shared Path-A dispatch: build the invoker command and run it. `inputs`/
-    `outputs` are `(name, path)` pairs (caller writes inputs, reads outputs).
-    `repeats`/`warmup` are omitted from the command when None (the rank_invoker
-    does not accept them). Raises on non-zero return or non-`ok` status;
-    returns the status dict."""
+  """Shared Path-A dispatch: build the invoker command and run it. `inputs`/`outputs` are (name, path) pairs; `repeats`/`warmup` omitted when None (rank_invoker rejects them). Raises on non-zero rc or non-ok status; returns the status dict."""
   cmd = [str(invoker), "--net-plist", str(net_plist)]
   for w in weights: cmd += ["--weights", str(w)]
   for name, path in inputs: cmd += ["--input", f"{name}={path}"]
@@ -55,8 +47,7 @@ def invoke_netplist(invoker, net_plist, *, weights=(), inputs=(), outputs=(), re
     raise RuntimeError(
       f"{name} failed (rc={proc.returncode}):\n"
       f"stdout: {proc.stdout}\nstderr: {proc.stderr}")
-  # Prefer JSON lines (the layer_invoker may emit non-JSON noise before the
-  # status line); fall back to the last line for invokers that print only JSON.
+  # Prefer JSON lines (layer_invoker may emit non-JSON noise before the status line).
   json_lines = [ln for ln in proc.stdout.splitlines() if ln.strip().startswith("{")]
   if not json_lines: raise RuntimeError(f"no JSON from {name}:\n{proc.stdout}\n{proc.stderr}")
   info = json.loads(json_lines[-1])
@@ -2370,15 +2361,7 @@ def build_sdpa(
   constant_flag_spelling: str = "Constants_array",
   subtract_max: bool = True,
 ) -> dict:
-  """Build a single-op SDPA netplist mirroring the fused-hardware route.
-
-    The validator requires the Scale tensor be flagged constant; the netplist
-    spelling is undocumented, so `constant_flag_spelling` selects a candidate
-    ("Constants_array" is the Apple route and the only one that loads here;
-    "all" = probe mode). `subtract_max` -> `Params.SubtractMax` (default True;
-    the hardware default is no max-stabilization, which breaks softmax).
-    `scale` defaults to `1/sqrt(dim)`. See docs/developer/bridges.md.
-    """
+  """Single-op SDPA netplist mirroring the fused-hardware route. `constant_flag_spelling` selects how the Scale tensor is flagged constant ("Constants_array" is the only spelling that loads here; "all" = probe). `subtract_max` -> Params.SubtractMax (default True; off breaks softmax). `scale` defaults to 1/sqrt(dim)."""
   if scale is None: scale = 1.0 / (float(dim) ** 0.5)
   unit_name = "sdpa-1"
   network_name = "network_sdpa-1"
@@ -2391,8 +2374,7 @@ def build_sdpa(
     "Name": unit_name,
     "OutputChannels": channels,
     "OutputType": "Float16",
-    # SubtractMax is the only Params key the SDPA parser reads (softmax max-sub).
-    "Params": params,
+    "Params": params,  # SubtractMax is the only Params key the SDPA parser reads
     "Type": "SDPA",
   }
 
@@ -2417,7 +2399,7 @@ def build_sdpa(
   )
 
   if use_constants_array:
-    # Mark Scale a 1-element fp16 weight-backed constant (canonical Apple route).
+    # Scale as a 1-element fp16 weight-backed constant (canonical Apple route).
     plist = attach_constant(
       plist,
       network_name,

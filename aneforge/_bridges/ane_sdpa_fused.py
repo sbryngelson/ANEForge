@@ -81,13 +81,7 @@ def sdpa_fused(
   subtract_max: bool = True,
   return_details: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
-  """Native ANE fused-attention over `[1, heads, seq, d_head]` fp16 Q/K/V;
-    returns Y in the same layout (or `(Y, info)` with timings if
-    `return_details`). `scale` defaults to `1/sqrt(d_head)`.
-
-    `constant_flag_spelling` default `"Constants_array"` is the only spelling
-    observed to compile + load on this host (others raise `ANECCompile() FAILED`).
-    """
+  """Native ANE fused-attention over fp16 [1,heads,seq,d_head] Q/K/V, same layout out (or (Y, info) if return_details); scale defaults to 1/sqrt(d_head). constant_flag_spelling default is the only spelling that compiles+loads on this host."""
   Q = np.asarray(Q, dtype=np.float16)
   K = np.asarray(K, dtype=np.float16)
   V = np.asarray(V, dtype=np.float16)
@@ -95,8 +89,7 @@ def sdpa_fused(
   Sq, Skv = Q.shape[2], K.shape[2]              # query seq vs cached K/V seq (decode: Sq < Skv)
   if scale is None: scale = 1.0 / math.sqrt(D)
 
-  # ANE-native layout is seq-in-C, heads-in-H; PyTorch/MIL is the opposite, so
-  # pre-transpose here and post-transpose Y back. See bridges.md.
+  # ANE layout is seq-in-C, heads-in-H (opposite of PyTorch/MIL): pre/post-transpose.
   Q_ane = np.ascontiguousarray(Q.transpose(0, 2, 1, 3))  # (B, S, H, D)
   K_ane = np.ascontiguousarray(K.transpose(0, 2, 1, 3))
   V_ane = np.ascontiguousarray(V.transpose(0, 2, 1, 3))
@@ -123,8 +116,7 @@ def sdpa_fused(
               ("value", workdir / "in_value.f16")]
 
     if mask is not None or Sq != Skv:
-      # Patch the netplist for (a) decode shape (query carries Sq, K/V carry Skv)
-      # and/or (b) an additive mask bottom [C=Sq, H=1, W=Skv]. See bridges.md.
+      # Patch netplist for decode shape (Sq vs Skv) and/or additive mask bottom.
       pl = plistlib.loads(Path(netplist).read_bytes())
       il = pl["ProcedureList"][0]["InputList"]
       if Sq != Skv:

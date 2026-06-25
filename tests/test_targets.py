@@ -36,8 +36,7 @@ def test_core_ops_native_on_every_supported_chip():
 
 
 def test_sincos_floor_with_decomposition():
-  # sin/cos are A15+ (family 4): native on M5, but aneforge HAS a Horner decomposition
-  # for below-floor chips, so the status is "decompose", never a hard reject.
+  # sin/cos are A15+ but have a Horner decomposition below the floor: "decompose", not reject.
   assert T.op_status("sin", 5) == "native"
   assert T.op_status("cos", 4) == "native"
   assert T.op_status("sin", 2) == "decompose"   # M1: fall back to special.py Horner
@@ -45,8 +44,7 @@ def test_sincos_floor_with_decomposition():
 
 
 def test_texture_engine_ops_reject_below_a14():
-  # resize-HW/crop/resample/affine/gather need the texture engine (family >= 3); with no
-  # decomposition wired, they hard-reject on M1 (family 2) rather than crash at dispatch.
+  # texture-engine ops (family >= 3) have no decomposition -> hard-reject on M1 (family 2).
   assert T.op_status("crop_resize", 2) == "reject"
   assert T.op_status("crop_resize", 3) == "native"
   assert T.has_texture_engine(2) is False
@@ -54,8 +52,7 @@ def test_texture_engine_ops_reject_below_a14():
 
 
 def test_bridge_ops_codegen_reject_on_m1():
-  # topk/sort/dynamic_slice PASS validation but REJECT at codegen on M1 (family 2);
-  # native at higher families. No decomposition -> reject, not decompose.
+  # topk/sort/dynamic_slice reject at codegen on M1 (family 2); native at higher families.
   for op in ("topk", "sort", "dynamic_slice"):
     assert T.op_status(op, 2) == "reject"
     assert T.op_status(op, 5) == "native"
@@ -103,9 +100,8 @@ def test_preflight_oversize_dim_needs_tiling_below_a16():
 
 
 def test_preflight_catches_group_norm_internal_oversize():
-  # The rank-4 tiled lowering reshapes to [1,G,C/groups,H*W]; the largest INTERNAL axis
-  # is max(C/groups, H*W). C32@130x130/G1 -> H*W=16900 exceeds the 16384 cap below A16 but
-  # fits the A16 65536 max. preflight must see this internal extent (the compiler does).
+  # rank-4 tiled lowering -> [1,G,C/groups,H*W]; H*W=16900 exceeds 16384 below A16, fits A16's
+  # 65536. preflight must see this internal extent.
   import numpy as np
 
   import aneforge as af
@@ -117,8 +113,7 @@ def test_preflight_catches_group_norm_internal_oversize():
 
 
 def test_preflight_group_norm_tiled_fits_small_axes():
-  # SD-1.5 640ch@64/G32: flat (C/G)*H*W=81920 overflowed, but tiled axes are
-  # D=20, H*W=4096 - both under even the A13 16384 cap, so it fits everywhere.
+  # SD-1.5 640ch@64/G32: tiled axes D=20, H*W=4096 both under the A13 16384 cap.
   import numpy as np
 
   import aneforge as af
@@ -137,9 +132,7 @@ def test_preflight_reject_op_is_not_ok_below_floor():
 
 # --- runtime family detection (read the host chip) ---
 def test_family_from_brand_full_mseries_ladder():
-  # M1/M5 are measured anchors; M2/M3/M4 resolve by the VERIFIED M(n)=H(n+12) ladder
-  # M2=H14/A14, M3=H15/A15, M4=H16/A16. The Pro/Max variant
-  # changes core count, not capability family.
+  # M(n)=H(n+12) ladder: M2=A14, M3=A15, M4=A16. Pro/Max changes core count, not family.
   assert T._family_from_brand("Apple M1") == 2          # A13
   assert T._family_from_brand("Apple M1 Max") == 2
   assert T._family_from_brand("Apple M2") == 3          # A14
@@ -150,8 +143,7 @@ def test_family_from_brand_full_mseries_ladder():
 
 
 def test_family_from_brand_beyond_map_is_conservative_floor():
-  # a chip past the verified ladder (a future M6+) defaults to the safe minimum: a
-  # family-2 program runs on every H13+ chip (higher families are supersets).
+  # a chip past the ladder defaults to MIN_FAMILY: a family-2 program runs on every H13+ chip.
   assert T._family_from_brand("Apple M6 Max") == T.MIN_FAMILY
   assert T._family_from_brand("Apple Silicon Unknown") == T.MIN_FAMILY
 
@@ -173,26 +165,22 @@ def test_detect_family_on_this_m5_host(monkeypatch):
 
 
 # --- cross-chip fp16 divergence predictor (Direction B) --------------------------------
-# Static, table-driven: the per-family HAL fields (slice x16 saturation, 0x494 reduce->
-# square fuse, 0x3f0 reduction route) predict whether an op's fp16 VALUE can diverge
-# between two chip families.
+# Static, table-driven: per-family HAL fields predict whether an op's fp16 value can
+# diverge between two chip families.
 A13, A14, A15, A16 = T.Family.A13, T.Family.A14, T.Family.A15, T.Family.A16
 
 
 @pytest.mark.parametrize("kind,shape,a,b,kw,expect", [
-  # slice with nonzero LAST-axis (width) begin-offset + an A13 target + possibly-large
-  # values -> the x16 crop-DMA finite->inf saturation (the one dramatic case).
+  # width begin-offset + A13 + possibly-large values -> x16 crop-DMA finite->inf saturation.
   ("slice", (2, 2, 4, 4), A13, A16, {"begin": [0, 0, 0, 2]}, "saturation"),
   ("slice_by_size", (2, 2, 4, 4), A16, A13, {"begin": [0, 0, 0, 1]}, "saturation"),
   # ... but a finite magnitude bound under 4094 downgrades it (magnitude-gated).
   ("slice", (2, 2, 4, 4), A13, A16, {"begin": [0, 0, 0, 2], "max_abs": 100.0}, "none"),
   # ... offset on a NON-last axis is clean (only width-offset routes through the DMA).
   ("slice", (2, 2, 4, 4), A13, A16, {"begin": [0, 0, 2, 0]}, "none"),
-  # ... A14 is ALSO affected (M2 silicon: a single width slice saturates 4094->inf), so
-  # A14 vs a clean A16 diverges; both-affected (A13 vs A14) would match.
+  # ... A14 is ALSO affected, so A14 vs a clean A16 diverges; A13 vs A14 would match.
   ("slice", (2, 2, 4, 4), A14, A16, {"begin": [0, 0, 0, 2]}, "saturation"),
-  # reduce->square 0x494 fuse is a MEASURED no-op (A13/A14/A16 all compute fp16(sum)^2),
-  # so it never drives "round1"; only the 0x3f0 route threshold (192 A13/A14 vs 384 A15+)
+  # reduce->square 0x494 fuse is a no-op; only the 0x3f0 route threshold (192 vs 384)
   # diverges a reduce-square pair.
   ("reduce_square", (4, 1), A13, A16, {}, "ulp1"),     # route thresh 192 vs 384 differ
   ("reduce_square", (4, 1), A13, A14, {}, "none"),     # both 192, fuse uniform -> none
@@ -223,8 +211,7 @@ def test_fp16_slice_sat_threshold():
 
 
 def test_per_class_extents():
-  # A14 measured exact (A14_MAXDIM_CAPS.md): spatial 16384 / channel 65536 / transpose 2^23-1;
-  # A16 (M5 probe): spatial 65536 / channel 65536 / transpose >=2^24-1.
+  # A14: spatial 16384 / channel 65536 / transpose 2^23-1; A16: 65536 / 65536 / >=2^24-1.
   assert T.limit("max_tensor_dim", 3) == 16384 and T.limit("max_tensor_dim", 5) == 65536
   assert T.limit("channel_extent", 3) == 65536 and T.limit("channel_extent", 5) == 65536
   assert T.limit("transpose_extent", 3) == 8388607 and T.limit("transpose_extent", 5) == 16777215
@@ -232,14 +219,14 @@ def test_per_class_extents():
 
 def test_preflight_channel_axis_not_spatial_capped():
   import aneforge as af
-  g = af.input((1, 65536, 1, 1)).relu()   # C=65536 legal on A14 (old single cap over-blocked 4x)
+  g = af.input((1, 65536, 1, 1)).relu()   # C=65536 legal on A14
   assert T.preflight(g, family=3).ok
   assert not T.preflight(af.input((1, 20000)).relu(), family=3).ok   # flat W stays spatial-capped
 
 
 def test_preflight_transpose_wide_extent():
   import aneforge as af
-  g = af.input((1 << 20, 2)).transpose([1, 0])   # 2^20 << 2^23-1; old cap over-blocked 512x
+  g = af.input((1 << 20, 2)).transpose([1, 0])   # 2^20 << 2^23-1
   assert T.preflight(g, family=3).ok
 
 

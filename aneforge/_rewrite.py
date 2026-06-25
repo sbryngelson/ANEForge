@@ -1,11 +1,4 @@
-"""Graph-rewrite engine for the aneforge optimizer.
-
-Tensors are immutable/pure, so a "rewrite" re-derives the output DAG: new nodes at match
-sites, every node on the path up to `out` rebuilt; shared subgraphs cloned once (memoized
-by identity). Rules apply bottom-up. Concrete rewrites: lossless route decompositions
-(sdpa/minmax_norm/flatten/lrn), per-node int8 (lossy, tuner-gated), reduce_sum->matmul,
-canon/numeric folds. See docs/developer/compile-pipeline.md.
-"""
+"""Graph-rewrite engine. Tensors are immutable, so a rewrite re-derives the output DAG (memoized by identity, rules bottom-up): route decompositions, per-node int8, reduce_sum->matmul, canon/numeric folds."""
 from __future__ import annotations
 
 import math
@@ -26,11 +19,7 @@ class Rule:
 
 
 def graph_rewrite(out: Tensor, rules: list["Rule"], select: set[int] | None = None) -> Tensor:
-  """Return a new output DAG, rules applied bottom-up in ONE memoized pass. First rule
-  whose `match` accepts a rebuilt node fires. `select` (original-node id()s) gates
-  eligibility; None = all. A node with no rule and unchanged sources is returned
-  unchanged (same object), so a no-op rule-set yields the SAME object (keeps opt=0
-  byte-identical)."""
+  """Return a new output DAG, rules applied bottom-up in one memoized pass (first matching rule fires). `select` (original-node ids) gates eligibility; None = all. A no-op rule-set yields the SAME object."""
   from ._compile import _topo                 # iterative post-order: stack-safe on deep graphs
   memo: dict[int, Tensor] = {}
   for t in _topo(out):
@@ -45,20 +34,16 @@ def graph_rewrite(out: Tensor, rules: list["Rule"], select: set[int] | None = No
 
 
 def rewrite(out: Tensor, rule: Callable[[Tensor], Optional[Tensor]]) -> Tensor:
-  """Return a NEW output DAG with `rule(node) -> Tensor | None` applied bottom-up.
-    A no-op rule yields the SAME object (opt=0 byte-identical)."""
-  # `rule` must be a pure node-local transform: it is called in both `match` and `build`.
-  # The match-guard guarantees build only fires when rule returned a Tensor, so the
-  # None-able return is safe to narrow (cast).
+  """Return a new output DAG with `rule(node) -> Tensor | None` applied bottom-up; a no-op rule yields the SAME object."""
+  # `rule` must be a pure node-local transform (called in both match and build); the
+  # match-guard makes the None return safe to narrow (cast).
   r = Rule("adhoc", "lossless", lambda t: rule(t) is not None,
        cast(Callable[[Tensor], Tensor], lambda t: rule(t)))
   return graph_rewrite(out, [r])
 
 
 def _decompose_sdpa(node: Tensor) -> Tensor:
-  """Decomposed equivalent of an `sdpa` node: ((q @ k^T) * scale).softmax(-1) @ v.
-    q/k/v are [1,H,S,D]; result [1,H,S,D]. Pure fused MIL - no cut. Bit-identical to
-    native sdpa (lossless route)."""
+  """Decomposed `sdpa`: `((q @ k^T) * scale).softmax(-1) @ v`. Fused MIL, no cut; bit-identical to native sdpa."""
   q, k, v = node.srcs
   scale = node.attrs["scale"]
   scores = (q @ k.transpose([0, 1, 3, 2])) * float(scale)
@@ -67,8 +52,7 @@ def _decompose_sdpa(node: Tensor) -> Tensor:
 
 
 def sdpa_to_decomposed(out: Tensor, only_id: Optional[int] = None) -> Tensor:
-  """Rewrite native `sdpa` node(s) to the decomposed (fused-MIL) form. `only_id` (an
-    ORIGINAL-graph node id) targets one; None rewrites all. Returns a new output DAG."""
+  """Rewrite native `sdpa` node(s) to the decomposed form. `only_id` (an original-graph id) targets one; None = all."""
   sel = None if only_id is None else {only_id}
   r = Rule("sdpa", "lossless", lambda t: t.op == "sdpa", _decompose_sdpa)
   return graph_rewrite(out, [r], select=sel)
@@ -81,8 +65,7 @@ def list_sdpa_nodes(out: Tensor) -> list[Tensor]:
 
 
 def set_node_int8(out: Tensor, node_ids: set[int]) -> Tensor:
-  """Tag each weight-bearing node in `node_ids` with `int8=True` (per-weight override;
-    the compiler honors `t.attrs['int8']` over the global flag). Returns a new DAG."""
+  """Tag each weight-bearing node in `node_ids` with `int8=True` (per-weight override of the global flag)."""
   if not node_ids: return out
   r = Rule("int8", "numeric", lambda t: t.op in ("matmul", "conv"),
        lambda t: Tensor(t.shape, t.op, t.srcs, {**t.attrs, "int8": True}))
@@ -90,22 +73,16 @@ def set_node_int8(out: Tensor, node_ids: set[int]) -> Tensor:
 
 
 def list_weight_nodes(out: Tensor) -> list[Tensor]:
-  """Weight-bearing (int8-eligible) nodes in topo order: matmul (`wt`) and conv
-    (`weight`). Both honor per-channel int8 (constexpr_affine_dequantize) on the ANE."""
+  """Weight-bearing (int8-eligible) nodes in topo order: matmul (`wt`) and conv (`weight`)."""
   from ._compile import _topo
   return [t for t in _topo(out)
       if (t.op == "matmul" and isinstance(t.attrs.get("wt"), np.ndarray))
       or (t.op == "conv" and isinstance(t.attrs.get("weight"), np.ndarray))]
 
 
-# --------------------------------------------------------------------------- #
-# NUMERICS-aware rewrites (accuracy-improving, each validated vs fp32)          #
-# --------------------------------------------------------------------------- #
+# --- numerics-aware rewrites (accuracy-improving, validated vs fp32) ---
 def _reduce_sum_as_matmul(t: Tensor) -> Tensor:
-  """Rebuild a single `reduce_sum` as `x @ ones[K,1]`, routing the sum through the WIDE
-    matmul accumulator instead of the NARROW reduce_sum accumulator. Identical math,
-    >= accuracy under cancellation. Single-axis only; a non-last axis is transposed to
-    the end and back. See docs/developer/numerics.md."""
+  """Rebuild a single-axis `reduce_sum` as `x @ ones[K,1]` (WIDE matmul accumulator; >= accuracy under cancellation). A non-last axis is transposed to the end and back."""
   src = t.srcs[0]
   axes = tuple(t.attrs.get("axes", ()))
   if len(axes) != 1:
@@ -118,7 +95,7 @@ def _reduce_sum_as_matmul(t: Tensor) -> Tensor:
 
   if ax == rank - 1:
     return src @ ones
-  # move `ax` last, contract, move the size-1 dim back.
+  # move `ax` last, contract, move the size-1 dim back
   perm = [i for i in range(rank) if i != ax] + [ax]
   inv = [0] * rank
   for new_pos, old in enumerate(perm):
@@ -128,9 +105,7 @@ def _reduce_sum_as_matmul(t: Tensor) -> Tensor:
 
 
 def reduce_sum_to_matmul(out: Tensor, only_idx: set[int] | None = None) -> Tensor:
-  """Rewrite single-axis `reduce_sum` node(s) to a `@ ones` contraction (WIDE-accumulator
-    sum, lossless-or-better). `only_idx` selects by ORIGINAL-graph topo index; None = all.
-    Returns a new output DAG."""
+  """Rewrite single-axis `reduce_sum` node(s) to a `@ ones` contraction (lossless-or-better). `only_idx` selects by original-graph topo index; None = all."""
   from ._compile import _topo
   order = _topo(out)
   elig = lambda t: t.op == "reduce_sum" and len(t.attrs.get("axes", ())) == 1
@@ -141,15 +116,10 @@ def reduce_sum_to_matmul(out: Tensor, only_idx: set[int] | None = None) -> Tenso
   return graph_rewrite(out, [r], select=sel)
 
 
-# --------------------------------------------------------------------------- #
-# BRIDGE-ELIMINATION rewrites: replace a native netplist cut with a fused        #
-# decomposition. Each is lossless (validated on-device vs the bridge within fp16  #
-# op-noise, tests/test_routes.py); removing the cut lets the region fuse into one #
-# e5rt program. See docs/developer/compile-pipeline.md.                           #
-# --------------------------------------------------------------------------- #
+# --- bridge-elimination rewrites: replace a netplist cut with a fused decomposition ---
+# each is lossless (validated on-device vs the bridge); removing the cut lets the region fuse.
 def _decompose_minmax_norm(node: Tensor) -> Tensor:
-  """Fused minmax_norm: y = (x - amin) / (amax - amin + eps) over the reduction axis.
-    Lossless; max==min row -> 0/eps==0 on both sides (no NaN divergence)."""
+  """Fused minmax_norm: `(x - amin) / (amax - amin + eps)` over the reduction axis. Lossless (max==min -> 0/eps, no NaN)."""
   (x,) = node.srcs
   ax = -1 if node.attrs["dimension"] == "Width" else -2
   eps = float(node.attrs["eps"])
@@ -159,17 +129,13 @@ def _decompose_minmax_norm(node: Tensor) -> Tensor:
 
 
 def _flatten_to_reshape(node: Tensor) -> Tensor:
-  """Rebuild a `flatten` (Flatten bridge) as a fused `reshape`. Bit-identical (both a
-    contiguous row-major collapse); removes the netplist cut."""
+  """Rebuild a `flatten` bridge as a fused `reshape` (bit-identical contiguous collapse; removes the cut)."""
   (x,) = node.srcs
   return x.reshape(node.shape)
 
 
 def _decompose_lrn(node: Tensor) -> Tensor:
-  """Rebuild an `lrn` (LocalResponseNormalization bridge) as fused local_response_norm.
-    The bridge fixes the channel window to N=C; the fused op uses alpha/size, so size=C
-    cancels the C: lrn(alpha,beta,k) == local_response_norm(size=C, alpha=alpha*C, beta, k),
-    C = x.shape[1]. Bit-equivalent; removes the cut. See docs/developer/compile-pipeline.md."""
+  """Rebuild an `lrn` bridge as fused local_response_norm: `lrn(alpha,beta,k) == local_response_norm(size=C, alpha=alpha*C, beta, k)`. Bit-equivalent; removes the cut."""
   (x,) = node.srcs
   C = node.shape[1]
   a = node.attrs
@@ -177,8 +143,7 @@ def _decompose_lrn(node: Tensor) -> Tensor:
   return local_response_norm(x, size=C, alpha=a["alpha"] * C, beta=a["beta"], k=a["k"])
 
 
-# op-name -> decomposition builder. The route registry in _capabilities.py is the source
-# of truth for WHICH bridge ops are route-selectable; this is just the executable builders.
+# op-name -> decomposition builder (the route registry in _capabilities.py decides WHICH are selectable)
 _BRIDGE_DECOMPOSERS = {
   "sdpa": _decompose_sdpa,
   "minmax_norm": _decompose_minmax_norm,
@@ -188,9 +153,7 @@ _BRIDGE_DECOMPOSERS = {
 
 
 def decompose_bridge(out: Tensor, decomp_idx: set[int]) -> Tensor:
-  """Rewrite the bridge nodes at the given ORIGINAL-graph topo indices to their fused
-    decomposition (see `_BRIDGE_DECOMPOSERS`). Nodes with no decomposer are left as-is.
-    Returns a new output DAG."""
+  """Rewrite bridge nodes at the given original-graph topo indices to their fused decomposition (see `_BRIDGE_DECOMPOSERS`); others left as-is."""
   from ._compile import _topo
   order = _topo(out)
   sel = {id(order[i]) for i in decomp_idx
@@ -202,18 +165,14 @@ def decompose_bridge(out: Tensor, decomp_idx: set[int]) -> Tensor:
 
 
 def paired_subtract(a, b):
-  """Carry `a - b` through paired-fp16 (compensated TwoSum), returning a plain fp16 Tensor
-    - the cancellation fix that captures the subtract's own rounding. `a`/`b` may each be a
-    Tensor or a `Paired` (pass Paired to exploit regime B). See docs/developer/numerics.md."""
+  """Carry `a - b` through paired-fp16 (compensated TwoSum) -> a plain fp16 Tensor (cancellation fix). `a`/`b` may be Tensor or `Paired` (pass Paired for regime B)."""
   from ._paired import Paired, paired as _mk_paired
   pa = a if isinstance(a, Paired) else _mk_paired(a)
   pb = b if isinstance(b, Paired) else _mk_paired(b)
   return (pa - pb).to_tensor()
 
 
-# --------------------------------------------------------------------------- #
-# CANON_RULES: lossless identity/redundancy elimination                        #
-# --------------------------------------------------------------------------- #
+# --- CANON_RULES: lossless identity/redundancy elimination ---
 
 def _compose_perm(outer: tuple, inner: tuple) -> tuple:
   """perm of (transpose(outer) o transpose(inner)): result[i] = inner[outer[i]]."""
@@ -244,15 +203,12 @@ CANON_RULES: list[Rule] = [
 ]
 
 def canonicalize(out: Tensor) -> Tensor:
-  """Apply the lossless CANON_RULES to a fixed point. Returns the SAME object when
-  nothing matches (a clean graph is unchanged)."""
+  """Apply the lossless CANON_RULES to a fixed point; returns the SAME object when nothing matches."""
   while (nxt := graph_rewrite(out, CANON_RULES)) is not out: out = nxt
   return out
 
 
-# --------------------------------------------------------------------------- #
-# NUMERIC_RULES: accuracy-affecting scalar-chain folding (fp16-gated)         #
-# --------------------------------------------------------------------------- #
+# --- NUMERIC_RULES: accuracy-affecting scalar-chain folding (fp16-gated) ---
 
 def _b_fold_muls(t: Tensor) -> Tensor:
   """muls(b) o muls(a) -> muls(a*b). Folded in fp16 to match device semantics."""
@@ -269,8 +225,7 @@ NUMERIC_RULES: list[Rule] = [
   Rule("adds_chain", "numeric", lambda t: t.op == "adds" and t.srcs[0].op == "adds", _b_fold_adds),
 ]
 
-# fp16 NumPy kernels for the foldable ops; not assumed bit-identical to the engine, so
-# const_fold is gated (NUMERIC).
+# fp16 NumPy kernels for foldable ops; not bit-identical to the engine, so const_fold is NUMERIC-gated
 def _f16(x: "np.ndarray") -> "np.ndarray": return np.asarray(x, np.float16)
 _EvalFn = Callable[["list[np.ndarray]", "dict[str, Any]", "tuple[int, ...]"], "np.ndarray"]
 _EVAL: dict[str, _EvalFn] = {
@@ -285,8 +240,7 @@ _EVAL: dict[str, _EvalFn] = {
 }
 
 def _const_subgraph(t: Tensor, max_elems: int = 1 << 16) -> "np.ndarray | None":
-  """fp16 value of `t` if its whole source cone is constant, foldable, and size-bounded;
-  else None."""
+  """fp16 value of `t` if its whole source cone is constant, foldable, and size-bounded; else None."""
   if math.prod(t.shape) > max_elems: return None
   memo: dict[int, "np.ndarray | None"] = {}
   def ev(n: Tensor) -> "np.ndarray | None":

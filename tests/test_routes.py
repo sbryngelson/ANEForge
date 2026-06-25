@@ -1,4 +1,4 @@
-"""On-device validation of the optimizer's equivalence-route registry: each selectable route's bridge and fused lowerings agree."""
+"""On-device check that each selectable route's bridge and fused lowerings agree."""
 import sys
 from pathlib import Path
 
@@ -34,8 +34,7 @@ def _relerr(a, b):
 
 # table reconciliation (pure; no device)
 def test_route_tables_reconcile():
-  """The route registry's `selectable` set == the executable decomposer set == the
-    set of bridge ops the optimizer's route-id detector will flip. No drift."""
+  """selectable set == decomposer set == route-id-detector set; no drift."""
   reg = cap.route_registry()
   selectable = {e["name"] for e in reg["selectable"]}
   decomposers = set(_BRIDGE_DECOMPOSERS)
@@ -49,8 +48,7 @@ def test_route_tables_reconcile():
 
 
 def test_every_bridge_op_is_selectable_or_single():
-  """The headline guarantee, machine-checked: every bridge op carries a route_class
-    of exactly `selectable` or `single` (with a reason)."""
+  """Every bridge op carries a route_class of exactly `selectable` or `single`."""
   reg = cap.build_registry()
   for e in reg["entries"]:
     if e["status"] != "bridge": continue
@@ -65,7 +63,6 @@ def test_every_bridge_op_is_selectable_or_single():
 def _check_route(build_bridge, shapes, x, label):
   """Compile the bridge build and its fused decomposition; assert agreement."""
   bridge_out = _run(build_bridge(*[af.input(s) for s in shapes]), x)
-  # decompose every bridge node in the graph (the optimizer's all-decomposed config)
   g = build_bridge(*[af.input(s) for s in shapes])
   from aneforge._compile import _topo
   idx = {i for i, t in enumerate(_topo(g)) if t.op in _BRIDGE_DECOMPOSERS}
@@ -80,7 +77,7 @@ def test_sdpa_route_equivalent():
   H, S, D = 4, 8, 16
   x = rng.standard_normal((1, H, S, D)).astype(np.float16)
 
-  def build(q):  # single tensor reused as q=k=v keeps it self-contained
+  def build(q):  # q=k=v keeps it self-contained
     return af.sdpa(q, q, q, scale=1.0 / D ** 0.5)
   re = _check_route(build, [(1, H, S, D)], x, "sdpa")
   print(f"  sdpa             relerr={re:.5g}")
@@ -94,7 +91,7 @@ def test_minmax_norm_route_equivalent():
       re = _check_route(lambda xt: af.minmax_norm(xt, dimension=dim, eps=1e-4),
                         [(1, C, H, W)], x, f"minmax_norm/{dim}/{C}x{H}x{W}")
       print(f"  minmax_norm/{dim}/{C}x{H}x{W:<3} relerr={re:.5g}")
-  # degenerate constant row: max==min -> 0/eps==0 on both sides (no NaN divergence)
+  # degenerate constant row: max==min -> 0/eps==0 both sides (no NaN divergence)
   x = np.ones((1, 2, 2, 4), np.float16); x[0, 0, 0, :] = 3.0
   re = _check_route(lambda xt: af.minmax_norm(xt, dimension="Width", eps=1e-4),
                     [(1, 2, 2, 4)], x, "minmax_norm/degenerate")
@@ -111,9 +108,7 @@ def test_flatten_route_equivalent():
 
 
 def test_lrn_route_equivalent():
-  """lrn (native LocalResponseNormalization bridge, a graph cut) <-> the fused MIL
-    local_response_norm op (one program, no cut). BIT-EQUIVALENT by construction:
-    lrn(alpha,beta,k) == local_response_norm(size=C, alpha=alpha*C, beta, k), C=x.shape[1]."""
+  """native lrn bridge vs fused MIL local_response_norm; bit-equivalent by construction."""
   rng = np.random.default_rng(4)
   for (C, H, W) in [(3, 4, 8), (8, 2, 6), (12, 3, 5)]:
     for (alpha, beta, k) in [(1.0, 0.75, 1.0), (1e-4, 0.5, 2.0)]:
@@ -124,11 +119,7 @@ def test_lrn_route_equivalent():
 
 
 def test_rejected_candidate_stays_single_route():
-  """Check on a REJECTED candidate: space_to_channel is marked single-route
-    because its reshape+transpose decomposition needs a rank-6 intermediate that
-    ANECCompile rejects. Confirm the registry records it single-route (we do NOT
-    re-run the failing compile here - an ANECCompile abort can take down the
-    in-process runtime; the rejection evidence is in the route_reason)."""
+  """space_to_channel et al. stay single-route: rank-6 intermediate is rejected."""
   reg = cap.route_registry()
   single = {e["name"]: e for e in reg["single_route"]}
   for name in ("space_to_channel", "channel_to_space", "space_to_batch", "batch_to_space"):

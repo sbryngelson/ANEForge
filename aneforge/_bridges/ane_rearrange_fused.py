@@ -76,7 +76,6 @@ def _run_netplist(plist: dict, x: np.ndarray) -> tuple[np.ndarray, dict[str, Any
     return out, info
 
 
-# --------------------------------------------------------------------------
 # Public ops.  Inputs/outputs are fp16 numpy arrays in [N, C, H, W] order.
 
 def pixel_shuffle(x: np.ndarray, r: int) -> np.ndarray:
@@ -128,10 +127,7 @@ def space_to_channel(x: np.ndarray, r: int) -> np.ndarray:
 
 
 def space_to_batch(x: np.ndarray, bh: int, bw: int) -> np.ndarray:
-  """[N, C, H, W] -> [N*bh*bw, C, H/bh, W/bw] (blocks moved to batch).
-
-    Output batch slice `bh_i*bw + bw_i` == `x[..., bh_i::bh, bw_i::bw]`.
-    """
+  """[N,C,H,W] -> [N*bh*bw,C,H/bh,W/bw]; batch slice bh_i*bw+bw_i == x[...,bh_i::bh,bw_i::bw]."""
   N, C, H, W = x.shape
   assert H % bh == 0 and W % bw == 0
   plist = build_netplist(
@@ -143,10 +139,7 @@ def space_to_batch(x: np.ndarray, bh: int, bw: int) -> np.ndarray:
 
 
 def batch_to_space(x: np.ndarray, bh: int, bw: int) -> np.ndarray:
-  """[N*bh*bw, C, H, W] -> [N, C, H*bh, W*bw] (inverse of space_to_batch).
-
-    Requires input batch divisible by `bh*bw` (validator constraint).
-    """
+  """[N*bh*bw,C,H,W] -> [N,C,H*bh,W*bw] (inverse of space_to_batch); batch must be divisible by bh*bw."""
   B, C, H, W = x.shape
   assert B % (bh * bw) == 0, "input batch must be divisible by bh*bw"
   N = B // (bh * bw)
@@ -158,7 +151,6 @@ def batch_to_space(x: np.ndarray, bh: int, bw: int) -> np.ndarray:
   return out.reshape(N, C, H * bh, W * bw)
 
 
-# --------------------------------------------------------------------------
 # numpy references (exact integer rearranges).
 
 def ref_pixel_shuffle(x: np.ndarray, r: int) -> np.ndarray:

@@ -62,9 +62,8 @@ def test_streamed_grads_match_monolith():
 
 
 def test_deep_stack_compiles_and_trains():
-  # A deep stack (more layers than a monolith compiles cheaply) trains: a sum-target
-  # regression where SGD over streamed grads drives the loss down. Compile cost is two
-  # programs regardless of depth.
+  # A deep stack trains: SGD over streamed grads drives the loss down. Compile cost is
+  # two programs regardless of depth.
   rng = np.random.default_rng(1)
   B, D, NL = 4, 8, 16
   xv = (rng.standard_normal((B, D)) * 0.3).astype(np.float32)

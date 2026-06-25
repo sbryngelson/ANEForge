@@ -1,13 +1,4 @@
-"""A2: a persistent Path-A worker for aneforge's netplist-bridge ops.
-
-The one-shot path (A1) pays the full descriptor->compile->load->mapIOSurfaces tax per call;
-for repeated fixed-shape calls (the decode loop) that startup dominates. A2 keeps a
-long-lived helper process that pays compile/load/map ONCE, then services many evals over a
-pipe (steady-state: host<->IOSurface memcpy + evaluateWithQoS). Import-lazy; authors the
-netplist with the SAME A1 bridge generators (only the dispatch differs).
-
-Supported: sdpa, argmax (GlobalArgMinMax), topk (per-row tiled). See docs/developer/bridges.md.
-"""
+"""A2: a persistent Path-A worker for aneforge's netplist-bridge ops (pays compile/load/map once, services many evals over a pipe)."""
 from __future__ import annotations
 
 import json
@@ -27,8 +18,7 @@ _INVOKER_BIN_NAME = "persistent_worker"
 
 
 def _ensure_worker_built() -> Path:
-  """Build the persistent-worker invoker once if missing/stale (unique path, never
-    clobbers the one-shot invokers)."""
+  """Build the persistent-worker invoker once if missing/stale."""
   binp = bin_dir() / _INVOKER_BIN_NAME
   src = Path(__file__).resolve().parent / "_invokers" / "persistent_worker.mm"
   if binp.exists() and src.exists() and binp.stat().st_mtime >= src.stat().st_mtime: return binp
@@ -45,13 +35,7 @@ def _ensure_worker_built() -> Path:
 
 
 class _Worker:
-  """Owns one spawned worker process holding ONE compiled+loaded netplist.
-
-    Batched wire protocol: per request, a LE uint32 count N then N input sets packed
-    back-to-back as raw fp16 (spawn symbol order); read back N output sets the same way.
-    `in_elems`/`out_elems` (from the "ready" line) give the per-set framing. `eval` is the
-    N=1 case; `eval_batch` packs many sets into ONE round-trip.
-    """
+  """Owns one spawned worker process holding ONE compiled+loaded netplist (batched fp16 wire protocol)."""
 
   def __init__(self, netplist: Path, weights: list[Path], in_syms: list[str],
                out_syms: list[str], workdir: tempfile.TemporaryDirectory,
@@ -63,15 +47,13 @@ class _Worker:
     for w in weights: cmd += ["--weights", str(w)]
     for s in in_syms: cmd += ["--input", s]
     for s in out_syms: cmd += ["--output", s]
-    # bufsize=0: the protocol is length-prefixed binary and `_read_exact`
-    # select()s on the raw stdout fd, which is only correct with no
-    # Python-level read buffering in front of it.
+    # bufsize=0: _read_exact select()s on the raw stdout fd, so no Python-level read buffering.
     self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, bufsize=0)
     assert self._proc.stdin is not None
     assert self._proc.stdout is not None
     assert self._proc.stderr is not None
-    # Store pipes as non-Optional IO so pyright can narrow in other methods.
+    # non-Optional IO so pyright can narrow in other methods.
     self._stdin = self._proc.stdin
     self._stdout = self._proc.stdout
     self._stderr = self._proc.stderr
@@ -93,8 +75,7 @@ class _Worker:
     return self.eval_batch([inputs])[0]
 
   def eval_batch(self, input_sets: list[list[np.ndarray]]) -> list[list[np.ndarray]]:
-    """Run N evals in ONE pipe round-trip. Bit-identical to N `eval` calls but pays a
-        single request/reply (the per-row-tiled topk/sort win)."""
+    """Run N evals in ONE pipe round-trip (bit-identical to N `eval` calls)."""
     if self._proc.poll() is not None: raise RuntimeError("persistent worker has exited")
     n = len(input_sets)
     if n == 0: return []
@@ -163,13 +144,11 @@ class _Worker:
       pass
 
 
-# per-op worker builders: author the netplist with the A1 bridge generator, then hand it
-# to a persistent _Worker. Each returns a callable (src_arrays, attrs) -> fp16 output
-# matching the A1 runner's contract.
+# per-op worker builders: author the netplist with the A1 bridge generator, then hand it to
+# a persistent _Worker. Each returns a callable (src_arrays, attrs) -> fp16 output.
 
 def _build_sdpa_worker(shape, attrs):
-  """Persistent SDPA. `shape` = Q/K/V [1,H,S,D], `attrs` has `scale`. Pre/post transpose
-    Q,K,V (heads<->seq) so the netplist sees seq-in-C, heads-in-H."""
+  """Persistent SDPA worker (shape = Q/K/V [1,H,S,D]); pre/post transpose heads<->seq."""
   from ._bridges import ane_sdpa_fused as af  # the A1 bridge = the netplist author
 
   B, H, S, D = shape
@@ -203,8 +182,7 @@ def _build_sdpa_worker(shape, attrs):
 
 def _write_rank_netplist(wd: Path, layer_type: str, params: dict, *,
              channels: int, width: int, height: int = 1):
-  """Author a single-op rank netplist (Sort/TopK/ArgMinMax/GlobalArgMinMax) into `wd`
-    via the A1 bridge generator (byte-identical layout). Returns (netplist_path, [weight])."""
+  """Author a single-op rank netplist (Sort/TopK/ArgMinMax) into `wd`; returns (netplist_path, [weight])."""
   import plistlib
   from ._bridges import ane_rank_fused as rf  # the A1 bridge = the netplist author
   plist = rf._build_plist(layer_type, params, width=width, height=height,
@@ -218,8 +196,7 @@ def _write_rank_netplist(wd: Path, layer_type: str, params: dict, *,
 
 
 def _build_argmax_worker(shape, attrs):
-  """Persistent GlobalArgMinMax (argmax). `shape` = input [C,W], `attrs` has `axis`
-    (1=Width, 0=Channel). Output keepdims [C,1] for axis=1 or [1,W] for axis=0."""
+  """Persistent GlobalArgMinMax worker (shape = [C,W]); output keepdims [C,1] (axis=1) or [1,W] (axis=0)."""
   C, W = shape
   axis = attrs["axis"]
   dim = "Width" if axis == 1 else "Channel"
@@ -242,10 +219,7 @@ def _build_argmax_worker(shape, attrs):
 
 
 def _build_topk_worker(shape, attrs):
-  """Persistent per-row TopK. `shape` = input [C,W], `attrs` has `k`, `largest`. Native
-    TopK keys ALL channels by one lane's order, so per-row top-k runs each row as its own
-    1-channel program: load ONE 1-channel (width=W, K=k) program, eval it C times. Output
-    [C,k] values."""
+  """Persistent per-row TopK worker (shape = [C,W]); one 1-channel program eval'd C times, output [C,k]."""
   C, W = shape
   k, largest = attrs["k"], attrs["largest"]
   params = {
@@ -263,17 +237,14 @@ def _build_topk_worker(shape, attrs):
   def run(srcs, attrs2):
     (x,) = srcs
     xa = np.ascontiguousarray(np.asarray(x, np.float16).reshape(C, W))
-    # C separate eval() round-trips, NOT one eval_batch: measured (M5 Pro), the floor is
-    # the C sequential ANE dispatches, not the pipe trips (~free). Batching loses the pipe
-    # pacing that keeps the ANE warm and regressed the median, so keep per-call dispatch.
+    # C separate eval() round-trips, NOT one eval_batch: batching regressed the median (loses pipe pacing).
     rows = [worker.eval([xa[c]])[0].reshape(k) for c in range(C)]
     return np.stack(rows, axis=0)
 
   return worker, run
 
 
-# op name -> builder. Ops absent here have no worker route yet and fall back to
-# the A1 bridge (see _compile._netplist_runner).
+# op name -> builder. Ops absent here fall back to the A1 bridge.
 _WORKER_BUILDERS = {
   "sdpa": _build_sdpa_worker,
   "argmax": _build_argmax_worker,

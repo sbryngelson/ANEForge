@@ -15,8 +15,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 def cost_volume_fused(aux: np.ndarray, ref: np.ndarray,
                       disparity_range: int | np.integer[Any] = 1) -> np.ndarray:
-  """L1 cost volume of two single-channel rows; returns `(R+1, Wa)` fp16,
-    `cost[d, x] = |aux[x] - ref[x+d]|`. `ref` must satisfy `Wr >= Wa + R`."""
+  """L1 cost volume of two single-channel rows -> (R+1, Wa) fp16, cost[d,x]=|aux[x]-ref[x+d]|; needs Wr >= Wa+R."""
   aux = np.asarray(aux, dtype=np.float16).reshape(-1)
   ref = np.asarray(ref, dtype=np.float16).reshape(-1)
   Wa, Wr = aux.size, ref.size

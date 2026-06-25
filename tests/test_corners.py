@@ -1,4 +1,4 @@
-"""Adversarial / corner cases for the aneforge corpus (extreme shapes, deep chains, graph cuts, multi-input, fp16-vs-int8)."""
+"""Adversarial / corner cases: extreme shapes, deep chains, graph cuts, multi-input, fp16-vs-int8."""
 from __future__ import annotations
 
 import numpy as np
@@ -84,7 +84,7 @@ def _big_channel_conv():
 
 # very deep chain fused into one program
 def _deep_chain():
-  # 32 ops fused into ONE program; sin/cos/tanh + *1.4 is magnitude-preserving (O(1)) so relerr stays meaningful
+  # 32 ops fused into ONE program; sin/cos/tanh + *1.4 is magnitude-preserving so relerr stays meaningful
   x = f16(rng, 4, 16, scale=1.0)
   n = 32
 

@@ -10,10 +10,7 @@ def _cos(a, b):
 
 
 def _eval(t):
-  """Compile a graph whose only inputs carry attrs['value'], eval on the ANE, and
-    release the program. The result is copied out first, so nothing dangles; releasing
-    frees the ANE program promptly rather than at interpreter teardown, which keeps the
-    forked suite from leaning on the shared device's lazy per-PID reclamation."""
+  """Compile a graph whose inputs carry attrs['value'], eval on the ANE, copy out, and release."""
   net = af.compile(t)
   feed = [s.attrs["value"].astype(np.float16) for s in net._input_tensors]
   out = np.asarray(net(*feed)).copy()
@@ -42,8 +39,7 @@ def test_conv2d_pad_grad_matches_torch():
   x = af.input(x_np.shape); x.attrs["value"] = x_np
   w = af.conv_param(w_np)
   y = af.conv2d(x, w, pad=1)
-  # mean over batch only: a full 4-dim mean shrinks grads to ~1e-4 where fp16 loses
-  # precision; mean-over-batch keeps them in fp16's normal range
+  # mean over batch only: a full 4-dim mean shrinks grads to ~1e-4 (fp16 underflow)
   loss = (y * y).mean((0,))
   grads = agrad.backward(loss, [x, w], loss_scale=1.0)
   gx_ane = _eval(grads[x])
@@ -53,8 +49,7 @@ def test_conv2d_pad_grad_matches_torch():
   wt = torch.tensor(w_np, requires_grad=True)
   yt = F.conv2d(xt, wt, padding=1)
   (yt * yt).mean(0).sum().backward()
-  # w grad: conv_param stores the flat [Cin*kH*kW, Cout] patch matrix; map torch's
-  # [Cout,Cin,kH,kW] grad into that layout for comparison.
+  # w grad: conv_param stores the flat [Cin*kH*kW, Cout] patch matrix; remap torch's grad.
   gw_ref = wt.grad.numpy().reshape(Cout, Cin * k * k).T
   assert _cos(gx_ane.reshape(x_np.shape), xt.grad.numpy()) > 0.99
   assert _cos(gw_ane.reshape(gw_ref.shape), gw_ref) > 0.99
@@ -108,8 +103,7 @@ def test_cifar_cnn_forward_runs_on_ane():
 
 
 def test_cifar_cnn_short_run_learns():
-  """A short on-ANE training run reduces loss and clears a low accuracy floor,
-    proving the conv+GroupNorm backward + on-device Adam actually learn."""
+  """A short on-ANE training run reduces loss and clears a low accuracy floor."""
   import sys as _sys
   from pathlib import Path as _Path
   _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "examples"))

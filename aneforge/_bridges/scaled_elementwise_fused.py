@@ -33,13 +33,7 @@ def _plist(width: int, op_type: str, scale_bits: int) -> dict:
 
 def scaled_elementwise_fused(x: np.ndarray, z: np.ndarray, *,
                              op: str = "Add", scale: float = 1.0) -> np.ndarray:
-  """Compute `scale * (x OP z)` on the ANE.
-
-    Args:
-        x, z: fp16 1-D arrays (flattened along Width).
-        op:   "Add" | "Mult" | "Sub" | "Min" | "Max".
-        scale: scalar applied after the elementwise op.
-    """
+  """Compute `scale * (x OP z)` on the ANE; x/z are fp16 1-D, op in Add|Mult|Sub|Min|Max."""
   x = np.asarray(x, dtype=np.float16).reshape(-1)
   z = np.asarray(z, dtype=np.float16).reshape(-1)
   if x.shape != z.shape: raise ValueError("x and z must share shape")

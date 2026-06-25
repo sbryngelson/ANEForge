@@ -1,7 +1,4 @@
-"""The aneforge compute graph: a lazy `Tensor` recording structure (op + sources +
-attrs), the op constructors, and nn helpers (conv, attention, GEGLU). Nothing here
-touches the device - `compile` (_compile.py) lowers the graph. See docs/developer/overview.md.
-"""
+"""Lazy `Tensor` graph, op constructors, and nn helpers (conv, attention, GEGLU). The device-free frontend; `_compile.py` lowers it."""
 from __future__ import annotations
 
 from typing import Any, Sequence
@@ -71,8 +68,7 @@ class Tensor:
   def log(self, eps: float = 0.0) -> "Tensor": return Tensor(self.shape, "log", [self], {"eps": eps})
   def rsqrt(self, eps: float = 0.0) -> "Tensor": return Tensor(self.shape, "rsqrt", [self], {"eps": eps})
   def inverse(self, eps: float = 0.0) -> "Tensor":
-    """`1 / x` (elementwise reciprocal). `eps` is the MIL `inverse` epsilon
-        floor under the divide (0.0 = plain reciprocal)."""
+    """`1 / x` (elementwise reciprocal); `eps` floors the divide."""
     return Tensor(self.shape, "inverse", [self], {"eps": eps})
   def elu(self, alpha: float = 1.0) -> "Tensor": return Tensor(self.shape, "elu", [self], {"alpha": alpha})
   def leaky_relu(self, alpha: float = 0.01) -> "Tensor": return Tensor(self.shape, "leaky_relu", [self], {"alpha": alpha})
@@ -99,8 +95,7 @@ class Tensor:
     return Tensor(self.shape, "linear_activation", [self], {"alpha": alpha, "beta": beta})
 
   def greater(self, o) -> "Tensor":
-    """Elementwise `x > o` -> a BOOL tensor (use as the `cond` of `af.select`).
-        Comparison ops output bool, not a numeric value on their own."""
+    """Elementwise `x > o` -> a BOOL tensor (use as the `cond` of `af.select`)."""
     if not isinstance(o, Tensor):
       raise TypeError("greater expects a graph Tensor (compare against a streamed weight via select)")
     return Tensor(_broadcast(self.shape, o.shape), "greater", [self, o])
@@ -164,15 +159,12 @@ class Tensor:
   __rmul__ = __mul__
 
   def adds(self, k: float) -> "Tensor":
-    """`x + scalar` as a fused scalar-add (additive sibling of `x * scalar`).
-        The only fused way to inject a scalar offset (e.g. a normalization eps);
-        `+` requires two graph Tensors."""
+    """`x + scalar` as a fused scalar-add (the only fused way to inject a scalar offset; `+` needs two Tensors)."""
     return Tensor(self.shape, "adds", [self], {"k": float(k)})
 
   # -- linear algebra ---------------------------------------------------- #
   def __matmul__(self, W) -> "Tensor":
-    """`x @ W`. `W` is a weight array (streamed), or another Tensor for an
-        activationxactivation product (e.g. attention scores)."""
+    """`x @ W`. `W` is a streamed weight array, or a Tensor for an activationxactivation product."""
     if isinstance(W, Tensor):
       if self.shape[-1] != W.shape[-2]:
         raise ValueError(f"matmul: {self.shape} @ {W.shape} shape mismatch")
@@ -204,8 +196,7 @@ class Tensor:
     return Tensor(tuple(shape), "reshape", [self])
 
   def squeeze(self, axes) -> "Tensor":
-    """Remove size-1 dims at `axes` (native `squeeze`). Each named axis must
-        have size 1."""
+    """Remove size-1 dims at `axes` (native `squeeze`)."""
     if not isinstance(axes, (tuple, list)):
       axes = (axes,)
     axes = tuple(a % len(self.shape) for a in axes)
@@ -216,8 +207,7 @@ class Tensor:
     return Tensor(out, "squeeze", [self], {"axes": axes})
 
   def expand_dims(self, axes) -> "Tensor":
-    """Insert size-1 dims at `axes` (native `expand_dims`), the inverse of
-        `squeeze`. Axes index into the OUTPUT rank."""
+    """Insert size-1 dims at `axes` (native `expand_dims`); axes index the OUTPUT rank."""
     if not isinstance(axes, (tuple, list)):
       axes = (axes,)
     out_rank = len(self.shape) + len(axes)
@@ -228,16 +218,14 @@ class Tensor:
     return Tensor(tuple(out), "expand_dims", [self], {"axes": tuple(axes)})
 
   def flatten2d(self, axis: int = 1) -> "Tensor":
-    """Collapse to 2-D about `axis`: dims `[:axis]` -> rows, `[axis:]` ->
-        cols (native `flatten2d`)."""
+    """Collapse to 2-D about `axis`: `[:axis]` -> rows, `[axis:]` -> cols (native `flatten2d`)."""
     ax = axis % len(self.shape)
     rows = int(np.prod(self.shape[:ax])) if ax > 0 else 1
     cols = int(np.prod(self.shape[ax:]))
     return Tensor((rows, cols), "flatten2d", [self], {"axis": ax})
 
   def slice_by_size(self, begin, size) -> "Tensor":
-    """Static slice `x[begin[i] : begin[i]+size[i]]` per axis (native
-        `slice_by_size`). `begin`/`size` are per-axis lists matching the rank."""
+    """Static per-axis slice `x[begin[i]:begin[i]+size[i]]` (native `slice_by_size`)."""
     begin = [int(b) for b in begin]; size = [int(s) for s in size]
     if len(begin) != len(self.shape) or len(size) != len(self.shape):
       raise ValueError(f"slice_by_size: begin/size must have rank {len(self.shape)}")
@@ -260,8 +248,7 @@ class Tensor:
   def amin(self, axes) -> "Tensor": return self._reduce("reduce_min", axes)
 
   def cumsum(self, axis: int = -1) -> "Tensor":
-    """Cumulative sum along `axis` (last axis only): `x @ triu_ones` (no native
-        cumsum). For other axes, transpose the target axis to last first."""
+    """Cumulative sum along the last axis as `x @ triu_ones` (no native cumsum)."""
     ax = axis % len(self.shape)
     if ax != len(self.shape) - 1:
       raise ValueError(f"cumsum: only the last axis is supported (got axis={axis}, "
@@ -283,14 +270,12 @@ class Tensor:
     return Tensor(self.shape, "softmax", [self], {"axis": axis % len(self.shape)})
 
   def l2_norm(self, axis: int = -1, eps: float = 1e-12) -> "Tensor":
-    """L2-normalize over `axis`: `x / sqrt(sum(x**2, axis) + eps)`. Fused e5rt MIL
-        (the MIL `l2_norm` op normalises over all non-batch dims, so we build per-axis)."""
+    """Per-axis L2-normalize `x / sqrt(sum(x**2, axis) + eps)` (built per-axis; MIL `l2_norm` is all-dims)."""
     ax = axis % len(self.shape)
     return Tensor(self.shape, "l2_norm", [self], {"axis": ax, "eps": float(eps)})
 
   def argmax(self, axis: int = -1) -> "Tensor":
-    """Index of the maximum along `axis` (keepdims). Native-ANE GlobalArgMinMax
-        bridge - a graph cut. 2D inputs [C, W] only; indices fp16-encoded (exact for index<2048)."""
+    """Argmax along `axis` (keepdims). GlobalArgMinMax bridge (cut); 2D [C,W] only, indices fp16-encoded."""
     if len(self.shape) != 2:
       raise ValueError(f"argmax: only 2D [C,W] inputs are supported; got {self.shape}")
     ax = axis % 2
@@ -298,8 +283,7 @@ class Tensor:
     return Tensor(out, "argmax", [self], {"axis": ax})
 
   def rms_norm(self, gamma, eps: float = 1e-5) -> "Tensor":
-    """RMSNorm over the last dim. `gamma`: a [D] array (fixed/baked scale) or a
-        broadcastable parameter `Tensor` ([1, D]) for a TRAINABLE scale."""
+    """RMSNorm over the last dim. `gamma`: a [D] array (baked) or a [1,D] Tensor (trainable)."""
     if isinstance(gamma, Tensor):
       xn = self.rms_norm(np.ones(self.shape[-1], np.float32), eps)
       return xn * gamma
@@ -309,9 +293,7 @@ class Tensor:
     return Tensor(self.shape, "rms_norm", [self], {"gamma": gamma, "eps": float(eps)})
 
   def layer_norm(self, gamma, beta, eps: float = 1e-5) -> "Tensor":
-    """LayerNorm over the last dim (2D inputs [M, D]). `gamma`/`beta`: [D] arrays
-        (fixed/baked affine) or broadcastable parameter `Tensor`s ([1, D]) for a
-        TRAINABLE affine (pass both as Tensors)."""
+    """LayerNorm over the last dim (2D [M,D]). `gamma`/`beta`: [D] arrays (baked) or [1,D] Tensors (trainable; pass both)."""
     if isinstance(gamma, Tensor) or isinstance(beta, Tensor):
       if not (isinstance(gamma, Tensor) and isinstance(beta, Tensor)):
         raise TypeError("layer_norm: a trainable affine needs both gamma and beta as Tensors")
@@ -325,9 +307,7 @@ class Tensor:
     return Tensor(self.shape, "layer_norm", [self], {"gamma": gamma, "beta": beta, "eps": float(eps)})
 
   def channel_layer_norm(self, gamma, beta, eps: float = 1e-5) -> "Tensor":
-    """LayerNorm over the CHANNEL axis of channels-first [N, C, 1, S] - the ANE-native
-        transformer layout. Same result as `layer_norm` on the [N*S, C] view but with no
-        transpose, keeping the attention/MLP stack as 1x1 convs. `gamma`/`beta` are [C]."""
+    """LayerNorm over the CHANNEL axis of [N,C,1,S] (ANE transformer layout; no transpose). `gamma`/`beta`: [C]."""
     gamma = np.asarray(gamma); beta = np.asarray(beta)
     _check_dtype(gamma, "channel_layer_norm gamma"); _check_dtype(beta, "channel_layer_norm beta")
     if (len(self.shape) != 4 or self.shape[2] != 1
@@ -337,9 +317,7 @@ class Tensor:
     return Tensor(self.shape, "channel_layer_norm", [self], {"gamma": gamma, "beta": beta, "eps": float(eps)})
 
   def group_norm(self, gamma, beta, num_groups: int, eps: float = 1e-5) -> "Tensor":
-    """GroupNorm over [1,C,H,W]. `gamma`/`beta`: [C] arrays (fixed/baked affine) or
-        broadcastable parameter `Tensor`s ([1, C, 1, 1]) for a TRAINABLE affine
-        (pass both as Tensors)."""
+    """GroupNorm over [1,C,H,W]. `gamma`/`beta`: [C] arrays (baked) or [1,C,1,1] Tensors (trainable; pass both)."""
     if isinstance(gamma, Tensor) or isinstance(beta, Tensor):
       if not (isinstance(gamma, Tensor) and isinstance(beta, Tensor)):
         raise TypeError("group_norm: a trainable affine needs both gamma and beta as Tensors")
@@ -350,8 +328,7 @@ class Tensor:
     _check_dtype(gamma, "group_norm gamma"); _check_dtype(beta, "group_norm beta")
     if len(self.shape) != 4 or self.shape[0] != 1 or self.shape[1] % num_groups:
       raise ValueError(f"group_norm expects [1,C,H,W] with C%groups==0; got {self.shape}, G={num_groups}")
-    # The tiled lowering reduces over the largest single axis, max(C/groups, H*W),
-    # against the ANE per-axis cap of 65536 (not the flattened product; finding_sd15).
+    # tiled lowering reduces over max(C/groups, H*W) vs the 65536 per-axis cap (finding_sd15)
     _, C, H, W = self.shape
     axis = max(C // num_groups, H * W)
     if axis > 65536:
@@ -384,21 +361,13 @@ class Tensor:
     return f"Tensor({self.op}, shape={self.shape})"
 
 
-# --------------------------------------------------------------------------- #
-# op constructors                                                             #
-# --------------------------------------------------------------------------- #
+# op constructors
 
 _input_counter = [0]
 
 
 def input(shape: Sequence[int], dtype: str = "fp16") -> Tensor:
-  """A graph input placeholder. Inputs are fed to the compiled Model in the
-    order they were created.
-
-    `dtype` is the wire dtype of the input port: "fp16" (default, the ANE compute
-    type) or "uint8" (raw camera/decoded-video bytes, dequantised in-graph - see
-    `af.image_input`). A uint8 input only feeds an in-graph `cast`; not a compute
-    tensor on its own."""
+  """A graph input placeholder (fed to the Model in creation order). `dtype`: "fp16" or "uint8" (raw bytes, dequantised in-graph; see `af.image_input`)."""
   if dtype not in ("fp16", "uint8"):
     raise ValueError(f"input: dtype must be 'fp16' or 'uint8'; got {dtype!r}")
   t = Tensor(tuple(shape), "input")
@@ -410,12 +379,7 @@ def input(shape: Sequence[int], dtype: str = "fp16") -> Tensor:
 
 
 def image_input(shape: Sequence[int], scale: float = 1.0 / 255.0, bias=0.0) -> Tensor:
-  """A uint8 image input dequantised to fp16 ON the engine: feed raw 8-bit pixels
-    (camera / decoded-video bytes) straight in, the host skips the float-convert + repack.
-
-    `scale`/`bias` are scalar (default `scale=1/255`) or length-C for per-channel NCHW
-    normalisation (broadcast as `[1,C,1,1]`). The dequant is `cast -> mul(scale) -> add(bias)`;
-    identity mul/add are dropped."""
+  """A uint8 image input dequantised to fp16 on-engine (`cast -> mul(scale) -> add(bias)`). `scale`/`bias` are scalar or length-C (NCHW per-channel, broadcast [1,C,1,1])."""
   shape = tuple(int(d) for d in shape)
   x = input(shape, dtype="uint8")
   y = Tensor(shape, "cast", [x], {"dtype": "fp16"})
@@ -487,11 +451,7 @@ def conv(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
 
 def dynamic_conv(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0,
         dilation: int = 1, groups: int = 1) -> Tensor:
-  """2D conv with a DYNAMIC (runtime-tensor) weight via the ANE's native dynamic-kernel
-    path - enables hypernetworks / per-sample kernels (Apple's MIL/CoreML conv bakes the weight).
-
-    `x`: [1, Cin, H, W]; `weight`: a Tensor [Cout, Cin/groups, kH, kW]. BATCH MUST BE 1
-    (batch>=2 is unsupported on the dynamic-kernel path; use `af.conv` / `conv2d` instead)."""
+  """2D conv with a runtime-tensor weight (native dynamic-kernel path; hypernetworks/per-sample kernels). `x`: [1,Cin,H,W]; `weight` Tensor [Cout,Cin/g,kH,kW]; batch must be 1."""
   if not isinstance(weight, Tensor):
     raise TypeError("dynamic_conv: weight must be a Tensor (a graph value); for a constant "
             "weight use af.conv")
@@ -515,9 +475,7 @@ def dynamic_conv(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0,
 
 def conv_transpose(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
          groups: int = 1, bias=None) -> Tensor:
-  """2D transposed conv (deconv) - upsampling conv for VAE/segmentation decoders.
-    `x`: [N,Cin,H,W]; `weight`: [Cin, Cout, kH, kW] (PyTorch ConvTranspose2d layout);
-    `bias`: [Cout]."""
+  """2D transposed conv (deconv). `x`: [N,Cin,H,W]; `weight`: [Cin,Cout,kH,kW] (PyTorch layout); `bias`: [Cout]."""
   weight = np.asarray(weight); _check_dtype(weight, "conv_transpose weight")
   if len(x.shape) != 4:
     raise ValueError(f"conv_transpose expects 4D [N,Cin,H,W], got {x.shape}")
@@ -531,8 +489,7 @@ def conv_transpose(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: i
 
 
 def batch_norm(x: Tensor, gamma, beta, mean, var, eps: float = 1e-5) -> Tensor:
-  """BatchNorm in inference mode over [1,C,H,W] (or [1,C,...]); per-channel
-    affine from precomputed running `mean`/`var`. gamma/beta/mean/var: [C]."""
+  """Inference BatchNorm over [1,C,...] from running `mean`/`var`. gamma/beta/mean/var: [C]."""
   g, b, m, v = (np.asarray(a) for a in (gamma, beta, mean, var))
   for a, nm in ((g, "gamma"), (b, "beta"), (m, "mean"), (v, "var")):
     _check_dtype(a, f"batch_norm {nm}")
@@ -562,13 +519,11 @@ def concat(tensors: Sequence[Tensor], axis: int = 1) -> Tensor:
 
 
 def gather(x: Tensor, indices, axis: int = 0) -> Tensor:
-  """Gather slices along `axis` by STATIC integer `indices` via `slice_by_size` + `concat`
-    (no native gather; dynamic indices are unreachable on the ANE)."""
+  """Gather slices along `axis` by STATIC integer `indices` via `slice_by_size` + `concat` (no native gather)."""
   idx = [int(i) for i in indices]
   rank = len(x.shape)
   ax = axis % rank
-  # A last-axis (width) gather hits the A13/A14 x16 crop-DMA path and returns wrong elements
-  # (correct on A16+). Gather a NON-last axis instead by transposing the axis off last.
+  # last-axis gather hits the A13/A14 x16 crop-DMA bug; transpose the axis off last
   if ax == rank - 1:
     if rank == 1:
       return gather(x.reshape(x.shape[0], 1), idx, axis=0).reshape(len(idx))
@@ -585,8 +540,7 @@ def gather(x: Tensor, indices, axis: int = 0) -> Tensor:
 
 
 def stack(tensors: Sequence[Tensor], axis: int = 0) -> Tensor:
-  """Stack equal-shaped tensors along a NEW axis (native `stack`):
-    N x [shape] -> [..., N, ...] with N inserted at `axis`."""
+  """Stack equal-shaped tensors along a NEW axis (native `stack`), N inserted at `axis`."""
   tensors = list(tensors)
   if not tensors:
     raise ValueError("stack: empty tensor list")
@@ -600,8 +554,7 @@ def stack(tensors: Sequence[Tensor], axis: int = 0) -> Tensor:
 
 
 def split(x: Tensor, num_splits: int, axis: int = 0) -> list[Tensor]:
-  """Split `x` into `num_splits` equal parts along `axis` (native `split`).
-    Returns the list of output Tensors; the axis size must divide evenly."""
+  """Split `x` into `num_splits` equal parts along `axis` (native `split`); axis size must divide evenly."""
   ax = axis % len(x.shape)
   if x.shape[ax] % num_splits:
     raise ValueError(f"split: axis {ax} size {x.shape[ax]} not divisible by {num_splits}")
@@ -612,8 +565,7 @@ def split(x: Tensor, num_splits: int, axis: int = 0) -> list[Tensor]:
 
 
 def select(cond: Tensor, a: Tensor, b: Tensor) -> Tensor:
-  """Elementwise `cond ? a : b` (native `select`). `cond` is a BOOL tensor
-    (e.g. from `x.greater(y)`); `a`/`b` are fp16 tensors."""
+  """Elementwise `cond ? a : b` (native `select`). `cond` is a BOOL tensor; `a`/`b` are fp16."""
   if not (isinstance(cond, Tensor) and isinstance(a, Tensor) and isinstance(b, Tensor)):
     raise TypeError("select expects three graph Tensors (cond, a, b)")
   return Tensor(_broadcast(a.shape, b.shape), "select", [cond, a, b])
@@ -623,8 +575,7 @@ where = select  # alias
 
 
 def instance_norm(x: Tensor, gamma, beta, eps: float = 1e-5) -> Tensor:
-  """InstanceNorm over [N,C,H,W]: normalize each (N,C) slice over its spatial dims,
-    then a per-channel affine. `gamma`/`beta`: [C]. Native `instance_norm` op."""
+  """InstanceNorm over [N,C,H,W] (per-(N,C)-slice spatial norm + per-channel affine). `gamma`/`beta`: [C]."""
   g, b = np.asarray(gamma), np.asarray(beta)
   _check_dtype(g, "instance_norm gamma"); _check_dtype(b, "instance_norm beta")
   if len(x.shape) != 4 or g.shape != (x.shape[1],) or b.shape != (x.shape[1],):
@@ -634,9 +585,7 @@ def instance_norm(x: Tensor, gamma, beta, eps: float = 1e-5) -> Tensor:
 
 def local_response_norm(x: Tensor, size: int = 5, alpha: float = 1e-4,
             beta: float = 0.75, k: float = 1.0) -> Tensor:
-  """Cross-channel LRN over [N,C,H,W] via the native MIL `local_response_norm` op (fused,
-    no cut - distinct from the netplist `af.lrn` bridge): `x / (k + alpha/size *
-    sum_{window} x**2) ** beta` over `size` neighbouring channels."""
+  """Cross-channel LRN over [N,C,H,W] via the fused native `local_response_norm` op (no cut; distinct from the `af.lrn` bridge)."""
   if len(x.shape) != 4:
     raise ValueError(f"local_response_norm expects [N,C,H,W]; got {x.shape}")
   return Tensor(x.shape, "local_response_norm", [x],
@@ -644,10 +593,7 @@ def local_response_norm(x: Tensor, size: int = 5, alpha: float = 1e-4,
 
 
 def einsum_native(equation: str, a: Tensor, b) -> Tensor:
-  """Restricted batched contraction via the native MIL `einsum` op (the single hardware
-    `einsum` layer; distinct from the general `af.einsum` decomposer). Only the verified
-    equation `'nchw,nwhu->nchu'` is reachable: `a`=[N,C,H,W], `b`=[N,W,H,U] streamed weight
-    -> [N,C,H,U]."""
+  """Restricted batched contraction via the native `einsum` op (distinct from `af.einsum`). Only `'nchw,nwhu->nchu'` is reachable: a=[N,C,H,W], b=[N,W,H,U] -> [N,C,H,U]."""
   if equation.replace(" ", "") != "nchw,nwhu->nchu":
     raise NotImplementedError(
       f"einsum: only 'nchw,nwhu->nchu' is verified reachable on the ANE; got {equation!r}")
@@ -662,8 +608,7 @@ def einsum_native(equation: str, a: Tensor, b) -> Tensor:
 
 
 def space_to_depth(x: Tensor, block_size: int = 2) -> Tensor:
-  """Space-to-depth (TensorFlow `space_to_depth` / native MIL `space_to_depth`):
-    `[N,C,H,W] -> [N, C*bs*bs, H/bs, W/bs]`. Fused e5rt MIL (no cut)."""
+  """Space-to-depth (native `space_to_depth`): `[N,C,H,W] -> [N,C*bs*bs,H/bs,W/bs]`. Fused (no cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"space_to_depth expects 4D [N,C,H,W], got {x.shape}")
   N, C, H, W = x.shape
@@ -674,9 +619,7 @@ def space_to_depth(x: Tensor, block_size: int = 2) -> Tensor:
 
 
 def depth_to_space(x: Tensor, block_size: int = 2) -> Tensor:
-  """Depth-to-space (TensorFlow `depth_to_space` / native MIL `depth_to_space`):
-    `[N, C*bs*bs, H, W] -> [N, C, H*bs, W*bs]` (inverse of `space_to_depth`).
-    Fused e5rt MIL (no cut)."""
+  """Depth-to-space (native `depth_to_space`): `[N,C*bs*bs,H,W] -> [N,C,H*bs,W*bs]`. Fused (no cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"depth_to_space expects 4D [N,C,H,W], got {x.shape}")
   N, C2, H, W = x.shape
@@ -687,8 +630,7 @@ def depth_to_space(x: Tensor, block_size: int = 2) -> Tensor:
 
 
 def crop(x: Tensor, top: int, bottom: int, left: int, right: int) -> Tensor:
-  """Spatial crop of [N,C,H,W]: drop `top`/`bottom` rows and `left`/`right`
-    columns (native MIL `crop`). Fused e5rt MIL (no cut)."""
+  """Spatial crop of [N,C,H,W]: drop `top`/`bottom` rows, `left`/`right` cols (native `crop`, no cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"crop expects 4D [N,C,H,W], got {x.shape}")
   N, C, H, W = x.shape
@@ -700,8 +642,7 @@ def crop(x: Tensor, top: int, bottom: int, left: int, right: int) -> Tensor:
 
 
 def resize_nearest_neighbor(x: Tensor, target_h: int, target_w: int) -> Tensor:
-  """Nearest-neighbour resize of [N,C,H,W] to `(target_h, target_w)` (native MIL
-    `resize_nearest_neighbor`, arbitrary target size). Fused e5rt MIL (no cut)."""
+  """Nearest-neighbour resize of [N,C,H,W] to `(target_h, target_w)` (native, no cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"resize_nearest_neighbor expects 4D [N,C,H,W], got {x.shape}")
   N, C, _, _ = x.shape
@@ -711,9 +652,7 @@ def resize_nearest_neighbor(x: Tensor, target_h: int, target_w: int) -> Tensor:
 
 def resize_bilinear(x: Tensor, target_h: int, target_w: int,
           align_corners: bool = False) -> Tensor:
-  """Bilinear resize of [N,C,H,W] to an explicit `(target_h, target_w)` (native
-    MIL `resize_bilinear`). Half-pixel sampling by default (`align_corners=False`).
-    Fused e5rt MIL (no cut)."""
+  """Bilinear resize of [N,C,H,W] to `(target_h, target_w)` (native, no cut). Half-pixel sampling by default."""
   if len(x.shape) != 4:
     raise ValueError(f"resize_bilinear expects 4D [N,C,H,W], got {x.shape}")
   N, C, _, _ = x.shape
@@ -723,9 +662,7 @@ def resize_bilinear(x: Tensor, target_h: int, target_w: int,
 
 
 def upsample_bilinear(x: Tensor, scale: int = 2, align_corners: bool = False) -> Tensor:
-  """Bilinear upsample of [N,C,H,W] by an integer `scale` (native MIL
-    `upsample_bilinear`, scale-factor form). Half-pixel sampling by default.
-    Fused e5rt MIL (no cut)."""
+  """Bilinear upsample of [N,C,H,W] by integer `scale` (native, no cut). Half-pixel sampling by default."""
   if len(x.shape) != 4:
     raise ValueError(f"upsample_bilinear expects 4D [N,C,H,W], got {x.shape}")
   N, C, H, W = x.shape
@@ -736,9 +673,7 @@ def upsample_bilinear(x: Tensor, scale: int = 2, align_corners: bool = False) ->
 
 def affine(x: Tensor, transform, output_h: int, output_w: int,
      align_corners: bool = False) -> Tensor:
-  """2-D affine warp of [N,C,H,W] to `(output_h, output_w)` via native MIL `affine`.
-    `transform` is [N,6] (or [1,6]) `[a0,a1,a2, b0,b1,b2]` in normalized [-1,1] coords;
-    bilinear sampling, zero padding. Fused MIL (no cut)."""
+  """2-D affine warp of [N,C,H,W] to `(output_h, output_w)` (native `affine`, no cut). `transform`: [N,6] `[a0,a1,a2,b0,b1,b2]` in normalized [-1,1] coords."""
   if len(x.shape) != 4:
     raise ValueError(f"affine expects 4D [N,C,H,W], got {x.shape}")
   T = np.asarray(transform); _check_dtype(T, "affine transform")
@@ -751,8 +686,7 @@ def affine(x: Tensor, transform, output_h: int, output_w: int,
 
 
 def pixel_shuffle(x: Tensor, r: int) -> Tensor:
-  """Depth-to-space upscale (PyTorch `nn.PixelShuffle`):
-    `[N, C*r*r, H, W] -> [N, C, H*r, W*r]`. Runs as fused e5rt MIL (no cut)."""
+  """Depth-to-space upscale (PyTorch `nn.PixelShuffle`): `[N,C*r*r,H,W] -> [N,C,H*r,W*r]`. Fused (no cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"pixel_shuffle expects 4D [N,C,H,W], got {x.shape}")
   N, C2, H, W = x.shape
@@ -762,8 +696,7 @@ def pixel_shuffle(x: Tensor, r: int) -> Tensor:
 
 
 def pixel_unshuffle(x: Tensor, r: int) -> Tensor:
-  """Space-to-depth (PyTorch `nn.PixelUnshuffle`):
-    `[N, C, H*r, W*r] -> [N, C*r*r, H, W]`. Runs as fused e5rt MIL (no cut)."""
+  """Space-to-depth (PyTorch `nn.PixelUnshuffle`): `[N,C,H*r,W*r] -> [N,C*r*r,H,W]`. Fused (no cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"pixel_unshuffle expects 4D [N,C,H,W], got {x.shape}")
   N, C, H, W = x.shape
@@ -773,9 +706,7 @@ def pixel_unshuffle(x: Tensor, r: int) -> Tensor:
 
 
 def space_to_channel(x: Tensor, r: int) -> Tensor:
-  """Space-to-depth on the ANE's native `SpaceToChannel` layer (TensorFlow
-    `space_to_depth`, block-major channels): `[N,C,H*r,W*r] -> [N,C*r*r,H,W]`.
-    Same shape law as PixelUnshuffle but the TF channel ordering. Graph cut."""
+  """Space-to-depth on the native `SpaceToChannel` layer (TF channel order): `[N,C,H*r,W*r] -> [N,C*r*r,H,W]`. Graph cut."""
   if len(x.shape) != 4:
     raise ValueError(f"space_to_channel expects 4D [N,C,H,W], got {x.shape}")
   N, C, H, W = x.shape
@@ -787,9 +718,7 @@ def space_to_channel(x: Tensor, r: int) -> Tensor:
 
 
 def channel_to_space(x: Tensor, r: int) -> Tensor:
-  """Depth-to-space on the ANE's native `ChannelToSpace` layer (TensorFlow
-    `depth_to_space`, block-major channels): `[N,C*r*r,H,W] -> [N,C,H*r,W*r]`.
-    Same shape law as PixelShuffle but the TF channel ordering. Graph cut."""
+  """Depth-to-space on the native `ChannelToSpace` layer (TF channel order): `[N,C*r*r,H,W] -> [N,C,H*r,W*r]`. Graph cut."""
   if len(x.shape) != 4:
     raise ValueError(f"channel_to_space expects 4D [N,C,H,W], got {x.shape}")
   N, C2, H, W = x.shape
@@ -801,10 +730,7 @@ def channel_to_space(x: Tensor, r: int) -> Tensor:
 
 
 def space_to_batch(x: Tensor, bh: int, bw: int) -> Tensor:
-  """Move spatial blocks into the batch dim on the native `SpaceToBatch` layer:
-    `[N,C,H,W] -> [N*bh*bw, C, H/bh, W/bw]`; batch slice `(n*bh+i)*bw+j` ==
-    `x[n, :, i::bh, j::bw]`. Graph cut (the batch dim grows, so it must be a leaf/output
-    or feed another netplist cut)."""
+  """Move spatial blocks into batch (native `SpaceToBatch`): `[N,C,H,W] -> [N*bh*bw,C,H/bh,W/bw]`. Graph cut (batch grows)."""
   if len(x.shape) != 4:
     raise ValueError(f"space_to_batch expects 4D [N,C,H,W], got {x.shape}")
   N, C, H, W = x.shape
@@ -815,9 +741,7 @@ def space_to_batch(x: Tensor, bh: int, bw: int) -> Tensor:
 
 
 def batch_to_space(x: Tensor, bh: int, bw: int) -> Tensor:
-  """Move batch blocks back into space on the native `BatchToSpace` layer (inverse of
-    `space_to_batch`): `[N*bh*bw, C, H, W] -> [N, C, H*bh, W*bw]`. Graph cut.
-    ARCH-GATED: input batch must be divisible by `bh*bw` (else fails compilation)."""
+  """Move batch blocks back into space (native `BatchToSpace`, inverse of `space_to_batch`): `[N*bh*bw,C,H,W] -> [N,C,H*bh,W*bw]`. Graph cut; batch must divide `bh*bw`."""
   if len(x.shape) != 4:
     raise ValueError(f"batch_to_space expects 4D [N,C,H,W], got {x.shape}")
   B, C, H, W = x.shape
@@ -829,18 +753,14 @@ def batch_to_space(x: Tensor, bh: int, bw: int) -> Tensor:
 
 
 def flatten(x: Tensor) -> Tensor:
-  """Flatten on the ANE's native `Flatten` layer (NCHW): collapse to a 1-D
-    vector of `prod(shape)` elements. The bridge takes a [C,H,W] input, so this
-    requires a 3D graph tensor. Graph cut."""
+  """Flatten on the native `Flatten` layer: collapse [C,H,W] to a 1-D vector. Graph cut."""
   if len(x.shape) != 3:
     raise ValueError(f"flatten expects 3D [C,H,W] (the native bridge layout); got {x.shape}")
   return Tensor((int(np.prod(x.shape)),), "flatten", [x])
 
 
 def input_view(x: Tensor, offset: int, size: int) -> Tensor:
-  """Contiguous view `x[offset:offset+size]` along Width on the ANE's native
-    `InputView` layer. `x` is flattened to 1-D (length W); returns `[size]`.
-    Graph cut."""
+  """Contiguous view `x[offset:offset+size]` along Width (native `InputView`); `x` flattened to 1-D -> `[size]`. Graph cut."""
   W = int(np.prod(x.shape))
   if offset < 0 or size <= 0 or offset + size > W:
     raise ValueError(f"input_view: window [{offset}:{offset + size}] out of range for W={W}")
@@ -848,9 +768,7 @@ def input_view(x: Tensor, offset: int, size: int) -> Tensor:
 
 
 def dynamic_slice(x: Tensor, start: int, size: int = 2) -> Tensor:
-  """Runtime-parametric slice `x[start:start+size]` on the native `DynamicSlice` layer.
-    Graph cut. ARCH-NOTE: the only verified variant fixes Width=4, SliceSize=2, so this
-    requires a length-4 input and `size==2`."""
+  """Runtime-parametric slice `x[start:start+size]` (native `DynamicSlice`). Graph cut; only verified variant is Width=4, size==2."""
   W = int(np.prod(x.shape))
   if W != 4 or size != 2:
     raise ValueError("dynamic_slice: the verified ANE variant requires a length-4 "
@@ -861,9 +779,7 @@ def dynamic_slice(x: Tensor, start: int, size: int = 2) -> Tensor:
 
 
 def scaled_elementwise(x: Tensor, z: Tensor, op: str = "Add", scale: float = 1.0) -> Tensor:
-  """`scale * (x OP z)` on the native `ScaledElementWise` layer. `op` in {Add, Mult, Min,
-    Max}; inputs flattened to equal-length 1-D Width vectors. Graph cut. Arch quirks guarded:
-    `Sub` is rejected by ANECCompile, and `Mult` ignores `scale` on-silicon."""
+  """`scale * (x OP z)` (native `ScaledElementWise`). `op` in {Add,Mult,Min,Max}; equal-size inputs. Graph cut; `Sub` rejected, `Mult` ignores `scale`."""
   ops = ("Add", "Mult", "Min", "Max")
   if op not in ops:
     raise ValueError(f"scaled_elementwise: op must be one of {ops}; got {op!r} "
@@ -878,8 +794,7 @@ def scaled_elementwise(x: Tensor, z: Tensor, op: str = "Add", scale: float = 1.0
 
 
 def topk(x: Tensor, k: int, largest: bool = True) -> Tensor:
-  """Top-`k` values along the last axis of a 2D input [C, W], keyed per row. Native-ANE
-    TopK bridge - a cut. `k` in {3, 4} is ARCH-GATED (ANECCompile fails) and rejected."""
+  """Top-`k` per row of a 2D input [C,W] (native TopK bridge, a cut). `k` in {3,4} is arch-gated and rejected."""
   if len(x.shape) != 2:
     raise ValueError(f"topk: only 2D [C,W] inputs are supported; got {x.shape}")
   C, W = x.shape
@@ -891,10 +806,7 @@ def topk(x: Tensor, k: int, largest: bool = True) -> Tensor:
 
 
 def sort(x: Tensor, descending: bool = False, return_indices: bool = False) -> Tensor:
-  """Sort each row of a 2D input [C, W] along the last axis (Width). Native-ANE Sort
-    bridge - a cut. `return_indices=True` returns argsort indices (fp16-encoded, exact for
-    index < 2048). The hardware Sort keys on one channel lane and permutes all channels by
-    it, so the bridge dispatches each row as its own 1-channel tile for a per-row sort."""
+  """Sort each row of a 2D input [C,W] along Width (native Sort bridge, a cut). `return_indices` gives fp16-encoded argsort indices."""
   if len(x.shape) != 2:
     raise ValueError(f"sort: only 2D [C,W] inputs are supported; got {x.shape}")
   return Tensor(x.shape, "sort", [x],
@@ -902,19 +814,14 @@ def sort(x: Tensor, descending: bool = False, return_indices: bool = False) -> T
 
 
 def cross_product(a: Tensor, b: Tensor) -> Tensor:
-  """3-vector cross product `cross(a, b)` on the ANE's native CrossProduct
-    layer - a path Apple's MIL frontend rejects. Both inputs are length-3
-    (shape (3,) or any shape with 3 elements); returns shape (3,). Graph cut."""
+  """3-vector cross product `cross(a,b)` (native CrossProduct layer). Both inputs length-3; returns (3,). Graph cut."""
   if int(np.prod(a.shape)) != 3 or int(np.prod(b.shape)) != 3:
     raise ValueError(f"cross_product: both inputs must have 3 elements; got {a.shape}, {b.shape}")
   return Tensor((3,), "cross_product", [a, b])
 
 
 def cross_correlation(x: Tensor, template: Tensor) -> Tensor:
-  """Valid (no-flip) cross-correlation of a single-channel map `x` [H, W] with
-    a `template` [Th, Tw] on the ANE's native CrossCorrelation layer:
-    `y[i,j] = sum_{u,v} x[i+u, j+v] * template[u,v]` over [(H-Th+1), (W-Tw+1)].
-    Graph cut. (True correlation - the template is not flipped.)"""
+  """Valid (no-flip) cross-correlation of map `x` [H,W] with `template` [Th,Tw] (native CrossCorrelation): `y[i,j] = sum x[i+u,j+v]*template[u,v]` -> [H-Th+1, W-Tw+1]. Graph cut."""
   if len(x.shape) != 2 or len(template.shape) != 2:
     raise ValueError(f"cross_correlation: x and template must be 2D; got {x.shape}, {template.shape}")
   H, W = x.shape
@@ -925,9 +832,7 @@ def cross_correlation(x: Tensor, template: Tensor) -> Tensor:
 
 
 def cost_volume(aux: Tensor, ref: Tensor, disparity_range: int = 1) -> Tensor:
-  """L1 stereo/optical-flow matching cost on the ANE's native CostVolume layer.
-    `aux` is a length-Wa row, `ref` a length-Wr row with `Wr >= Wa + R`;
-    returns `(R+1, Wa)` where `cost[d,x] = |aux[x] - ref[x+d]|`. Graph cut."""
+  """L1 stereo/flow matching cost (native CostVolume). `aux` length-Wa, `ref` length-Wr (Wr>=Wa+R) -> `(R+1,Wa)` with `cost[d,x]=|aux[x]-ref[x+d]|`. Graph cut."""
   Wa, Wr = int(np.prod(aux.shape)), int(np.prod(ref.shape))
   R = int(disparity_range)
   if R < 0:
@@ -938,12 +843,7 @@ def cost_volume(aux: Tensor, ref: Tensor, disparity_range: int = 1) -> Tensor:
 
 
 def fps(points: Tensor, k: int) -> Tensor:
-  """Furthest-point sampling: greedily pick `k` maximally-far-apart points
-    (seeded at index 0) on the ANE's native FurthestPointSampling layer.
-    `points` is [N, 3]; returns the [k, 3] selected centroids. Graph cut.
-
-    NOTE: the DistanceMetric param is L2-only on this arch (the bridge always
-    uses Euclidean distance regardless of the param), so this is L2 FPS."""
+  """Furthest-point sampling: greedily pick `k` far-apart points (native FurthestPointSampling, L2 only). `points` [N,3] -> [k,3] centroids. Graph cut."""
   if len(points.shape) != 2 or points.shape[1] != 3:
     raise ValueError(f"fps: points must be [N, 3]; got {points.shape}")
   N = points.shape[0]
@@ -955,10 +855,7 @@ def fps(points: Tensor, k: int) -> Tensor:
 
 
 def radius_search(points: Tensor, centroids: Tensor, radius: float) -> Tensor:
-  """L2 ball-query membership on the ANE's native RadiusSearch layer: for each
-    (point, centroid) pair, 1 iff the point is within `radius` of the centroid.
-    `points` is [N, 3], `centroids` is [Nc, 3]; returns an [N, Nc] 0/1
-    membership matrix (fp16-encoded). Graph cut."""
+  """L2 ball-query membership (native RadiusSearch): 1 iff point within `radius` of centroid. `points` [N,3], `centroids` [Nc,3] -> [N,Nc] 0/1. Graph cut."""
   if len(points.shape) != 2 or points.shape[1] != 3:
     raise ValueError(f"radius_search: points must be [N, 3]; got {points.shape}")
   if len(centroids.shape) != 2 or centroids.shape[1] != 3:
@@ -968,9 +865,7 @@ def radius_search(points: Tensor, centroids: Tensor, radius: float) -> Tensor:
 
 
 def minmax_norm(x: Tensor, dimension: str = "Width", eps: float = 1e-4) -> Tensor:
-  """Min-max normalize `y = (x - min) / (max - min + eps)` over `dimension`
-    on the ANE's native MinMaxNormalization layer. `x` is [1, C, H, W]; reduces
-    over "Width" or "Height" ("Channel" is arch-gated and rejected). Graph cut."""
+  """Min-max normalize `(x-min)/(max-min+eps)` over `dimension` (native MinMaxNormalization). `x` [1,C,H,W]; "Width"/"Height" only. Graph cut."""
   if len(x.shape) != 4 or x.shape[0] != 1:
     raise ValueError(f"minmax_norm: expects [1,C,H,W]; got {x.shape}")
   if dimension not in ("Width", "Height"):
@@ -980,13 +875,7 @@ def minmax_norm(x: Tensor, dimension: str = "Width", eps: float = 1e-4) -> Tenso
 
 
 def lrn(x: Tensor, alpha: float = 1.0, beta: float = 0.75, k: float = 1.0) -> Tensor:
-  """Cross-channel LRN (classic AlexNet) on the native LocalResponseNormalization layer
-    (Channel mode). `x` is [1, C, H, W]; graph cut. Per-channel, per-pixel:
-        `y[c] = x[c] / (k + alpha * sum_{j in window(c)} x[j]^2) ** beta`
-    The window is a LOCAL channel window of size N=C, asymmetric-centered on c and CLIPPED
-    at the boundaries: `window(c) = [max(0, c-(N-1)//2) : min(C, c + N//2 + 1)]` (NOT a
-    full-channel sum). `alpha`/`beta`/`k` are the standard LRN coefficients (`alpha` is the
-    TRUE effective alpha). ARCH-GATED: compiles only for C <= 15 (C >= 16 fails ANECCompile)."""
+  """Cross-channel LRN (AlexNet) on the native LocalResponseNormalization layer (Channel mode). `x` [1,C,H,W]; graph cut. Window is a clipped local channel window of size N=C. Arch-gated: C<=15 only."""
   if len(x.shape) != 4 or x.shape[0] != 1:
     raise ValueError(f"lrn: expects [1,C,H,W]; got {x.shape}")
   C = x.shape[1]
@@ -1008,9 +897,7 @@ def _seq_slice(t: Tensor, axis: int, start: int, n: int) -> Tensor:
 
 def _tiled_attention(qh: Tensor, kt: Tensor, vh: Tensor, scale: float, n_tiles: int,
            seq_axis: int, mask: "Tensor | None" = None) -> Tensor:
-  """Query-tiled softmax((q @ kt) * scale) @ v in `n_tiles` chunks (exact; ~3x faster
-    at large seq; `n_tiles==1` is one shot). Query seq runs along `seq_axis` (1 for 3D
-    [H,S,dh], 2 for 4D); tiles concat there. `mask` (sdpa) is sliced along the same axis."""
+  """Query-tiled softmax((q @ kt) * scale) @ v in `n_tiles` chunks (exact; `n_tiles==1` is one shot). Query seq runs along `seq_axis`; `mask` is sliced there too."""
   if n_tiles == 1:
     scores = (qh @ kt) * scale
     if mask is not None:
@@ -1029,8 +916,7 @@ def _tiled_attention(qh: Tensor, kt: Tensor, vh: Tensor, scale: float, n_tiles: 
 
 
 def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
-  """Multi-head self-attention on `x` [S, D]. Weights [out,in]; biases [D] or None.
-    Builds split-heads -> per-head SDPA -> concat -> output-proj from graph ops."""
+  """Multi-head self-attention on `x` [S,D]. Weights [out,in]; biases [D] or None."""
   S, D = x.shape
   if D % n_heads:
     raise ValueError(f"mha: D={D} not divisible by n_heads={n_heads}")
@@ -1039,8 +925,7 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
   qh, kh, vh = _heads(q, n_heads, dh), _heads(k, n_heads, dh), _heads(v, n_heads, dh)
   kt = kh.transpose([0, 2, 1])
   scale = 1.0 / dh ** 0.5
-  # Query-tiling: [tile, S] score tiles per head instead of the full [H, S, S] matrix.
-  # Exact and ~3x faster at large S (same fission as af.sdpa). Count from af.tune_attention.
+  # query-tiling: [tile, S] score tiles per head instead of the full [H, S, S] matrix
   from . import _optimize as _opt
   n_tiles = _opt.attention_tiles(S, n_heads, dh)
   o = _tiled_attention(qh, kt, vh, scale, n_tiles, seq_axis=1)  # [H, S, dh]
@@ -1050,8 +935,7 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
 
 def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
           bq=None, bk=None, bv=None, bo=None) -> Tensor:
-  """Cross-attention: queries from `x` [S, D], keys/values from `context`
-    [T, Dctx]. Wq:[D,D]; Wk,Wv:[D,Dctx]; Wo:[D,D]. (SD UNet text conditioning.)"""
+  """Cross-attention: queries from `x` [S,D], keys/values from `context` [T,Dctx]. Wq:[D,D]; Wk,Wv:[D,Dctx]; Wo:[D,D]."""
   S, D = x.shape
   T = context.shape[0]
   dh = D // n_heads
@@ -1060,9 +944,7 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
   vh = _heads(context.linear(Wv, bv), n_heads, dh)
   kt = kh.transpose([0, 2, 1])                                            # [H,dh,T]
   scale = 1.0 / dh ** 0.5
-  # Query-tiling: when query and context are both long the [H, S, T] score matrix hits
-  # the ANE materialization wall (~2.4x slower). Tile the query into [tile, T] blocks
-  # (exact). Gated on score area so small-T cross-attention (SD T=77) stays single-shot.
+  # query-tiling when both query and context are long (small-T stays single-shot)
   from . import _optimize as _opt
   n_tiles = _opt.attention_tiles(S, n_heads, dh, T=T) if (S >= 768 and T >= 512) else 1
   o = _tiled_attention(qh, kt, vh, scale, n_tiles, seq_axis=1)  # [H, S, dh]
@@ -1070,24 +952,15 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
   return o.linear(Wo, bo)
 
 
-# Native fused-attention is numerically reliable only up to this seq length (garbage at
-# S=4096); above it af.sdpa emits the accurate decomposition (the wide matmul accumulator holds).
+# native fused-attention reliable only up to this seq length; above it sdpa decomposes
 SDPA_NATIVE_MAX_SEQ = 2048
-# Native fused-attention returns garbage once BOTH q and k seq axes are large: reliable only
-# while min(q_seq, k_seq) < this (hard 512x512 cliff; KV-cache decode min=1 stays correct).
+# native fused-attention breaks once BOTH q and k seq axes are large (512x512 cliff)
 SDPA_NATIVE_MIN_BOTH = 512
 
 
 def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
     is_causal: bool = False, attn_mask: "Tensor | None" = None) -> Tensor:
-  """Scaled-dot-product attention via the ANE's *native* fused-attention layer
-    (ANECSDPALayerDesc) - a path Apple's MIL compiler never emits - inside the reliable
-    regime, else the accurate fused decomposition. q/k/v: [1, heads, seq, d_head], fp16;
-    `scale` defaults to 1/sqrt(d_head).
-
-    Native use is a graph-cut boundary (a separate native-SDPA sub-program). `is_causal=True`
-    is NATIVE: the causal additive mask rides the SDPA layer's optional 5th bottom, and
-    requires S <= SDPA_NATIVE_MAX_SEQ (the decomposition has no mask)."""
+  """Scaled-dot-product attention via the native fused-attention layer (ANECSDPALayerDesc) inside the reliable regime, else the fused decomposition. q/k/v: [1,heads,seq,d_head] fp16; native use is a graph cut. `is_causal=True` is native (causal mask on the 5th bottom)."""
   # K,V share shape (cached seq); Q's seq may differ (KV-cache decode). Q,K share H+D.
   if not (len(q.shape) == 4 == len(k.shape) == len(v.shape)):
     raise ValueError(f"af.sdpa expects 4D q,k,v of [1,H,S,D]; got {q.shape}, {k.shape}, {v.shape}")
@@ -1104,10 +977,8 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
   if attn_mask is not None:
     if is_causal:
       raise ValueError("af.sdpa: pass either is_causal or an explicit attn_mask, not both")
-    # attn_mask is a RUNTIME additive bias on the native layer's 5th bottom: ONE plane
-    # shared across all heads over the full query axis, so shape must be [1,1,Sq,Skv].
-    # Per-head ([1,H,..], H>1) is silently mis-applied and query-broadcast ([1,1,1,Skv]
-    # with q_seq>1) underflows the bridge -- reject both. (KV-cache decode q_seq==1 is ok.)
+    # attn_mask is a runtime additive bias on the 5th bottom: ONE shared plane [1,1,Sq,Skv].
+    # Per-head and query-broadcast forms are mis-applied -- reject both.
     if (len(attn_mask.shape) != 4 or attn_mask.shape[0] != 1 or attn_mask.shape[1] != 1
         or attn_mask.shape[2] != q.shape[2] or attn_mask.shape[3] != k.shape[2]):
       raise ValueError(
@@ -1121,16 +992,13 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
   native_ok = both < SDPA_NATIVE_MIN_BOTH and seq <= SDPA_NATIVE_MAX_SEQ
   if not native_ok:
     if is_causal:
-      # The decomposition has no causal mask and the native layer is unreliable here --
-      # refuse. Chunk the query so each tile's min(q,k) seq stays < SDPA_NATIVE_MIN_BOTH.
+      # decomposition has no causal mask and native is unreliable here -- refuse
       raise NotImplementedError(
         f"af.sdpa: causal attention at min(q,k)seq={both} (>= {SDPA_NATIVE_MIN_BOTH}) "
         f"or seq={seq} (> {SDPA_NATIVE_MAX_SEQ}) is outside the reliable native regime "
         f"and the causal decomposition is not wired; chunk the query so each tile's "
         f"min(seq) < {SDPA_NATIVE_MIN_BOTH}.")
-    # non-causal: the accurate fused decomposition (handles the decode shape too).
-    # Query-tiling: for a large query axis, compute [tile, Skv] score tiles instead of the
-    # full [Sq, Skv] matrix - exact and ~3x faster (small queries take one shot).
+    # non-causal: the fused decomposition (query-tiled for a large query axis)
     kt = k.transpose([0, 1, 3, 2])
     from . import _optimize as _opt
     n_tiles = _opt.attention_tiles(q.shape[2], q.shape[1], q.shape[3], T=k.shape[2])
@@ -1141,8 +1009,7 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
 
 
 def geglu(x: Tensor, W, b) -> Tensor:
-  """GEGLU FFN gate: split the [2*Dff, D] projection into value/gate halves
-    (weight-split at build, no slice op), out = value * gelu(gate)."""
+  """GEGLU FFN gate: split the [2*Dff,D] projection into value/gate halves; out = value * gelu(gate)."""
   W = np.asarray(W); Dff = W.shape[0] // 2
   bv = bg = None
   if b is not None:

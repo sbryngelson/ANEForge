@@ -101,7 +101,7 @@ def run_archetype(name, byte_factor, build_ane, build_mlx, build_cpu,
               f"GPU {row.get('gpu_gbps', float('nan')):7.1f}  "
               f"CPU {row.get('cpu_gbps', float('nan')):7.1f}  GB/s", flush=True)
 
-    # peak = max GB/s achieved over the sweep (the plateau), per device
+    # peak = max GB/s over the sweep (the plateau), per device
     for dev in ("ane", "gpu", "cpu"):
         vals = [(r[f"{dev}_gbps"], r["nelem"]) for r in rec["sizes"] if f"{dev}_gbps" in r]
         if vals:
@@ -234,8 +234,7 @@ def build_archetypes():
 
 # power at the saturating size
 def measure_peak_power(specs, sizes):
-    """For each archetype, re-run the SATURATING (largest) size under the energy
-    harness and attach GB/s/W per device."""
+    """Re-run each archetype at the saturating (largest) size under the energy harness; attach GB/s/W per device."""
     if not HAVE_SUDO:
         print("\n[power] no passwordless sudo - GB/s/W skipped.")
         return
@@ -249,7 +248,7 @@ def measure_peak_power(specs, sizes):
     for (name, bf, build_ane, build_mlx, build_cpu, _ref, _acc) in specs:
         rec = RESULTS["roofline"][name]
         rec["power"] = {}
-        # (key, gated, builder, run-from-build-result, bytes/elem multiplier)
+        # (key, gated, builder, run-from-build, bytes/elem multiplier)
         arms = (
             ("ane", HAVE_ANE and build_ane is not None and "ane_err" not in rec["sizes"][-1],
              build_ane, lambda b: (lambda: b[0](b[1])), 2),

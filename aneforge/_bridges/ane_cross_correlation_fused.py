@@ -13,8 +13,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def cross_correlation_fused(x: np.ndarray, template: np.ndarray) -> np.ndarray:
-  """Valid (no-flip) cross-correlation of `(H,W)` map `x` with `(Th,Tw)`
-    `template`; returns the `(H-Th+1, W-Tw+1)` fp16 correlation map."""
+  """Valid (no-flip) cross-correlation of (H,W) x with (Th,Tw) template -> (H-Th+1, W-Tw+1) fp16."""
   x = np.asarray(x, dtype=np.float16)
   template = np.asarray(template, dtype=np.float16)
   H, W = x.shape

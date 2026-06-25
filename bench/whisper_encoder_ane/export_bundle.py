@@ -19,9 +19,7 @@ import encoder as E  # noqa: E402
 
 
 def find_composite_bundle(build_dir: Path):
-    """The composite '*.bundle' dir under the cache (it holds the per-hardware
-    H17*.bundle / universal.bundle variants); that is what e5rt_program_library_create
-    loads. Identify it as a '*.bundle' that itself contains '*.bundle' children."""
+    """The composite '*.bundle' dir under the cache (a '*.bundle' that contains '*.bundle' children); what e5rt_program_library_create loads."""
     for d in build_dir.glob("cache/**/*.bundle"):
         if any(d.glob("*.bundle")):
             return d

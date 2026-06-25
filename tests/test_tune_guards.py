@@ -1,4 +1,4 @@
-"""Autotuner accuracy-reference guards and cost-curve load errors, with the measurement seams monkeypatched (no ANE)."""
+"""Autotuner accuracy-reference guards and cost-curve load errors, measurement seams monkeypatched."""
 import warnings
 
 import numpy as np

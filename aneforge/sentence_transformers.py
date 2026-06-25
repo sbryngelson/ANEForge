@@ -48,9 +48,7 @@ class SentenceTransformer:
 
   def encode(self, sentences, batch_size: int = 32, normalize_embeddings: bool = False,
              convert_to_numpy: bool = True, convert_to_tensor: bool = False, **kwargs):
-    """Encode `sentences` (str or list of str) to embeddings on the ANE. `batch_size`
-        is accepted for parity only. A model shipping a Normalize module is always
-        L2-normalised regardless of `normalize_embeddings`. See docs/developer/models.md."""
+    """Encode `sentences` (str or list of str) to embeddings on the ANE; a model with a Normalize module is always L2-normalised."""
     single = isinstance(sentences, str)
     texts = [sentences] if single else list(sentences)
     normalize = self._normalize_module or normalize_embeddings

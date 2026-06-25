@@ -50,7 +50,6 @@ def measure_point(wl, device, B, run_once, *, items_per_call, relerr_val, tag):
         sane = apw == apw and apw > 0
         if device == "ANE" and e.get("ane_active_mW", 0.0) < 5.0 and not e["flags"]:
             e["flags"].append("ANE rail ~0 mW during ANE workload - likely a 100ms sampling miss")
-        # steady-state call time from the loop's per-iter time
         loop_items_s = items_per_call / (e["iter_ms"] / 1e3)
         if sane:
             e["throughput_items_s"] = loop_items_s
@@ -327,8 +326,7 @@ def wl_attention(batches):
 
 
 def wl_gemm(batches):
-    """Batched GEMM [B,M,K] @ [K,N], the serving throughput primitive. items = B*M
-    rows (we report items = B 'sequences' of M rows for a clean serving metric)."""
+    """Batched GEMM [B,M,K]@[K,N], the serving throughput primitive; items = B sequences of M rows."""
     wl = "gemm (batched [B,M,K]@[K,N], M=128,K=1024,N=1024)"
     print(f"\n=== {wl} ===", flush=True)
     M, K, N = 128, 1024, 1024
@@ -386,7 +384,7 @@ def _crossover(ane, gpu):
         return None, "ANE wins at all measured B (never overtaken in range)"
     if all(d >= 0 for _, d in diffs):
         return common[0], f"GPU wins at all measured B (>= B={common[0]})"
-    # find first sign change from ANE-wins (d<0) to GPU-wins (d>=0)
+    # first sign change: ANE-wins (d<0) -> GPU-wins (d>=0)
     for i in range(1, len(diffs)):
         b0, d0 = diffs[i - 1]; b1, d1 = diffs[i]
         if d0 < 0 <= d1:

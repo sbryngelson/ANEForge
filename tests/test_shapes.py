@@ -1,4 +1,4 @@
-"""Broad shape / numerical-edge corpus: shape-sensitive, fp16-risky ops swept across wide shapes vs fp32 goldens."""
+"""Shape / numerical-edge corpus: fp16-risky ops swept across wide shapes vs fp32 goldens."""
 from __future__ import annotations
 
 import numpy as np
@@ -109,7 +109,7 @@ def _softmax_case(N):
 
 
 def _reduce_case(N):
-  # pos=True keeps the reference mean away from 0 (a ~0 mean makes relative error a knife-edge)
+  # pos=True keeps the reference mean away from 0 (a ~0 mean makes relerr a knife-edge)
   x = f16(rng, 1, N, scale=1.0, pos=True)
   return Case(f"reduce_mean_N{N}", "shape",
               lambda xt: xt.mean((1,)),

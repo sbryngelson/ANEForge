@@ -1,6 +1,4 @@
-"""Native ANE `FurthestPointSampling` (point-cloud downsampling) on Path A.
-The ANE uses L2 on this arch regardless of `DistanceMetric`.
-See docs/developer/bridges.md."""
+"""Native ANE `FurthestPointSampling` (point-cloud downsampling) on Path A. ANE uses L2 on this arch regardless of `DistanceMetric`."""
 
 from __future__ import annotations
 

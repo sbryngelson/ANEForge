@@ -47,8 +47,7 @@ HAVE_SUDO = subprocess.run(["sudo", "-n", "true"], capture_output=True).returnco
 # timing + precision helpers
 
 def min_latency(fn, reps=30, warmup=8) -> float:
-    """MIN end-to-end wall time (seconds) over `reps`, after `warmup`. fn must
-    block until the device work is complete (mx.eval / sync / .numpy())."""
+    """MIN end-to-end wall time (s) over reps, after warmup; fn must block until device work completes."""
     for _ in range(warmup):
         fn()
     best = float("inf")

@@ -88,7 +88,7 @@ def resnet18(window):
 
 
 def vit_b16(window):
-    """Full ViT-B/16 on GPU fp32 + fp16; ANE energy read from committed device-map run."""
+    """ViT-B/16 on GPU fp32+fp16; ANE energy from committed device-map run."""
     import torch, torchvision as tv
     wl = "ViT-B/16 forward (1x3x224x224, 197 tokens)"
     print(f"\n=== {wl} ===", flush=True)

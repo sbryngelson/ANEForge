@@ -1,16 +1,4 @@
-"""aneforge.einsum - `einsum(equation, *operands) -> Tensor`, decomposing a numpy-style
-subscript equation into aneforge graph ops (transpose / reshape / matmul-bmm /
-broadcast-mul / reduce-sum) so the whole contraction runs as ONE fused ANE program.
-
-    c = af.einsum("ij,jk->ik", a, b)     # a plain matmul, on the ANE
-
-`af.einsum` IS this function. The decomposition partitions a two-operand contraction
-into batch/contract/keep-A/keep-B index classes and routes it through a batched matmul;
-diagonal/trace (repeated index in one operand) is a gather and is rejected, never
-miscomputed. See docs/developer/applied-math.md.
-
-    PYTHONPATH=. python3 aneforge/einsum.py
-"""
+"""aneforge.einsum - numpy-style `einsum` lowered to aneforge graph ops as one fused ANE program."""
 from __future__ import annotations
 
 import os
@@ -24,17 +12,13 @@ from aneforge.graph import Tensor
 
 
 class EinsumUnsupported(NotImplementedError):
-  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal/trace via
-    repeated indices, ellipsis, invented output dims)."""
+  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal/trace, ellipsis, invented output dims)."""
 
 
-# --------------------------------------------------------------------------- #
-# equation parsing                                                            #
-# --------------------------------------------------------------------------- #
+# equation parsing
 
 def _parse(equation: str, n_operands: int) -> tuple[list[str], str]:
-  """Return (input_subscripts, output_subscript). Implied output is the set of
-    indices appearing exactly once, in alphabetical order (numpy's rule)."""
+  """Return (input_subscripts, output_subscript); implied output is indices appearing once, alphabetical (numpy's rule)."""
   eq = equation.replace(" ", "")
   if "..." in eq:
     raise EinsumUnsupported("einsum: ellipsis '...' is not supported (v1)")
@@ -77,25 +61,20 @@ def _reduce_repeats_check(sub: str) -> None:
       f"(Reject rather than return wrong results.)")
 
 
-# --------------------------------------------------------------------------- #
-# operand-level helpers                                                       #
-# --------------------------------------------------------------------------- #
+# operand-level helpers
 
 def _sum_to(t: Tensor, sub: str, keep: str) -> tuple[Tensor, str]:
-  """Sum `t` over the axes whose index is not in `keep`, then drop the size-1
-    reduced axes via reshape (numpy keepdims=False semantics)."""
+  """Sum `t` over axes whose index is not in `keep`, then squeeze the reduced axes (keepdims=False)."""
   drop_axes = tuple(i for i, ch in enumerate(sub) if ch not in keep)
   if not drop_axes: return t, sub
   t = t.sum(drop_axes)                       # af.sum keeps dims (size 1)
   new_sub = "".join(ch for i, ch in enumerate(sub) if i not in drop_axes)
-  # squeeze the reduced (size-1) axes out
   t = t.reshape(*[t.shape[i] for i in range(len(sub)) if i not in drop_axes] or [1])
   return t, new_sub
 
 
 def _align(t: Tensor, sub: str, order: str) -> Tensor:
-  """Transpose `t` so its indices appear in the index-order given by `order`
-    (a permutation of the letters of `sub`)."""
+  """Transpose `t` so its indices appear in the order given by `order`."""
   if list(sub) == list(order): return t
   perm = [sub.index(ch) for ch in order]
   return t.transpose(perm)
@@ -105,20 +84,16 @@ def _size(t: Tensor, sub: str, ch: str) -> int:
   return t.shape[sub.index(ch)]
 
 
-# --------------------------------------------------------------------------- #
-# two-operand contraction                                                     #
-# --------------------------------------------------------------------------- #
+# two-operand contraction
 
 def _contract_pair(a: Tensor, sa: str, b: Tensor, sb: str, out: str) -> tuple[Tensor, str]:
-  """Contract operands a (sub sa) and b (sub sb) producing the indices in `out`
-    (the subset of sa|sb that must survive this step). Returns (tensor, its_sub)."""
+  """Contract operands a (sub sa) and b (sub sb) producing the indices in `out`; returns (tensor, its_sub)."""
   _reduce_repeats_check(sa)
   _reduce_repeats_check(sb)
 
   set_a, set_b, set_out = set(sa), set(sb), set(out)
 
-  # indices that this step must not keep can be summed away early if they live in
-  # only one operand (a partial reduce); shared ones are the contraction.
+  # single-operand indices not kept can be summed away early; shared ones are the contraction.
   keep_a = set_a & (set_b | set_out)
   keep_b = set_b & (set_a | set_out)
   a, sa = _sum_to(a, sa, "".join(keep_a))
@@ -130,10 +105,9 @@ def _contract_pair(a: Tensor, sa: str, b: Tensor, sb: str, out: str) -> tuple[Te
   keepM = [ch for ch in sa if ch not in set_b]                            # M (a-only, in out)
   keepN = [ch for ch in sb if ch not in set_a]                            # N (b-only, in out)
 
-  # --- pure elementwise / outer (no contraction) ------------------------ #
-  if not contract: return _broadcast_mul(a, sa, b, sb, batch, keepM, keepN)
+  if not contract: return _broadcast_mul(a, sa, b, sb, batch, keepM, keepN)  # elementwise/outer
 
-  # --- batched matmul path ---------------------------------------------- #
+  # batched matmul path
   a = _align(a, sa, "".join(batch + keepM + contract))   # [B.., M.., K..]
   b = _align(b, sb, "".join(batch + contract + keepN))   # [B.., K.., N..]
 
@@ -160,11 +134,8 @@ def _contract_pair(a: Tensor, sa: str, b: Tensor, sb: str, out: str) -> tuple[Te
 
 def _broadcast_mul(a: Tensor, sa: str, b: Tensor, sb: str,
            batch: list, keepM: list, keepN: list) -> tuple[Tensor, str]:
-  """No shared contracted index: result = elementwise/outer product. We align
-    both operands to [batch.., M.., N..] and broadcast-multiply (M absent in b,
-    N absent in a appear as size-1 and broadcast)."""
+  """No shared contracted index: align both to [batch.., M.., N..] and broadcast-multiply (outer product)."""
   res = batch + keepM + keepN
-  # build a-aligned tensor with size-1 placeholders for N dims
   a = _align(a, sa, "".join([c for c in res if c in set(sa)]))
   b = _align(b, sb, "".join([c for c in res if c in set(sb)]))
   a = _expand_to(a, [c for c in res if c in set(sa)], res,
@@ -180,8 +151,7 @@ def _len(t: Tensor, present: list, ch: str) -> int:
 
 
 def _expand_to(t: Tensor, present: list, target: list, _sizes) -> Tensor:
-  """Reshape `t` (whose dims are `present`, a subsequence of `target`) to
-    rank `len(target)` with size-1 at the missing positions, so it broadcasts."""
+  """Reshape `t` (dims `present`, a subsequence of `target`) to rank len(target) with size-1 at missing positions."""
   if list(present) == list(target): return t
   shape = []
   pi = 0
@@ -193,20 +163,10 @@ def _expand_to(t: Tensor, present: list, target: list, _sizes) -> Tensor:
   return t.reshape(*shape)
 
 
-# --------------------------------------------------------------------------- #
-# public API                                                                  #
-# --------------------------------------------------------------------------- #
+# public API
 
 def einsum(equation: str, *operands: Tensor) -> Tensor:
-  """numpy-style `einsum` lowered to aneforge ops (matmul-reducible patterns).
-
-    Supports: matmul (`ij,jk->ik`), batched matmul (`bij,bjk->bik`), transpose
-    (`ij->ji`), outer product (`i,j->ij`), elementwise+reduce (`ij,ij->i`,
-    `ij->i`, `ij->`), bilinear (`bi,ij,bj->b`), attention scores
-    (`bhqd,bhkd->bhqk`), and general >2-operand left-fold contractions.
-
-    Rejects (`EinsumUnsupported`): diagonal/trace via repeated indices in one
-    operand (`ii->i`, `ii->`), repeated output indices, and ellipsis."""
+  """numpy-style einsum lowered to aneforge ops (matmul-reducible patterns); rejects diagonal/trace, repeated output indices, and ellipsis."""
   if not operands:
     raise ValueError("einsum: at least one operand is required")
   if not all(isinstance(o, Tensor) for o in operands):
@@ -219,20 +179,19 @@ def einsum(equation: str, *operands: Tensor) -> Tensor:
                f"shape {t.shape} has {len(t.shape)} dims")
     _reduce_repeats_check(s)
 
-  # ---- single operand: pure transpose / reduce ------------------------- #
+  # single operand: pure transpose / reduce
   if len(operands) == 1:
     t, sub = operands[0], ins[0]
     t, sub = _sum_to(t, sub, out)            # drop summed indices
     if sub == out: return t
     return _align(t, sub, out)               # transpose to requested order
 
-  # ---- multi-operand: left-fold pairwise ------------------------------- #
+  # multi-operand: left-fold pairwise
   cur, csub = operands[0], ins[0]
   for i in range(1, len(operands)):
     nxt, nsub = operands[i], ins[i]
     remaining = "".join(ins[i + 1:])
-    # indices we must keep after this pair: anything in the final output OR
-    # still needed by a later operand.
+    # keep anything in the final output or still needed by a later operand.
     survive = set(out) | set(remaining)
     step_out = "".join(dict.fromkeys(
       [ch for ch in csub + nsub if ch in survive]))
@@ -247,9 +206,7 @@ def einsum(equation: str, *operands: Tensor) -> Tensor:
 __all__ = ["EinsumUnsupported", "einsum"]
 
 
-# --------------------------------------------------------------------------- #
-# self-test: validate vs numpy.einsum on the ANE                              #
-# --------------------------------------------------------------------------- #
+# self-test: validate vs numpy.einsum on the ANE
 
 def _selftest() -> int:
   import aneforge as af

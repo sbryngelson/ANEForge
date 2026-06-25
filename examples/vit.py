@@ -72,7 +72,7 @@ def _row0(h):
     return h.transpose([1, 0]).linear(sel).transpose([1, 0])   # [D,1] -> [1,D]
 
 
-# torch reference (optionally truncated to K encoder layers, same weights)     #
+# torch reference (optionally truncated to K encoder layers, same weights)
 def torch_ref(m, img, n_layers):
     import torch
     with torch.no_grad():
@@ -86,7 +86,7 @@ def torch_ref(m, img, n_layers):
         return m.heads(x).numpy()[0]
 
 
-# optimizer tie-in: one real ViT attention layer via af.sdpa (route rewrite)   #
+# optimizer tie-in: one real ViT attention layer via af.sdpa (route rewrite)
 def attn_layer_graph(sd, layer=0):
     """ViT layer-`layer` self-attention as q/k/v proj -> af.sdpa -> out-proj (real weights), so af.tune can pick the SDPA route."""
     p = f"encoder.layers.encoder_layer_{layer}."
@@ -118,7 +118,7 @@ def maxdiff(a, b):
     return float(np.abs(a - b).max() / (np.abs(b).max() + 1e-6))
 
 
-# main                                                                        #
+# main
 def main():
     _common.head("ViT-B/16 on the Apple Neural Engine (aneforge)")
     m, sd = load_vit_weights()

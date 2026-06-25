@@ -1,4 +1,4 @@
-"""Per-op coverage: one case per exposed aneforge op, run on the ANE and checked vs numpy or for finite shape."""
+"""Per-op coverage: one case per exposed aneforge op, checked vs numpy or for finite output."""
 from __future__ import annotations
 import math
 import numpy as np

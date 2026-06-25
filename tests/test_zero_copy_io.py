@@ -27,8 +27,7 @@ def test_zero_copy_matches_call():
 
 
 def test_input_view_is_persistent_and_writable():
-  """The view aliases the persistent buffer: a second write + execute reflects the
-    new input (no re-binding needed)."""
+  """The view aliases the persistent buffer: a second write + execute reflects the new input."""
   warnings.simplefilter("ignore")
   rng = np.random.default_rng(1)
   W = (rng.standard_normal((8, 8, 3, 3)) * 0.1).astype(np.float32)

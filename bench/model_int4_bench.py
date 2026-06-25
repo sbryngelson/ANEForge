@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end int4 / auto weight-compression benchmark: does the per-matmul 4-bit win carry to whole-model latency, cosine, and footprint? Run: PYTHONPATH=<repo> python3 bench/model_int4_bench.py"""
+"""End-to-end int4/auto weight-compression benchmark: does the 4-bit win carry to whole-model latency, cosine, footprint? Run: PYTHONPATH=<repo> python3 bench/model_int4_bench.py"""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,7 @@ def _rng():
 
 
 def W(rng, *shape, fan_in=None):
-    """Xavier-ish weight: scale by 1/sqrt(fan_in) so activations stay O(1)."""
+    """Xavier-ish weight: scale 1/sqrt(fan_in) so activations stay O(1)."""
     fan = fan_in if fan_in is not None else shape[-1]
     return (rng.standard_normal(shape) / np.sqrt(fan)).astype(np.float32)
 
@@ -35,9 +35,9 @@ def B(rng, n):
     return (rng.standard_normal(n) * 0.01).astype(np.float32)
 
 
-# model graph builders (full architecture, deterministic random weights)
+# model graph builders (deterministic random weights)
 def build_resnet18(rng):
-    """torchvision ResNet-18 forward (ImageNet): conv-dominated, BN folded into conv. [1,3,224,224] -> [1,1000]."""
+    """ResNet-18 forward (conv-dominated, BN folded): [1,3,224,224] -> [1,1000]."""
     def conv_w(cout, cin, k):
         return W(rng, cout, cin, k, k, fan_in=cin * k * k)
 
@@ -62,7 +62,7 @@ def build_resnet18(rng):
 
 
 def build_vit_b16(rng, n_layers=12):
-    """ViT-B/16 encoder forward (12 layers x 768 dim x 12 heads, 197 tokens) -> [1,1000]; matmul-dominated."""
+    """ViT-B/16 forward (12 layers, 768 dim, 12 heads, 197 tokens) -> [1,1000]; matmul-dominated."""
     DIM, HEADS, PATCH, IMG = 768, 12, 16, 224
     NP = (IMG // PATCH) ** 2          # 196
     SEQ = NP + 1                       # 197
@@ -87,7 +87,7 @@ def build_vit_b16(rng, n_layers=12):
     seq = seq.layer_norm(W(rng, DIM), B(rng, DIM), eps=1e-6)
     # classifier on CLS row via one-hot picker matmul
     sel = np.eye(1, SEQ, dtype=np.float32)
-    cls_row = seq.transpose([1, 0]).linear(sel).transpose([1, 0])    # [1,768]
+    cls_row = seq.transpose([1, 0]).linear(sel).transpose([1, 0])
     out = cls_row.linear(W(rng, 1000, DIM), B(rng, 1000))
     cls_const = (rng.standard_normal((1, DIM)) * 0.02).astype(np.float32)
     pos_const = (rng.standard_normal((SEQ, DIM)) * 0.02).astype(np.float32)
@@ -95,7 +95,7 @@ def build_vit_b16(rng, n_layers=12):
 
 
 def build_minilm(rng, S=64, L=6, DIM=384, HEADS=12, ff=1536):
-    """all-MiniLM-L6-v2 encoder: 6 post-norm MHA+LayerNorm+(Linear-GELU-Linear) layers; matmul-dominated."""
+    """all-MiniLM-L6-v2 encoder: 6 post-norm MHA+LN+(Linear-GELU-Linear) layers; matmul-dominated."""
     eps = 1e-12
     h = af.input((S, DIM))
     for _ in range(L):
@@ -144,11 +144,11 @@ def run_model(name, kind, builder):
 
     res = {"kind": kind, "n_ops": None, "fp16_ms": None, "variants": {}}
     fp16_out = None
-    # (label, compress, atol); int4_forced loosens the gate to 0.30 so the LUT fires on random weights
+    # int4_forced loosens the gate to 0.30 so the LUT fires on random weights
     plan = [("fp16", None, 0.05), ("int4", "int4", 0.05),
             ("int4_forced", "int4", 0.30), ("auto", "auto", 0.05)]
     for label, variant, atol in plan:
-        # rebuild graph fresh per variant from the same seed; only the encoding differs
+        # rebuild fresh per variant from the same seed; only encoding differs
         rng_v = _rng()
         b = builder(rng_v)
         out_v = b[0]

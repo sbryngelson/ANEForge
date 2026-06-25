@@ -1,4 +1,4 @@
-"""Shared harness for the aneforge correctness corpus (the green-gate infrastructure)."""
+"""Shared harness for the aneforge correctness corpus."""
 from __future__ import annotations
 
 import sys
@@ -30,18 +30,14 @@ class Case:
 
 
 def _build_graph(case: Case):
-  """Construct the af.Tensor graph: one af.input per case input, fed to build_fn."""
+  """Build the af.Tensor graph: one af.input per case input, fed to build_fn."""
   shapes = case.input_shapes or [a.shape for a in case.inputs]
   tensors = [af.input(tuple(s)) for s in shapes]
   return case.build_fn(*tensors)
 
 
 def run_case(case: Case, int8: bool = False) -> np.ndarray:
-  """Build -> compile -> run the case on the ANE; return the fp32 output array.
-
-    This is the reuse hook for an optimizer diff: call with the same Case before
-    and after a rewrite and compare the two returned arrays.
-    """
+  """Build, compile, and run the case on the ANE; return the fp32 output array."""
   out_tensor = _build_graph(case)
   net = af.compile(out_tensor, int8=int8)
   ins = [np.asarray(a, np.float16) for a in case.inputs]
@@ -49,10 +45,7 @@ def run_case(case: Case, int8: bool = False) -> np.ndarray:
 
 
 def compare(out: np.ndarray, ref: np.ndarray, case: Case, int8: bool = False):
-  """Return (passed: bool, metric_str, tol_used, relerr) for one (out, ref) pair.
-
-    ``relerr`` is the numeric relative error when a relerr metric applies, else None
-    (carried on the record so runners need not re-parse the metric string)."""
+  """Return (passed, metric_str, tol_used, relerr) for one (out, ref) pair; relerr is None when no relerr metric applies."""
   out = np.asarray(out, np.float32)
   ref = np.asarray(ref, np.float32)
   if out.shape != ref.shape: return False, f"shape {out.shape} != ref {ref.shape}", 0.0, None
@@ -65,15 +58,12 @@ def compare(out: np.ndarray, ref: np.ndarray, case: Case, int8: bool = False):
   tol = case.int8_tol if int8 else case.tol
   relerr = float(np.abs(out - ref).max() / (np.abs(ref).max() + 1e-6))
   metric = f"relerr {relerr:.5g}"
-  # Carry the *printed-precision* value so runners that aggregate it match the old
-  # behaviour of re-parsing ``float(metric.split()[1])`` exactly.
+  # Carry the printed-precision value so aggregating runners match re-parsing.
   return relerr < tol, metric, tol, float(metric.split()[1])
 
 
 def eval_case(case: Case):
-  """Run one case (fp16, and int8 if requested). Return a list of result dicts,
-    one per variant. Each dict: name, variant, status, metric, tol, err(optional).
-    Status in {PASS, FAIL, XFAIL, XPASS, ERROR}."""
+  """Run one case (fp16, plus int8 if requested); return a result dict per variant."""
   results = []
   variants = [("fp16", False)] + ([("int8", True)] if case.int8_ok else [])
   ref = None
@@ -111,20 +101,7 @@ def _default_row(rec):
 
 def run_corpus(cases, verbose: bool = True, *, columns=None, verdict=None,
                sep_width: int = 78, annotate=None):
-  """Run all cases, print a pass/fail table, return (results, exit_code).
-
-    Gating rule: PASS and XFAIL are green; FAIL, ERROR, and XPASS are red.
-    (XPASS = an xfail-marked case unexpectedly passed -> the marker is stale.)
-
-    Customisation hooks (used by the per-domain runners so they need not re-implement
-    the eval/count/gate skeleton):
-      columns   : (header_str, row_fn(rec)->str) overriding the printed table layout.
-      annotate  : annotate(case, rec) called per record before it is printed, to stamp
-                  extra fields (e.g. cost/feasibility tags) onto the record.
-      verdict   : verdict(all_results, relerrs) printed after the summary stats and
-                  before the GATE line (a domain-specific findings block).
-      sep_width : width of the '-'/'=' separator rules.
-    """
+  """Run all cases, print a pass/fail table, return (results, exit_code); PASS/XFAIL green, FAIL/ERROR/XPASS red."""
   header_fn, row_fn = columns or (_default_header, _default_row)
   all_results = []
   relerrs = []

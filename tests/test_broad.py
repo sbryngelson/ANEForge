@@ -6,9 +6,7 @@ import numpy as np
 import aneforge as af
 from _corpus import Case
 from _helpers import f16
-# Reuse test_shapes' generator so the drawn random inputs (and goldens) stay byte-identical
-# to before, when f16 was imported from test_shapes and closed over test_shapes.rng (seed 7).
-# (test_broad's own seed-11 rng was never used - f16 always drew from test_shapes.rng.)
+# Reuse test_shapes' rng (seed 7) so drawn inputs/goldens stay byte-identical.
 from test_shapes import np_conv, np_group_norm, np_softmax, rng
 
 

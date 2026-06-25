@@ -13,9 +13,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def dynamic_slice_fused(x: np.ndarray, start: int, *, slice_size: int = 2) -> np.ndarray:
-  """Slice `x` (length-W fp16) to `x[start:start+slice_size]` on the ANE; `start`
-    is written into the index constant (weights.1) so the window is runtime-
-    selectable. Accepted variant fixes W=4, SliceSize=2."""
+  """Slice fp16 x to x[start:start+slice_size] on the ANE; start goes in the index constant (weights.1) for a runtime-selectable window. Accepted variant fixes W=4, SliceSize=2."""
   from . import _netplist as g
 
   x = np.asarray(x, dtype=np.float16).reshape(-1)
