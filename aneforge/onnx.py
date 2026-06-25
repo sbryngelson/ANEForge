@@ -2,8 +2,9 @@
 docs. Public: load_onnx / onnx_to_tensor."""
 from __future__ import annotations
 from typing import Callable
+from math import prod
 import numpy as np
-from .graph import Tensor, input as _input, conv as _conv
+from .graph import Tensor, input as _input, conv as _conv, batch_norm as _bn, concat as _concat
 from . import _compile
 
 _ONNX: dict[str, Callable] = {}
@@ -116,3 +117,47 @@ def _avgpool(node, ins, a, i):
                          _uniform(a.get("strides"), "AveragePool"), _sympad(a.get("pads"), "AveragePool"))
 @onnx_op("GlobalAveragePool")
 def _gap(node, ins, a, i): return ins[0].mean((2, 3))     # keepdims -> [N,C,1,1]
+
+@onnx_op("Gemm")
+def _gemm(node, ins, a, i):
+  x = ins[0]; W = np.asarray(ins[1]); B = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else None
+  if not int(a.get("transB", 0)): W = W.T            # x.linear expects [out,in]
+  return x.linear(W, B)
+@onnx_op("MatMul")
+def _matmul(node, ins, a, i):
+  b = ins[1]
+  return ins[0] @ (np.asarray(b) if not isinstance(b, Tensor) else b)
+@onnx_op("BatchNormalization")
+def _bnorm(node, ins, a, i):
+  x, s, bb, mean, var = ins[0], np.asarray(ins[1]), np.asarray(ins[2]), np.asarray(ins[3]), np.asarray(ins[4])
+  return _bn(x, s, bb, mean, var, eps=float(a.get("epsilon", 1e-5)))
+@onnx_op("Reshape")
+def _reshape(node, ins, a, i):
+  shape = [int(v) for v in np.asarray(ins[1])]
+  shape = [ins[0].shape[k] if d == 0 else d for k, d in enumerate(shape)]   # 0 = keep input dim (before -1)
+  n = prod(ins[0].shape); known = prod(d for d in shape if d != -1)
+  shape = [n // known if d == -1 else d for d in shape]                     # -1 = infer remaining
+  return ins[0].reshape(*shape)
+@onnx_op("Flatten")
+def _flatten(node, ins, a, i): return ins[0].flatten2d(int(a.get("axis", 1)))
+@onnx_op("Transpose")
+def _transpose(node, ins, a, i):
+  perm = a.get("perm"); perm = list(perm) if perm is not None else list(reversed(range(len(ins[0].shape))))
+  return ins[0].transpose(perm)
+@onnx_op("Squeeze")
+def _squeeze(node, ins, a, i):
+  axes = a.get("axes")                               # opset<13 attr; opset>=13 axes input
+  if not axes: axes = [int(v) for v in np.asarray(ins[1])]
+  return ins[0].squeeze(tuple(axes))
+@onnx_op("Unsqueeze")
+def _unsqueeze(node, ins, a, i):
+  axes = a.get("axes") or [int(v) for v in np.asarray(ins[1])]
+  return ins[0].expand_dims(tuple(axes))
+@onnx_op("Concat")
+def _concat_h(node, ins, a, i): return _concat(list(ins), axis=int(a["axis"]))
+@onnx_op("Softmax")
+def _softmax(node, ins, a, i): return ins[0].softmax(int(a.get("axis", -1)))
+@onnx_op("Constant")
+def _const(node, ins, a, i):
+  from onnx import numpy_helper
+  return numpy_helper.to_array(a["value"])         # returns np.ndarray (folded by consumers)
