@@ -1,22 +1,9 @@
 """Layer-streamed (gradient-checkpointed) training for deep stacks of identical layers.
 
-A monolithic compile fuses a model's whole forward, backward, and optimizer step into
-ONE e5rt program, so compile time grows superlinearly with depth and caps how deep a
-model can train. When the layers are structurally identical (a transformer stack, a deep
-MLP), that cost is avoidable: the per-layer forward and backward each depend only on one
-layer's shape, not the depth, so they compile ONCE and reuse for every layer.
-`CheckpointedStack` does exactly that.
-
-The backward is the standard gradient-checkpointing trick: store only each layer's INPUT
-activation, not every intermediate, and recompute the layer's forward inside its backward
-program. The reused backward program takes a layer's params, its checkpointed input, and
-the upstream gradient, and returns the param gradients plus the gradient with respect to
-the input (the upstream gradient for the layer below). The result is bit-identical to a
-monolithic `backward` (verified), with total compile work independent of layer count.
-
-This module compiles the repeated stack; the surrounding embedding and output stages are
-ordinary compiled graphs the caller drives (each compiled once). The optimizer runs
-host-side over the streamed gradients, like the default `autograd.Trainer` path.
+Compile one layer's forward and backward ONCE and reuse them for every layer, so compile
+work is independent of depth (a monolithic compile grows superlinearly). Backward uses
+recompute-in-backward checkpointing; result is bit-identical to a monolithic `backward`.
+See docs/developer/compile-pipeline.md.
 """
 from __future__ import annotations
 
@@ -32,15 +19,9 @@ _F16 = np.float16
 class CheckpointedStack:
   """A depth-independent compile for a stack of identical layers.
 
-    `layer_fn(params, x)` builds one layer: `params` is a list of graph `Tensor`
-    parameters and `x` is the input activation `Tensor`; it returns the output
-    activation `Tensor` (same shape as `x`). `example_params` is a list of numpy
-    arrays giving one layer's parameter shapes, and `io_shape` is the activation shape
-    that flows between layers.
-
-    Two programs are compiled: the per-layer forward and the per-layer backward (a
-    multi-output program returning each param gradient and the input gradient). Both are
-    reused for every layer, so compile cost does not grow with depth.
+    `layer_fn(params, x)` builds one layer (returns an output Tensor of the same shape as
+    `x`). `example_params` gives one layer's parameter shapes; `io_shape` is the activation
+    shape flowing between layers.
     """
 
   def __init__(self, layer_fn, example_params, io_shape):
@@ -72,9 +53,8 @@ class CheckpointedStack:
     self._bwd_consts = [(t, n) for t, n in self._bwd.input_ports if id(t) not in _fed]
 
   def forward(self, layers_params, x0):
-    """Run the stack. `layers_params` is a list (per layer) of lists (per-layer
-        parameter numpy arrays). Returns `(output, checkpoints)` where `checkpoints[i]`
-        is the input activation to layer `i` (needed by `backward`)."""
+    """Run the stack. `layers_params[i]` is layer i's list of parameter arrays. Returns
+        `(output, checkpoints)`; `checkpoints[i]` is layer i's input activation (for `backward`)."""
     x = np.asarray(x0, np.float32)
     checkpoints = []
     for lp in layers_params:
@@ -89,9 +69,9 @@ class CheckpointedStack:
     return x, checkpoints
 
   def backward(self, layers_params, checkpoints, g_out):
-    """Backprop the stack. `g_out` is the gradient at the stack output. Returns
-        `(param_grads, g_in)`: `param_grads[i]` is the list of gradients for layer
-        `i`'s params, and `g_in` is the gradient at the stack input."""
+    """Backprop the stack from `g_out` (gradient at the output). Returns
+        `(param_grads, g_in)`: `param_grads[i]` is layer i's param gradients; `g_in` is the
+        gradient at the stack input."""
     g = np.asarray(g_out, np.float32)
     param_grads: list[list[np.ndarray] | None] = [None] * len(layers_params)
     for i in range(len(layers_params) - 1, -1, -1):
