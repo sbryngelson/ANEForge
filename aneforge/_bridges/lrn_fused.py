@@ -1,6 +1,4 @@
-"""Native ANE `LocalResponseNormalization` (cross-channel LRN) on Path A.
-`Params.Alpha` is a fp16 bit pattern (not a float) and is divided by
-KernelChannel internally. See docs/developer/bridges.md for the conventions."""
+"""Native ANE `LocalResponseNormalization` (cross-channel LRN) on Path A. `Params.Alpha` is a fp16 bit pattern, divided by KernelChannel internally."""
 
 from __future__ import annotations
 
@@ -32,13 +30,7 @@ def _plist(channels, height, width, kernel_channel, alpha_bits, beta, k) -> dict
 
 def lrn_fused(x: np.ndarray, *, alpha: float = 1.0, beta: float = 0.75,
               k: float = 1.0) -> np.ndarray:
-  """Channel-mode LRN over the full channel window on the ANE.
-
-    Args:
-        x: fp16 array of logical shape (B=1, C, H, W). KernelChannel = C.
-        alpha, beta, k: standard LRN coefficients (alpha is the *desired*
-                        value; this routine handles the fp16-bits + /C scaling).
-    """
+  """Channel-mode LRN over the full channel window on the ANE; x is fp16 (B=1,C,H,W), KernelChannel=C, alpha is the desired value (fp16-bits + /C handled here)."""
   x = np.asarray(x, dtype=np.float16)
   if x.ndim != 4: raise ValueError("x must be (B,C,H,W)")
   B, C, H, W = x.shape

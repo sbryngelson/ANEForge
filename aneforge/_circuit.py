@@ -1,11 +1,4 @@
-"""Compile-failure backoff rate-limiter: after a compile failure, pace the next compile
-by ~15s - a backstop for the autotuner's burst variant sweep. A success clears the
-back-off. See docs/developer/compile-pipeline.md. Env:
-
-    ANEFORGE_COMPILE_BACKOFF             seconds to pace (default 15.0; 0 disables pacing)
-    ANEFORGE_DISABLE_COMPILE_BREAKER=1   turn the guard off entirely
-    ANEFORGE_COMPILE_BREAKER_STRICT=1    raise CompileBackoffError instead of sleeping
-"""
+"""Compile-failure backoff: after a failure, pace the next compile by ~15s (backstop for the autotuner's variant sweep); a success clears it. Env: ANEFORGE_COMPILE_BACKOFF, ANEFORGE_DISABLE_COMPILE_BREAKER, ANEFORGE_COMPILE_BREAKER_STRICT."""
 from __future__ import annotations
 
 import os
@@ -30,20 +23,19 @@ class CompileBackoffError(RuntimeError):
 
 
 def reset() -> None:
-  """Clear the backoff state (forget the last failure)."""
+  """Clear the backoff state."""
   global _last_failure_ts
   with _lock: _last_failure_ts = None
 
 
 def note_compile_result(ok: bool) -> None:
-  """Record the outcome of a compile. A failure arms the backoff; a success clears it."""
+  """Record a compile outcome: failure arms the backoff, success clears it."""
   global _last_failure_ts
   with _lock: _last_failure_ts = None if ok else _monotonic()
 
 
 def guard_before_compile() -> None:
-  """Call before a compile. If one failed within `_BACKOFF_S`, pace this one (default:
-    sleep the remainder; strict mode: raise)."""
+  """Call before a compile; if one failed within `_BACKOFF_S`, pace this one (sleep, or raise in strict mode)."""
   if _DISABLED or _BACKOFF_S <= 0.0: return
   with _lock:
     if _last_failure_ts is None: return

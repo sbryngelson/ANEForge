@@ -12,8 +12,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def radius_search_fused(points: np.ndarray, centroids: np.ndarray, radius: float) -> np.ndarray:
-  """`(N_points, N_centroids)` uint8 membership: `[i,j]` is 1 iff `points[i]`
-    is within L2 `radius` of `centroids[j]`."""
+  """(N_points, N_centroids) uint8 membership: [i,j]==1 iff points[i] within L2 radius of centroids[j]."""
   from . import _netplist as g
 
   points = np.asarray(points, dtype=np.float16)

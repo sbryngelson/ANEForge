@@ -32,17 +32,7 @@ def _plist(channels: int, height: int, width: int, dimension: str, eps_bits: int
 
 def minmax_norm_fused(x: np.ndarray, *, dimension: str = "Width",
                       epsilon: float = 1e-4) -> np.ndarray:
-  """Min-max normalize `x` over `dimension` on the ANE.
-
-    Args:
-        x: fp16 array of logical shape (B=1, C, H, W).
-        dimension: reduction axis - "Width" (default) or "Height".
-                   "Channel" is ARCH-GATED (compile failure) on this host.
-        epsilon: stability eps added to the (max-min) denominator.
-
-    Returns:
-        fp16 array, same shape as x.
-    """
+  """Min-max normalize fp16 x (B=1,C,H,W) over `dimension` (Width|Height; Channel ARCH-GATED) on the ANE; eps stabilizes the (max-min) denominator."""
   x = np.asarray(x, dtype=np.float16)
   if x.ndim != 4: raise ValueError("x must be (B,C,H,W)")
   B, C, H, W = x.shape

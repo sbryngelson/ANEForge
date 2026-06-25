@@ -1,6 +1,4 @@
-"""Native ANE rank-family layers (Sort / TopK / ArgMinMax / GlobalArgMinMax)
-on Path A. Integer index outputs are fp16-encoded but exact (ranges < 2048).
-See docs/developer/bridges.md."""
+"""Native ANE rank-family layers (Sort / TopK / ArgMinMax / GlobalArgMinMax) on Path A. Integer index outputs are fp16-encoded but exact (ranges < 2048)."""
 
 from __future__ import annotations
 
@@ -65,8 +63,7 @@ def _run(layer_type: str, params: dict, x: np.ndarray, *,
 
 def sort(x: np.ndarray, *, descending: bool = False, key_lane: int = 0,
          return_indices: bool = False, **kw):
-  """Sort x ([C, W]) along Width, permuting all channels by channel `key_lane`
-    (SortDimension=Width, VectorDimension=Channel)."""
+  """Sort x ([C,W]) along Width, permuting all channels by channel key_lane (SortDimension=Width, VectorDimension=Channel)."""
   x = np.atleast_2d(np.asarray(x, np.float16))
   ch, wd = x.shape
   params = {
@@ -80,8 +77,7 @@ def sort(x: np.ndarray, *, descending: bool = False, key_lane: int = 0,
 
 def topk(x: np.ndarray, k: int, *, largest: bool = True, key_lane: int = 0,
          return_indices: bool = False, **kw):
-  """Top-k along Width of x ([C, W]) keyed by channel `key_lane`.
-    NOTE: k in {3,4} is ARCH-GATED (ANECCompile fails)."""
+  """Top-k along Width of x ([C,W]) keyed by channel key_lane; k in {3,4} is ARCH-GATED."""
   x = np.atleast_2d(np.asarray(x, np.float16))
   ch, wd = x.shape
   params = {
@@ -94,9 +90,7 @@ def topk(x: np.ndarray, k: int, *, largest: bool = True, key_lane: int = 0,
 
 
 def argminmax(x: np.ndarray, mode: str, **kw):
-  """ArgMinMax over x ([C, H, W]). mode in {Spatial,Channel}{ArgMax,ArgMin}:
-    Spatial* -> one flattened-(H*W) index per channel; Channel* -> one channel
-    index per (h, w)."""
+  """ArgMinMax over x ([C,H,W]), mode {Spatial,Channel}{ArgMax,ArgMin}; Spatial* -> one (H*W) index per channel, Channel* -> one channel index per (h,w)."""
   x = np.asarray(x, np.float16)
   if x.ndim == 2: x = x[:, None, :]   # [C, 1, W]
   ch, hh, wd = x.shape

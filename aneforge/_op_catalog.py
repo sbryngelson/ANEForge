@@ -1,11 +1,4 @@
-"""Complete ANE op catalog - every MIL op the ANECompiler exposes, with category,
-per-device availability (M1..M5), MIL kernel class, and notes. The single source of truth
-for the native MIL vocabulary; aneforge's higher-level ops are composites that lower to it.
-
-Device keys -> capability families: m1=A13 (fam 2), m2=A14 (3), m3=A15 (4), m4_m5=A16/A17 (5).
-Each cell: 'native' (on-engine), 'bridge' (netplist/host decomposition), 'walled' (host only).
-See docs/developer/capabilities-and-targets.md.
-"""
+"""ANE op catalog: every MIL op with category, per-device availability (M1..M5), kernel class, and notes. Device keys: m1=A13(fam2), m2=A14(3), m3=A15(4), m4_m5=A16/A17(5); cells are 'native'/'bridge'/'walled'."""
 from __future__ import annotations
 
 # chip alias -> catalog device key

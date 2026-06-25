@@ -1,12 +1,4 @@
-"""The aneforge capability census - the closed, machine-checkable source of truth for what
-ANE capability aneforge surfaces.
-
-`build_registry()` introspects the live `_EMIT` / `NETPLIST_OPS` and merges them with curated,
-citation-carrying classification of everything that can't be introspected. Each entry's status
-is one of STATUSES (fused/bridge/cracked/reachable/arch-gated-negative/not-authorable/predicted);
-exhaustive over the 166-op MIL vocabulary sweep. `tests/test_routes.py` fails CI on drift.
-See .superpowers/sdd/gold-core-heavy.md for the status taxonomy + evidence discipline.
-"""
+"""The aneforge capability census - the closed, machine-checkable source of truth for ANE capability."""
 from __future__ import annotations
 
 import json
@@ -22,7 +14,7 @@ STATUSES = ("fused", "bridge", "cracked", "reachable", "arch-gated-negative",
             "not-authorable", "predicted")
 
 
-# runtime op name -> frontend spelling (Tensor method / af.* fn); missing op -> frontend=None.
+# runtime op name -> frontend spelling; missing op -> frontend=None.
 _FRONTEND_SPELLING: dict[str, str] = {
     # fused unary activations
     "relu": "x.relu()", "silu": "x.silu()", "sigmoid": "x.sigmoid()", "tanh": "x.tanh()",
@@ -103,8 +95,7 @@ def _introspect_bridge() -> list[dict[str, Any]]:
   } for name in sorted(_compile.NETPLIST_OPS)]
 
 
-# (A) cracked - proven on silicon (a self-verifying *_fused.py), not promoted into the
-#     frontend _EMIT / NETPLIST_OPS. Citations are the bridge files.
+# (A) cracked - proven on silicon, not promoted into _EMIT / NETPLIST_OPS.
 _CRACKED: list[dict[str, Any]] = [
     {
         "name": "Dropout",
@@ -166,11 +157,10 @@ _CRACKED: list[dict[str, Any]] = [
     },
 ]
 
-# (B) arch-gated negatives - known not to work on this M5, each carrying its specific `wall`.
+# (B) arch-gated negatives - known not to work on this M5, each with its `wall`.
 #     `probe` is a tiny aneforge call the gate runs to confirm it still fails (None = manual-only).
 _NEGATIVES: list[dict[str, Any]] = [
-    # --- native MIL op unimplemented on the ANE backend; the CAPABILITY is often reachable
-    #     via a decomposition on the same e5rt path. Native-op gaps, not hardware walls. ---
+    # --- native MIL op unimplemented on the ANE backend (often reachable via decomposition) ---
     {
         "name": "reduce_prod",
         "wall": "the native MIL reduce_prod op is unimplemented on the ANE backend "
@@ -246,9 +236,7 @@ _NEGATIVES: list[dict[str, Any]] = [
         "evidence": "reference_unentitled_menu; capabilities.md (Datatypes)",
         "probe": None,  # numpy has no native bf16; no clean frontend probe
     },
-    # --- quantization: no walls remain (reconciled 2026-06-02) - the old blockwise/int4/
-    #     sparse "negatives" were malformed probes; all ship via compress= (test_compress.py).
-    #     See .superpowers/sdd/gold-core-heavy.md for the reconciliation detail. ---
+    # --- quantization: no walls remain (the old blockwise/int4/sparse negatives all ship via compress=) ---
     # --- layer/codegen walls (validator accepts schema, M5 HWX codegen fails) ---
     {
         "name": "conv_kernel_ge16",
@@ -449,21 +437,19 @@ _PREDICTED: list[dict[str, Any]] = [
 # (D) full-MIL-vocabulary sweep - the data-driven exhaustiveness layer          #
 # --------------------------------------------------------------------------- #
 # Synthesizes an entry for every swept op not already represented, classified from its
-# sweep `klass` (reachable -> `reachable`; not-implemented -> negative; compile-walled ->
-# not-authorable for control-flow else negative). Curated entries win (exact-name skipped).
+# sweep `klass`. Curated entries win (exact-name skipped).
 import os as _os
 _SWEEP_PATH = _os.path.join(_os.path.dirname(__file__),
                             "full_mil_vocabulary_sweep.json")
 
-# control-flow / list / state ops: no loop/list/state construct on the feed-forward
-# netplist surface (the recurrence/scan wall), so `not-authorable`, not arch-gated-negative.
+# control-flow / list / state ops: no loop/list/state on the feed-forward surface, so `not-authorable`.
 _NOT_AUTHORABLE_OPS: frozenset[str] = frozenset({
     "cond", "while_loop", "classify",
     "make_list", "list_gather", "list_length", "list_read", "list_scatter", "list_write",
     "read_state", "gru", "lstm", "rnn",
 })
 
-# sweep ops aliasing an already-surfaced capability (a `reachable` entry -> its sibling; no double-count).
+# sweep ops aliasing an already-surfaced capability (no double-count).
 _SWEEP_CAPABILITY_ALIAS: dict[str, str] = {
     "scaled_dot_product_attention": "sdpa (bridge) - same fused-attention capability",
     "linear": "matmul / linear_activation (fused) - same affine-projection capability",
@@ -502,14 +488,11 @@ def _load_sweep() -> list[dict[str, Any]]:
     with open(_SWEEP_PATH) as f:
       return json.load(f)
   except (OSError, ValueError):
-    return []  # sweep artifact absent -> registry still well-formed (just not extended)
+    return []  # sweep artifact absent -> registry still well-formed
 
 
 def _introspect_sweep(already: set[str]) -> list[dict[str, Any]]:
-  """Synthesize registry entries for every full-MIL-vocabulary-sweep op not already
-    represented (`already` = names from _EMIT / NETPLIST_OPS / curated cracked /
-    negatives / predicted). Classified from the sweep `klass`. Curated entries win - any
-    op in `already` is skipped so its hand-written wall/evidence/note is preserved."""
+  """Synthesize registry entries for every swept op not in `already`, classified from its sweep `klass` (curated entries win)."""
   out: list[dict[str, Any]] = []
   for e in _load_sweep():
     op = e["op"]
@@ -568,10 +551,8 @@ def _introspect_sweep(already: set[str]) -> list[dict[str, Any]]:
 
 
 # Closed equivalence-route table over the bridge ops: each records an `alt` (a fused
-# decomposition removing the graph cut, with loss-class + on-device evidence) or
-# `single_route=True` with the reason. Only on-device-validated alts appear (builder in
-# _rewrite._BRIDGE_DECOMPOSERS; reconciled by tests/test_routes.py). Fused ops are
-# single-route by construction and not listed. See .superpowers/sdd/gold-core-heavy.md.
+# decomposition removing the cut) or `single_route=True` with the reason. Reconciled by
+# tests/test_routes.py; fused ops are single-route by construction and not listed.
 _BRIDGE_ROUTES: dict[str, dict[str, Any]] = {
     # --- route-selectable: a validated fused decomposition removes the cut ---
     "sdpa": {
@@ -668,7 +649,7 @@ def _routes_for(name: str, status: str) -> dict[str, Any]:
             "route_reason": "fused _EMIT op - one lowering by construction (no graph "
                             "cut to remove; no alternative route)."}
   if status == "bridge":
-    # a bridge op not in the table is an oversight - surface it via the gate.
+    # a bridge op not in the table is an oversight.
     return {"route_class": "single",
             "route_reason": "UNCLASSIFIED bridge op (add to _capabilities._BRIDGE_ROUTES)."}
   # cracked / negative / predicted: not optimizer-route-bearing.
@@ -676,8 +657,7 @@ def _routes_for(name: str, status: str) -> dict[str, Any]:
 
 
 def route_registry() -> dict[str, Any]:
-  """The closed equivalence-route registry over the bridge ops (selectable vs single-route),
-    driven off the live `NETPLIST_OPS`. Reconciled by tests/test_routes.py."""
+  """The closed equivalence-route registry over the bridge ops (selectable vs single-route)."""
   selectable, single = [], []
   for name in sorted(_compile.NETPLIST_OPS):
     r = _routes_for(name, "bridge")
@@ -695,7 +675,7 @@ def route_registry() -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # cracked-LAYER MANIFEST - the traceable artifact behind the "26 cracked"      #
 # --------------------------------------------------------------------------- #
-# slice_by_index == input_view (both Type=InputView); folded in so the count is distinct layers.
+# slice_by_index == input_view (both Type=InputView); folded so the count is distinct layers.
 _CRACKED_DEDUPE_ALIAS: dict[str, str] = {"slice_by_index": "input_view"}
 
 _CRACKED_MANIFEST_DEFINITION = (
@@ -721,10 +701,7 @@ _CRACKED_MANIFEST_HISTORICAL_NOTE = (
 
 
 def cracked_manifest() -> list[dict[str, Any]]:
-  """The closed manifest of distinct cracked native hardware layers (the "26 cracked" count).
-    Members = registry entries with status in {cracked, bridge}; slice_by_index folds into
-    input_view (distinct = #cracked + #bridge - 1). Returns {name, status, route, evidence}
-    items sorted by name. See `_CRACKED_MANIFEST_DEFINITION` for the exact membership rule."""
+  """The closed manifest of distinct cracked native hardware layers (status in {cracked, bridge}, deduped)."""
   reg = build_registry()
   by_name = {e["name"]: e for e in reg["entries"]}
 
@@ -757,9 +734,7 @@ def cracked_count() -> int:
 
 
 def cracked_manifest_doc() -> dict[str, Any]:
-  """The full committed manifest artifact: definition string, historical-promotion
-    note, member list, and count. Serialised by `write_cracked_manifest` to
-    `cracked_manifest.json`."""
+  """The full committed manifest artifact (definition, historical note, members, count)."""
   members = cracked_manifest()
   return {
     "schema": "aneforge-cracked-manifest/1",
@@ -777,9 +752,7 @@ def cracked_manifest_doc() -> dict[str, Any]:
 
 
 def write_cracked_manifest(path: str = "cracked_manifest.json") -> str:
-  """Serialise the cracked-layer manifest to `path` (default `cracked_manifest.json`,
-    matching where `capabilities.json` lives). Returns the path written. Reproducible -
-    re-run whenever the registry changes."""
+  """Serialise the cracked-layer manifest to `path`; returns the path written."""
   doc = cracked_manifest_doc()
   with open(path, "w") as f:
     json.dump(doc, f, indent=2, sort_keys=False)
@@ -788,8 +761,7 @@ def write_cracked_manifest(path: str = "cracked_manifest.json") -> str:
 
 
 def build_registry() -> dict[str, Any]:
-  """Build the closed capability registry: introspect live `_EMIT` / `NETPLIST_OPS`, merge
-    the curated cracked/negative/predicted entries + sweep layer. Returns {entries, summary}."""
+  """Build the closed capability registry (introspect _EMIT / NETPLIST_OPS + curated + sweep)."""
   entries: list[dict[str, Any]] = []
   entries += _introspect_fused()
   entries += _introspect_bridge()
@@ -825,7 +797,7 @@ def build_registry() -> dict[str, Any]:
 
   summary = {s: sum(1 for e in entries if e["status"] == s) for s in STATUSES}
   summary["total"] = len(entries)
-  # distinct cracked native layers = cracked + bridge - the one alias (see cracked_manifest()).
+  # distinct cracked native layers = cracked + bridge - the one alias.
   summary["cracked_count"] = (
     summary["cracked"] + summary["bridge"] - len(_CRACKED_DEDUPE_ALIAS)
   )
@@ -838,8 +810,7 @@ def build_registry() -> dict[str, Any]:
 
 
 def write_json(path: str = "capabilities.json") -> str:
-  """Serialise the registry to `path` (default `capabilities.json` at cwd). Returns
-    the path written. Reproducible - re-run any time the runtime changes."""
+  """Serialise the registry to `path`; returns the path written."""
   reg = build_registry()
   with open(path, "w") as f:
     json.dump(reg, f, indent=2, sort_keys=False)
@@ -854,6 +825,5 @@ if __name__ == "__main__":
   write_json(out)
   s = reg["summary"]
   print(f"wrote {out}: " + ", ".join(f"{k}={s[k]}" for k in (*STATUSES, "total")))
-  # the cracked-layer manifest (the traceable artifact behind the "26")
   man = write_cracked_manifest()
   print(f"wrote {man}: cracked_count={cracked_count()}")

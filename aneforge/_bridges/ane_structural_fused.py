@@ -1,6 +1,4 @@
-"""Native ANE structural layers (Flatten / Dropout / Broadcast) on Path A.
-Run `python3 -m aneforge._bridges.ane_structural_fused` to self-verify.
-See docs/developer/bridges.md."""
+"""Native ANE structural layers (Flatten / Dropout / Broadcast) on Path A."""
 
 from __future__ import annotations
 

@@ -19,20 +19,13 @@ def _l2_normalizer(D: int) -> Model | SegmentedModel:
 
 
 def load(name: str, int8: bool = False, pooling: str = "mean") -> "Encoder":
-  """Load a BERT-family sentence encoder from HF weights as an ANE embedder.
-
-    `pooling` is one of "mean" (MiniLM/E5), "cls" (BGE/GTE), or "max". See
-    docs/developer/models.md.
-    """
+  """Load a BERT-family sentence encoder from HF weights as an ANE embedder; `pooling` in mean/cls/max."""
   return Encoder(name, int8=int8, pooling=pooling)
 
 
 def load_resnet18(int8: bool = False, compress: str | None = None,
                   compress_atol: float = 0.05, build_dir: str | None = None) -> "Vision":
-  """Load torchvision ResNet-18 (ImageNet) as a fused ANE classifier ([1,3,224,224]
-    -> [1,1000]). BatchNorm is folded into the preceding conv at load. `compress`
-    picks the weight encoding (see `af.compile`). See docs/developer/models.md.
-    """
+  """Load torchvision ResNet-18 (ImageNet) as a fused ANE classifier; BatchNorm folded into the preceding conv at load."""
   return Vision(int8=int8, compress=compress, compress_atol=compress_atol, build_dir=build_dir)
 
 
@@ -161,9 +154,7 @@ class Encoder:
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):
-  """Any-batch GroupNorm with trainable affine, built from VJP-bearing primitives so
-    gradients run on the ANE (stock Tensor.group_norm is batch-1 only). `x` is
-    [N,C,H,W]; `gamma`/`beta` are [1,C,1,1]. See docs/developer/models.md."""
+  """Any-batch GroupNorm with trainable affine, built from VJP-bearing primitives; `x` is [N,C,H,W], gamma/beta [1,C,1,1]."""
   N, C, H, W = x.shape
   if C % groups:
     raise ValueError(f"group_norm_train: channels {C} not divisible by groups {groups}")
@@ -183,15 +174,13 @@ def conv_block(x, conv_w, gamma, beta, groups: int, pool: int = 0):
 
 
 def _he(rng, shape):
-  """He/Kaiming-normal init; fan_in is layout-dependent (conv: prod of trailing dims,
-    2-D fc: leading dim). See docs/developer/models.md."""
+  """He/Kaiming-normal init; fan_in is layout-dependent (conv: trailing dims, 2-D fc: leading dim)."""
   fan_in = shape[0] if len(shape) == 2 else int(np.prod(shape[1:]))
   return (rng.standard_normal(shape) * np.sqrt(2.0 / fan_in)).astype(np.float32)
 
 
 def cifar_cnn(batch: int, widths=(32, 64, 128), groups: int = 8, classes: int = 10, seed: int = 0):
-  """Build the CIFAR-10 CNN graph; returns (x_input, logits, params) with params in a
-    fixed trainable order. See docs/developer/models.md."""
+  """Build the CIFAR-10 CNN graph; returns (x_input, logits, params) with params in fixed trainable order."""
   rng = np.random.default_rng(seed)
   w0, w1, w2 = widths
   x = input((batch, 3, 32, 32))

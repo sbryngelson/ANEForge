@@ -1,13 +1,4 @@
-"""aneforge graph autotuner: a deterministic measurement-cache search over the
-metamorphic-proven-safe variant space, validated to never change results.
-
-Variant axes: int8 weight selection (lossy, accuracy-gated), lossless route swaps
-(sdpa/minmax_norm/flatten/lrn native-bridge vs fused decomposition), reduce_sum->matmul,
-scalar/const folds. Search: enumerate the legal set, prune with estimate(), measure
-survivors on the ANE, validate vs the opt=0 baseline within tol, pick the fastest correct
-one, cache by a deterministic (structure-hash, shapes, config) key (instant on a hit). See
-docs/developer/optimizer-and-cost.md.
-"""
+"""aneforge graph autotuner: a deterministic measurement-cache search over the metamorphic-proven-safe variant space."""
 from __future__ import annotations
 
 import hashlib
@@ -23,21 +14,15 @@ from ._compile import compile as _raw_compile, _topo as _raw_topo
 from ._cost import estimate, precision_risk
 from .graph import Tensor
 
-# Variant-correctness tolerance vs the opt=0 baseline. The default is fp16-noise: lossless
-# rewrites pass, lossy int8 (~1-2% error) is rejected, so default tune never trades accuracy.
-# int8 is opt-in via a looser atol.
+# Variant-correctness tolerance vs the opt=0 baseline (fp16-noise: lossless passes, lossy int8 rejected).
 _ACCURACY_TOL = 5e-3
-# A lossy variant must beat the baseline by this factor to be chosen, so a measurement-noise
-# "win" never costs accuracy for no real speedup.
+# A lossy variant must beat the baseline by this factor to be chosen (no measurement-noise "wins").
 _MIN_LOSSY_SPEEDUP = 1.10
 
 
-# A tune re-walks the immutable graph via _topo from every candidate detector and each
-# _apply_variant/_estimate_variant call. The graph is never mutated during a tune
-# (_apply_variant builds a NEW DAG; compile only writes node._name, which topo ignores - order
-# depends ONLY on .srcs), so memoizing post-order per root only avoids recompute, never changes
-# the order. Each entry stores its root Tensor and is identity-checked on read: the stored
-# Tensor keeps its id alive, so a reused id can never return a stale order. Capped to bound it.
+# Per-root memo of _topo post-order. The graph is never mutated during a tune (compile only
+# writes node._name, which topo ignores), so memoizing only avoids recompute. Identity-checked
+# on read so a reused id can never return a stale order; capped to bound it.
 _TOPO_MEMO: dict[int, tuple] = {}
 
 
@@ -54,9 +39,7 @@ def _topo(out):
 # deterministic graph-structure hash                                          #
 # --------------------------------------------------------------------------- #
 def _graph_key(out, input_shapes) -> str:
-  """Deterministic hash of the graph STRUCTURE + input shapes (op, shape, source positions,
-    constant-weight attr shapes/dtypes - not values). Same structure -> same key across runs
-    (the cache validity premise)."""
+  """Deterministic hash of the graph STRUCTURE + input shapes (not weight values)."""
   order = _topo(out)
   pos = {id(t): i for i, t in enumerate(order)}
   h = hashlib.sha256()
@@ -82,8 +65,7 @@ def _cache_dir() -> Path:
   if env:
     d = Path(env)
   else:
-    # repo-local cache so it is discoverable and version-controllable if wanted;
-    # falls back to ~/.cache/aneforge if the repo dir is not writable.
+    # repo-local cache (falls back to ~/.cache/aneforge if not writable).
     repo = Path(__file__).resolve().parents[1]
     d = repo / ".aneforge_cache"
   try:
@@ -117,9 +99,8 @@ def _save_cache(cache: dict) -> None:
 # --------------------------------------------------------------------------- #
 # attention query-tile autotune                                                #
 # --------------------------------------------------------------------------- #
-# The query-tile count sets how the [H,S,T] score is fissioned. The S-based heuristic avoids
-# the un-tiled wall but is not the per-shape optimum (bound by L2 residency/pipelining, shifts
-# with head count and chip). Measure the best count once per (chip,S,T,heads,head_dim), cache it.
+# The query-tile count sets how the [H,S,T] score is fissioned. The S-based heuristic is not
+# the per-shape optimum, so measure the best count once per (chip,S,T,heads,head_dim) and cache.
 _TILE_MEMO: dict = {}
 _TILE_CANDIDATES = (1, 2, 3, 4, 5, 6, 8)
 
@@ -129,7 +110,7 @@ def _heuristic_tiles(S: int) -> int:
 
 
 def _time_attention_core(S: int, T: int, n_heads: int, dh: int, n_tiles: int, reps: int = 20) -> float:
-  """Median wall time (s) of the query-tiled attention core [H,S,dh] x [H,dh,T] on the ANE."""
+  """Median wall time (s) of the query-tiled attention core on the ANE."""
   from . import graph as g
   qh, kh, vh = g.input((n_heads, S, dh)), g.input((n_heads, T, dh)), g.input((n_heads, T, dh))
   kt = kh.transpose([0, 2, 1]); scale = 1.0 / dh ** 0.5
@@ -161,10 +142,7 @@ def _time_attention_core(S: int, T: int, n_heads: int, dh: int, n_tiles: int, re
 
 def attention_tiles(S: int, n_heads: int, dh: int, T: int | None = None,
                     tune: bool = False, candidates=_TILE_CANDIDATES) -> int:
-  """Query-tile count for an [n_heads, S, dh] x [n_heads, dh, T] attention score. Returns a
-    chip+shape-cached tuned value, else the S-based heuristic. `tune=True` (or env
-    ANEFORGE_TUNE_ATTENTION=1) measures the candidates once and caches the fastest. Exact
-    either way (the tile count only changes how the score fissions)."""
+  """Query-tile count for an attention score: a chip+shape-cached tuned value, else the S-based heuristic."""
   T = S if T is None else T
   from ._targets import _cpu_brand
   key = f"attn_tiles:{_cpu_brand() or 'unknown'}:{S}:{T}:{n_heads}:{dh}"
@@ -192,8 +170,7 @@ def tune_attention(S: int, n_heads: int, dh: int, T: int | None = None,
 # variant space (legal == metamorphic-proven-safe)                            #
 # --------------------------------------------------------------------------- #
 def _has_weights(out) -> bool:
-  """True if the graph carries any int8-eligible weight (matmul `wt` or conv `weight`).
-    int8 is a no-op otherwise, so we don't enumerate it."""
+  """True if the graph carries any int8-eligible weight (matmul `wt` or conv `weight`)."""
   for t in _topo(out):
     if t.op == "matmul" and isinstance(t.attrs.get("wt"), np.ndarray): return True
     if t.op == "conv" and isinstance(t.attrs.get("weight"), np.ndarray): return True
@@ -201,9 +178,7 @@ def _has_weights(out) -> bool:
 
 
 def _int8_candidates(out):
-  """Per-weight int8 candidates: (topo_index, weight_elems) for each weight-bearing
-    matmul/conv node, sorted by weight_elems DESCENDING (largest weight = biggest bandwidth
-    win). The order greedy adds candidates, so the budget is spent where int8 helps most."""
+  """Per-weight int8 candidates (topo_index, weight_elems), largest-weight-first."""
   order = _topo(out)
   cands = []
   for i, t in enumerate(order):
@@ -222,38 +197,30 @@ def _sdpa_ids(out):
 
 
 def _route_ids(out):
-  """Topo indices of every ROUTE-BEARING node (a bridge op with a validated equivalent
-    fused lowering: sdpa/minmax_norm/flatten/...) - the axes the optimizer flips between
-    native bridge and fused decomposition. Single-route bridge ops are excluded."""
+  """Topo indices of every ROUTE-BEARING node (bridge op with a validated fused lowering)."""
   from ._rewrite import _BRIDGE_DECOMPOSERS
   order = _topo(out)
-  # A causal sdpa must NOT be route-flipped: the fused decomposition is unmasked, so a routed
-  # causal sdpa would silently return unmasked attention. Keep it on the native bridge route.
+  # a causal/masked sdpa must NOT be route-flipped: the fused decomposition is unmasked.
   return [i for i, t in enumerate(order)
           if t.op in _BRIDGE_DECOMPOSERS
           and not (t.op == "sdpa" and (t.attrs.get("causal") or t.attrs.get("masked")))]
 
 
 def _constfold_candidates(out):
-  """Topo indices of nodes whose whole source cone is constant (foldable to one const_array).
-    Excludes const/input leaves."""
+  """Topo indices of nodes whose whole source cone is constant (foldable to one const_array)."""
   from ._rewrite import _const_subgraph
   return [i for i, t in enumerate(_topo(out))
           if t.op not in ("const_array", "input") and _const_subgraph(t) is not None]
 
 
 def _scalarchain_candidates(out):
-  """Topo indices of muls/adds chain heads (muls-over-muls, adds-over-adds) - the nodes a
-    scalar-chain fold collapses."""
+  """Topo indices of muls/adds chain heads (muls-over-muls, adds-over-adds)."""
   return [i for i, t in enumerate(_topo(out))
           if t.op in ("muls", "adds") and t.srcs[0].op == t.op]
 
 
 def _apply_variant(out, cfg):
-  """Materialize the rewritten DAG for a variant `cfg` in ONE graph_rewrite pass. Every axis
-    composes over the ORIGINAL graph (ids resolved up front -> no chained-rewrite index
-    drift). The global int8 flag is returned separately (a compiler arg, not a rewrite).
-    cfg axes: decomp, int8_nodes, rs_matmul, scalarfold, constfold."""
+  """Materialize the rewritten DAG for variant `cfg` in ONE graph_rewrite pass; the global int8 flag is returned separately."""
   from ._rewrite import (Rule, graph_rewrite, _BRIDGE_DECOMPOSERS, _reduce_sum_as_matmul,
                          _b_fold_muls, _b_fold_adds, _b_const_fold)
   order = _topo(out)
@@ -300,10 +267,7 @@ def _apply_variant(out, cfg):
 
 
 def _route_configs(routes) -> list:
-  """Coordinate-descent route enumeration shared by _route_variants and _variants:
-    opt=0 baseline (all native) + each single route flip + all-decomposed = K+1 configs,
-    linear NOT 2^K. Config values are JSON-friendly lists (a cached config must compare
-    equal after a JSON round-trip - the cache premise)."""
+  """Coordinate-descent route enumeration: baseline + each single flip + all-decomposed = K+1 configs (linear, not 2^K)."""
   configs = [{"int8": False, "decomp": [], "lossy": False}]   # opt=0 baseline (all native)
   for i in routes:
     configs.append({"int8": False, "decomp": [i], "lossy": False})
@@ -313,12 +277,7 @@ def _route_configs(routes) -> list:
 
 
 def _variants(out):
-  """Legal variant configs (each a buildable/cacheable compile-config). Axes:
-      - GLOBAL int8: {False, True}, LOSSY (accuracy-gated).
-      - ROUTE per route-bearing node: {native bridge, fused decomposition}, LOSSLESS.
-        Enumerated by COORDINATE DESCENT: baseline + each single flip + all-decomposed =
-        K+1 variants, linear NOT 2^K.
-    """
+  """Legal variant configs: route flips (lossless) + global int8 / const-fold / scalar-fold (lossy)."""
   configs = _route_configs(_route_ids(out))
   if _has_weights(out):
     configs.append({"int8": True, "decomp": [], "lossy": True})   # PRIMARY: global int8
@@ -332,20 +291,12 @@ def _variants(out):
 
 
 def _route_variants(out):
-  """The LOSSLESS-ONLY variant set for the DEFAULT route pass: baseline + route-bearing
-    flips, no int8/lossy. Every config is cos-1.0 vs opt=0, so the default pass never changes
-    numerics. (Shape-dependent equivalence is handled upstream: af.sdpa decomposes above the
-    native accuracy limit, so a routable native sdpa node only exists where the route is
-    lossless.)"""
+  """The LOSSLESS-ONLY variant set for the default route pass: baseline + route-bearing flips."""
   return _route_configs(_route_ids(out))
 
 
 def _compile_routes(out, int8: bool, build_dir=None):
-  """The DEFAULT compile pass: cost-model-driven, lossless route optimization. Per
-    route-bearing node, pick native-bridge vs fused decomposition by whichever estimate()
-    predicts cheaper (no on-device measurement; the cost model's argmin matches the fastest
-    correct route, validated). Lossless-only -> never changes numerics. A cut-free graph
-    returns exactly the opt=0 program. `int8` is threaded to _raw_compile."""
+  """The default compile pass: cost-model-driven, lossless route optimization (per node, cheaper of native vs fused)."""
   cfgs = _route_variants(out)
   if len(cfgs) == 1:                                          # no removable cut: opt=0 path
     return _raw_compile(out, int8=int8, build_dir=build_dir, opt=0, _check_precision=False)
@@ -368,9 +319,7 @@ def _config_label(cfg: dict) -> str:
 # --------------------------------------------------------------------------- #
 def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5,
             tol: float = _ACCURACY_TOL):
-  """Compile under `cfg`, validate vs `baseline_out` within tol, return MIN latency over
-    `reps` (us). `inf` if incorrect or fails. Also returns the variant's own output when
-    `baseline_out` is None (so the first variant becomes the reference)."""
+  """Compile under `cfg`, validate vs `baseline_out` within tol, return (min latency us, output array)."""
   arrs = [np.asarray(a, np.float16) for a in inputs]
   try:
     variant_out, int8 = _apply_variant(out, cfg)
@@ -406,15 +355,11 @@ def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5
 # --------------------------------------------------------------------------- #
 def _greedy_int8(out, inputs, baseline_out, baseline_us, *, reps, atol,
                  min_lossy_speedup, budget, verbose=False):
-  """Greedily grow the per-weight int8 set, one weight at a time (coordinate descent, not
-    2^K). From the all-fp16 baseline, walk candidates largest-weight-first; tentatively add
-    each, MEASURE, and keep it only if accuracy stays within `atol` AND measured speed
-    improves. Returns (int8_nodes_tuple, best_us, n_measured). O(#candidates^2) worst-case,
-    capped by `budget`."""
+  """Greedily grow the per-weight int8 set, one weight at a time (coordinate descent, capped by `budget`)."""
   cands = _int8_candidates(out)
   if not cands: return (), float("inf"), 0
   chosen: list[int] = []
-  # current best = the fp16 baseline (empty int8 set). Any int8 add must beat it.
+  # current best = the fp16 baseline; any int8 add must beat it.
   best_us = baseline_us
   n_measured = 0
   remaining = [idx for idx, _ in cands]   # benefit-ordered topo indices
@@ -433,8 +378,7 @@ def _greedy_int8(out, inputs, baseline_out, baseline_us, *, reps, atol,
       if verbose:
         tag = (f"{us:.0f}us" if ok else "INCORRECT/FAIL(atol)")
         print(f"[greedy] try int8 node {idx} (set {chosen + [idx]}): {tag}")
-      # accept only if accurate AND faster than the best config found so far in
-      # this pass (which starts at the running best). Strict improvement.
+      # accept only if accurate AND faster than the best so far (strict improvement).
       if ok and us < best_add_us: best_add, best_add_us = idx, us
     if best_add is not None:
       chosen.append(best_add)
@@ -444,8 +388,7 @@ def _greedy_int8(out, inputs, baseline_out, baseline_us, *, reps, atol,
       if verbose:
         print(f"[greedy] KEEP int8 node {best_add} -> set {chosen} "
               f"({best_us:.0f}us, baseline {baseline_us:.0f}us)")
-  # the per-weight set is lossy: return it only if it beats the fp16 baseline by the
-  # required margin (same gate as global int8). Otherwise the lossless baseline wins.
+  # lossy: return the set only if it beats the fp16 baseline by the required margin.
   if not chosen or baseline_us == float("inf") or \
       not (best_us * min_lossy_speedup <= baseline_us):
     if verbose and chosen:
@@ -459,8 +402,7 @@ def _greedy_int8(out, inputs, baseline_out, baseline_us, *, reps, atol,
 # tune                                                                        #
 # --------------------------------------------------------------------------- #
 def _gen_inputs(input_shapes):
-  """Deterministic synthetic inputs (fp16 ~N(0,1), nudged off zero so divides/rsqrt don't
-    blow up)."""
+  """Deterministic synthetic inputs (fp16 ~N(0,1), nudged off zero)."""
   rng = np.random.default_rng(0xA9E)
   def _make(sh):
     a = rng.standard_normal(tuple(sh)).astype(np.float32)
@@ -474,9 +416,7 @@ def _input_shapes(out):
 
 
 def _estimate_variant(out, cfg):
-  """Cost-model estimate for a variant: apply its rewrite, then cost the DAG. Predicts the
-    route decision before measuring - the decomposed DAG has no native-SDPA cut, so estimate()
-    costs it as one fused program."""
+  """Cost-model estimate for a variant: apply its rewrite, then cost the DAG."""
   variant_out, int8 = _apply_variant(out, cfg)
   return estimate(variant_out, int8=int8)
 
@@ -491,16 +431,7 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
          reps: int = 20, atol: float = _ACCURACY_TOL,
          min_lossy_speedup: float = _MIN_LOSSY_SPEEDUP, verbose: bool = False,
          target_error: float | None = None):
-  """Return the fastest CORRECT compiled Model for the graph rooted at `out`: enumerate the
-    legal variant space, prune with the cost model, measure survivors, validate vs the opt=0
-    baseline, pick the fastest correct one, cache it (instant on a hit).
-
-    `target_error=E` switches to the precision-aware path (`tune_precision`), selecting the
-    numerics-aware rewrite that meets E at minimum cost (can IMPROVE accuracy). Default (no
-    target_error) is accuracy-PRESERVING: with `atol` at fp16 noise, lossy int8 is rejected;
-    pass a looser `atol` to admit it (it must still beat the baseline by `min_lossy_speedup`).
-    `budget` caps on-device measurements; `prune_factor` skips variants > that x the best estimate.
-    """
+  """Return the fastest CORRECT compiled Model for `out` (enumerate, prune, measure, validate, cache); `target_error` switches to the precision-aware path."""
   if target_error is not None:
     model, _report = tune_precision(out, target_error=target_error, inputs=inputs,
                                     reps=reps, verbose=verbose)
@@ -512,8 +443,7 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
 
   configs = _variants(out)
 
-  # cache hit: rebuild the cached winner directly (no measurement). It may be an enumerated
-  # variant or a greedy per-weight int8 config (buildable since the key pins the structure).
+  # cache hit: rebuild the cached winner directly (no measurement).
   if key in cache and cache[key].get("config") is not None:
     cfg = cache[key]["config"]
     if cfg in configs or cfg.get("int8_nodes"):
@@ -524,9 +454,8 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
 
   if inputs is None: inputs = _gen_inputs(input_shapes)
 
-  # rank by cost-model estimate; the lossless baseline first so it is the reference.
+  # rank by cost-model estimate; lossless variants first (the correctness reference).
   ranked = sorted(configs, key=lambda c: _estimate_variant(out, c))
-  # ensure a lossless variant is measured first (it is the correctness reference).
   ranked = ([c for c in ranked if not c.get("lossy")] +
             [c for c in ranked if c.get("lossy")])
 
@@ -540,9 +469,7 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
   for cfg in ranked:
     if n_measured >= budget: break
     est = _estimate_variant(out, cfg)
-    # `ranked` measures every lossless variant before any lossy one, so reaching a
-    # lossy variant with no baseline means the fp16 baseline failed to compile. A lossy
-    # variant must never become its own accuracy reference - skip it.
+    # a lossy variant must never become its own accuracy reference - skip if no baseline yet.
     if cfg.get("lossy") and baseline_out is None:
       results.append((cfg, est, None, "skipped"))
       skipped_lossy_no_baseline = True
@@ -550,9 +477,7 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
         print(f"[tune] skip {_config_label(cfg)}: no lossless baseline to "
               f"validate against")
       continue
-    # prune: skip lossy variants the model predicts far worse than the best estimate.
-    # Never prune a lossless variant (route swaps are free accuracy-wise and are the
-    # correctness reference / safe fallback).
+    # prune lossy variants the model predicts far worse than the best estimate (never lossless ones).
     if cfg.get("lossy") and est > prune_factor * best_est and best_cfg is not None:
       results.append((cfg, est, None, "pruned"))
       if verbose:
@@ -562,16 +487,14 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
     us, out_arr = measure(out, inputs, cfg, baseline_out=baseline_out, reps=reps, tol=atol)
     n_measured += 1
     if baseline_out is None and out_arr is not None:
-      baseline_out = out_arr     # first successful = reference (the fp16 baseline)
+      baseline_out = out_arr     # first successful = reference
       baseline_us = us
     results.append((cfg, est, us, "measured"))
     if verbose:
       print(f"[tune] {_config_label(cfg):28s} est {est:7.0f}us  meas "
             f"{us if us != float('inf') else 'INCORRECT/FAIL'} us")
     if us < best_us:
-      # a lossy variant (int8) must beat the lossless baseline by a real margin -
-      # never swap accuracy for a measurement-noise "win". A lossless route swap is
-      # chosen on raw speed (no margin needed; it's bit-identical).
+      # a lossy variant must beat the lossless baseline by a real margin; a lossless swap wins on raw speed.
       if cfg.get("lossy") and not (baseline_us == float("inf")
                                    or us * min_lossy_speedup <= baseline_us):
         continue
@@ -583,9 +506,8 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
       "successfully), so lossy variants were skipped - without a lossless "
       "reference their accuracy cannot be validated.")
 
-  # greedy per-weight int8: only when atol is loosened past the fp16-noise default (at the
-  # tight default it fails the gate anyway, so default tune stays the lossless baseline).
-  # Competes with global int8: greedy wins when only SOME weights tolerate int8.
+  # greedy per-weight int8: only when atol is loosened past the fp16-noise default.
+  # Competes with global int8 (greedy wins when only SOME weights tolerate int8).
   if (atol > _ACCURACY_TOL and _has_weights(out) and baseline_out is not None
       and n_measured < budget):
     i8_nodes, i8_us, i8_n = _greedy_int8(
@@ -602,7 +524,7 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
               f"({i8_us:.0f}us vs baseline {baseline_us:.0f}us)")
 
   if best_cfg is None:
-    best_cfg = {"int8": False, "decomp": (), "lossy": False}  # safe fallback
+    best_cfg = {"int8": False, "decomp": (), "lossy": False}  # fallback
 
   cache[key] = {"config": best_cfg, "us": (None if best_us == float("inf") else round(best_us, 1)),
                 "shapes": [list(s) for s in input_shapes]}
@@ -615,8 +537,7 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
 
 
 def tune_report(out, budget: int = 8, inputs=None, reps: int = 20):
-  """Like tune() but returns a structured report dict (per-program speedup, cost-model
-    ranking) instead of a Model. Never touches the cache (always measures)."""
+  """Like tune() but returns a structured report dict instead of a Model (always measures, never caches)."""
   input_shapes = _input_shapes(out)
   if inputs is None: inputs = _gen_inputs(input_shapes)
   configs = _variants(out)
@@ -644,18 +565,14 @@ def tune_report(out, budget: int = 8, inputs=None, reps: int = 20):
 
 
 # =========================================================================== #
-# precision-aware tune: given an EXPLICIT error budget, select the numerics-aware #
-# rewrite set (reduce_sum->matmul, paired-fp16, +/- int8) that MEETS it at minimum #
-# predicted cost (or minimizes error within a cost budget). Accuracy is measured   #
-# vs an fp32 reference where emulable (else the fp16 baseline), so a rewrite can be #
-# selected to IMPROVE accuracy. See docs/developer/optimizer-and-cost.md.          #
+# precision-aware tune: given an explicit error budget, select the numerics-aware #
+# rewrite set that meets it at minimum cost (accuracy vs an fp32 reference).       #
 # =========================================================================== #
-def _f16(x):  # fp16 rounding of operands/products (ANE storage), wide accum
+def _f16(x):  # fp16 rounding of operands/products, wide accum
   return np.asarray(x, np.float16).astype(np.float64)
 
 
-# op -> numpy evaluator for the fp32-faithful reference (fp16-rounded sources `s`, node `t`).
-# An op absent here has no faithful reference (the graph falls back).
+# op -> numpy evaluator for the fp32-faithful reference; an op absent here has no reference.
 _FP32_EVAL = {
   "add":         lambda s, t: _f16(s[0]) + _f16(s[1]),
   "sub":         lambda s, t: _f16(s[0]) - _f16(s[1]),
@@ -678,10 +595,7 @@ _FP32_EVAL = {
 
 
 def _fp32_reference(out, inputs):
-  """fp64/fp32-faithful reference on numpy, using the ANE matmul's wide-accumulator
-    semantics (products fp16-rounded, accumulation wide) so it is the achievable target, not
-    an unreachable fp64 ideal. None if any op lacks a numpy evaluator (then precision tune
-    falls back to the fp16 baseline)."""
+  """fp32-faithful numpy reference using the ANE matmul's wide-accumulator semantics; None if any op lacks an evaluator."""
   order = _topo(out)
   vals: dict[int, np.ndarray] = {}
   ins = [np.asarray(a, np.float16).astype(np.float64) for a in inputs]
@@ -695,7 +609,7 @@ def _fp32_reference(out, inputs):
     s = [vals.get(id(src)) for src in t.srcs]
     if any(v is None for v in s): return None
     fn = _FP32_EVAL.get(t.op)
-    if fn is None: return None  # unknown op -> no faithful reference
+    if fn is None: return None  # unknown op -> no reference
     try:
       r = fn(s, t)
     except Exception:
@@ -705,8 +619,7 @@ def _fp32_reference(out, inputs):
 
 
 def _measure_with_ref(out, inputs, cfg, ref, reps, warmup=5):
-  """Compile/run a variant -> (latency_us, relerr_vs_ref, out_arr). relerr is max-abs
-    relative error vs the reference; inf / 1.0 on failure."""
+  """Compile/run a variant -> (latency_us, relerr_vs_ref, out_arr); inf / 1.0 on failure."""
   arrs = [np.asarray(a, np.float16) for a in inputs]
   try:
     variant_out, int8 = _apply_variant(out, cfg)
@@ -735,15 +648,13 @@ def _measure_with_ref(out, inputs, cfg, ref, reps, warmup=5):
 
 
 def _precision_variants(out, want_int8=True):
-  """Numerics-aware variant configs in increasing op-cost order: fp16 baseline,
-    reduce_sum->matmul on flagged narrow sums, then optionally int8 (lossy). paired-fp16 is
-    a region rewrite (changes the dataflow type), so it is opt-in, not auto-enumerated."""
+  """Numerics-aware variant configs in increasing op-cost order (fp16 baseline, reduce_sum->matmul, then int8)."""
   risk = precision_risk(out)
   rs_hot = [n["idx"] for n in risk["nodes"] if n["kind"] == "narrow_sum"]
   configs = [{"label_kind": "fp16-baseline", "rs_matmul": [], "lossy": False,
               "cost_rank": 0}]
   if rs_hot:
-    # rewrite all flagged narrow sums to matmul: tiny extra op cost, accuracy >= baseline.
+    # rewrite all flagged narrow sums to matmul: tiny extra cost, accuracy >= baseline.
     configs.append({"label_kind": "reduce_sum->matmul", "rs_matmul": list(rs_hot),
                     "lossy": False, "cost_rank": 1})
   if want_int8 and _has_weights(out):
@@ -754,19 +665,7 @@ def _precision_variants(out, want_int8=True):
 
 def tune_precision(out, target_error: float | None = None, cost_budget_us: float | None = None,
                    inputs=None, reps: int = 20, verbose: bool = False):
-  """PRECISION-AWARE tune: select the numerics-aware rewrite set under an explicit error
-    budget (or cost budget), measuring accuracy vs an fp32 reference. Modes (give one):
-      * `target_error=E`   : min predicted cost among variants with relerr <= E.
-      * `cost_budget_us=C`  : min measured error among variants with cost <= C.
-    Default (neither): minimize error at any cost. Unlike speed-tune(), a variant can be
-    chosen to IMPROVE accuracy over the fp16 baseline.
-
-    Returns `(model, report)`; report carries the per-variant (cost, error) table, risk
-    flags, and chosen config. Automatic detection covers reduce_sum->matmul; paired-fp16 is
-    opt-in (cancellation is data-dependent). REFERENCE: _fp32_reference emulates only simple
-    ops; a graph it cannot evaluate falls back to the fp16 baseline's output (then
-    target_error bounds divergence FROM it). `report.ref_kind` ("fp32"|"fp16-baseline"|None)
-    records which; None means no reference (budget NOT enforced, warning emitted)."""
+  """Precision-aware tune: select the numerics-aware rewrite set under an explicit error or cost budget, returning (model, report)."""
   input_shapes = _input_shapes(out)
   if inputs is None: inputs = _gen_inputs(input_shapes)
   ref = _fp32_reference(out, inputs)
@@ -778,8 +677,7 @@ def tune_precision(out, target_error: float | None = None, cost_budget_us: float
     est = _estimate_variant(out, cfg)
     us, relerr, out_arr = _measure_with_ref(out, inputs, cfg, ref, reps=reps)
     if ref_kind is None and cfg["label_kind"] == "fp16-baseline" and out_arr is not None:
-      # no fp32 emulation: the fp16 baseline's own output becomes the reference (relerr 0.0
-      # by definition); remaining variants are gated on divergence from it.
+      # no fp32 emulation: the fp16 baseline's own output becomes the reference (relerr 0.0).
       ref = np.asarray(out_arr, np.float64)
       ref_kind = "fp16-baseline"
       relerr = 0.0
@@ -792,14 +690,13 @@ def tune_precision(out, target_error: float | None = None, cost_budget_us: float
 
   usable = [r for r in rows if r["ok"]]
   if not usable:
-    # nothing compiled - fall back to the plain fp16 baseline.
+    # nothing compiled - fall back to the fp16 baseline.
     model = build_variant(out, {"rs_matmul": [], "int8": False})
     return model, {"rows": rows, "risk": risk, "chosen": None,
                    "ref_available": ref is not None, "ref_kind": ref_kind}
 
   if ref_kind is None:
-    # NO reference (fp32 unsupported AND fp16 baseline failed): error-based selection is
-    # meaningless, so prefer the cheapest LOSSLESS variant rather than fake-enforce the budget.
+    # no reference: error-based selection is meaningless, so prefer the cheapest lossless variant.
     pool = [r for r in usable if not r["config"].get("lossy")] or usable
     chosen = min(pool, key=lambda r: r["est_us"])
     reason = ("NO accuracy reference (fp32 emulation unsupported for this graph; "
@@ -809,7 +706,7 @@ def tune_precision(out, target_error: float | None = None, cost_budget_us: float
   elif target_error is not None:
     meeting = [r for r in usable if r["relerr"] <= target_error]
     if meeting:
-      chosen = min(meeting, key=lambda r: r["est_us"])   # cheapest that meets E
+      chosen = min(meeting, key=lambda r: r["est_us"])   # cheapest meeting E
       reason = (f"min-cost meeting target_error={target_error:.1e} "
                 f"(error vs {ref_kind} reference)")
     else:

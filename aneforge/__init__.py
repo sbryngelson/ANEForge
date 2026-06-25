@@ -1,21 +1,11 @@
-"""aneforge - a graph->compile->run frontend for the Apple Neural Engine.
-
-Build a tensor graph, `compile` it into one fused e5rt program (or a SegmentedModel
-when a netplist-bridge op cuts the graph), and run it on the ANE. fp16 compute with a
-wide reduction accumulator; weights pack into one BLOBFILE (fp16 / int8 / int4 /
-sparse). Wraps the unentitled Espresso `e5rt` runtime only - no CoreML, no entitlement.
-
-See docs/developer/overview.md for the op surface, fused-vs-bridge routes, numerics,
-weight compression, image input, and on-ANE autograd.
-"""
-# Tolerate a duplicate OpenMP runtime (numpy/MKL and the ANE dylib each bring their
-# own libomp; without this the second to load aborts). Must precede any numpy import.
+"""aneforge - a graph->compile->run frontend for the Apple Neural Engine. fp16 compute over the unentitled Espresso `e5rt` runtime; see docs/developer/overview.md."""
+# tolerate a duplicate OpenMP runtime (numpy/MKL + ANE dylib); must precede any numpy import
 import os as _os
 _os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 try:
   from ._version import __version__            # written by hatch-vcs at build time
-except ImportError:                              # raw source checkout, not yet built
+except ImportError:                              # raw source checkout
   from importlib.metadata import version, PackageNotFoundError
   try: __version__ = version("aneforge")
   except PackageNotFoundError: __version__ = "0+unknown"
@@ -67,15 +57,13 @@ __all__ = [
     "fft", "linalg", "special", "einsum", "dsp",
 ]
 
-# Applied-math submodules (import for discoverability: af.fft / af.linalg / af.special /
-# af.dsp). Each is self-contained over the public ops.
+# applied-math submodules (af.fft / af.linalg / af.special / af.dsp), self-contained over the public ops
 from . import fft as fft
 from . import linalg as linalg
 from . import special as special
 from . import einsum as einsum
 from . import dsp as dsp
 
-# `af.einsum(...)` is the general decomposer, directly callable. The package attribute
-# shadows the submodule of the same name; `import aneforge.einsum` and
-# `from aneforge.einsum import ...` still resolve to the module via sys.modules.
+# `af.einsum(...)` is the directly-callable decomposer; the attribute shadows the submodule
+# (import aneforge.einsum still resolves to the module via sys.modules).
 from .einsum import einsum  # noqa: F811

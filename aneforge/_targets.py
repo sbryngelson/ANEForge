@@ -1,19 +1,4 @@
-"""Per-chip ANE target capabilities - the host-independent core of cross-chip support.
-
-Apple's ANE compiler is byte-identical across chips; what varies M1->M5 is the per-chip
-HAL/target DATA plus the `MinimumFamily<N>` op floors, so portability is a data problem.
-This module holds the measured per-family capability table and answers, per target family,
-whether each op is native/decompose/reject, plus the numeric limits a graph must respect.
-
-28 HAL targets in 5 capability families (A16 is the ceiling; A17/A18 scale core count only):
-
-    family 1 older  A11/A12  (no MIL path)    family 4 A15  M3 (~= M11)
-    family 2 A13    M1                         family 5 A16  M4, M5 (== H17s)
-    family 3 A14    M2
-
-Measured anchors: M1 == H13, M5 == H17s; M-series == H(gen+12). See
-docs/developer/capabilities-and-targets.md.
-"""
+"""Per-chip ANE target capabilities - the host-independent core of cross-chip support."""
 import os
 import re
 import subprocess
@@ -36,8 +21,7 @@ class Family(IntEnum):
   A16 = 5     # M5
 
 
-# The e5rt/MIL path carries the hard "MIL is only supported for H13+ ANE architectures"
-# assert: family >= 2 required regardless of any per-op floor.
+# The e5rt/MIL path requires family >= 2 ("MIL is only supported for H13+ ANE architectures").
 MIN_FAMILY = int(Family.A13)
 
 
@@ -46,8 +30,7 @@ def supports_mil(family: int) -> bool:
   return int(family) >= MIN_FAMILY
 
 
-# Compiler arch string -> capability family. All 28 are valid TargetArchitecture strings;
-# H17*/H18 fold into the A16 tier (core-count scaling only).
+# Compiler arch string -> capability family (H17*/H18 fold into the A16 tier).
 _ARCH_FAMILY = {
   "h11": Family.OLDER, "h12": Family.OLDER, "m9": Family.OLDER, "t0": Family.OLDER,
   "h13": Family.A13, "h13g": Family.A13, "t1": Family.A13,
@@ -68,8 +51,7 @@ def family_of_arch(arch: str) -> int:
   return int(_ARCH_FAMILY[arch.strip().lower()])
 
 
-# A representative arch string per family for the TargetArchitecture compile option (h16s
-# stands in for the whole A16 tier, keeping the cross-compile matrix small).
+# A representative arch string per family for TargetArchitecture (h16s stands in for the A16 tier).
 _FAMILY_ARCH = {Family.A13: "h13", Family.A14: "h14", Family.A15: "h15", Family.A16: "h16s"}
 
 
@@ -79,9 +61,8 @@ def arch_for_family(family: int) -> str:
 
 
 # --- per-family native weight-streaming formats ------------------------------------------
-# Which compressed-weight encodings stream natively (DRAM-bandwidth win) vs fold to dense
-# fp16 (no win). Silicon-measured: A13/M1 = int4-LUT + sparse; A14/M2 = int4+int8+sparse
-# (blockwise folds, no win); A16/M5 = broad set. See docs/developer/capabilities-and-targets.md.
+# Which compressed-weight encodings stream natively (bandwidth win) vs fold to dense fp16.
+# Silicon-measured: A13 = int4+sparse; A14 = int4+int8+sparse; A16 = broad set.
 _ALL_FORMATS = frozenset({"int4", "int8", "sparse", "blockwise"})
 _NATIVE_STREAMS = {
   int(Family.A13): frozenset({"int4", "sparse"}),           # M1-measured
@@ -90,17 +71,13 @@ _NATIVE_STREAMS = {
 
 
 def native_streams(family: int) -> frozenset:
-  """Compressed-weight encodings that stream natively (a bandwidth win) on `family`. Others
-    still compile correctly but fold to dense fp16 (accuracy cost, zero win)."""
+  """Compressed-weight encodings that stream natively on `family` (others fold to dense fp16)."""
   return _NATIVE_STREAMS.get(int(family), _ALL_FORMATS)
 
 
 # --- runtime host-chip detection -------------------------------------------------------
-# Chip -> ANE-family. M1/M5 are measured anchors; M2/M3/M4 by the verified M-series ==
-# H(gen+12) rule. Matched off the clean CPU brand string ("Apple M5 Pro") - the model
-# identifier is a trap (MacBookPro17,1 is M1); Pro/Max/Ultra changes core count, not family.
-# A future M6+ falls back to MIN_FAMILY (a family-2 program runs on every H13+ chip, since
-# higher families are strict supersets - under-claiming stays correct).
+# Chip -> ANE-family, matched off the CPU brand string. M1/M5 measured; M2/M3/M4 by the
+# M-series == H(gen+12) rule. A future M6+ falls back to MIN_FAMILY (under-claiming is safe).
 _BRAND_FAMILY = {
   1: Family.A13,   # M1  - measured H13
   2: Family.A14,   # M2  - verified H14 (M-series ladder)
@@ -118,9 +95,7 @@ def _cpu_brand() -> str:
 
 
 def _family_from_brand(brand: str) -> int:
-  """Map a CPU brand string to a compiler family. M1-M5 resolve exactly (M1/M5 measured,
-    M2/M3/M4 by the verified M-series ladder); a chip beyond the map (future M6+) falls back
-    to the conservative MIN_FAMILY."""
+  """Map a CPU brand string to a compiler family (M1-M5 resolve exactly; beyond the map -> MIN_FAMILY)."""
   m = re.search(r"Apple M(\d+)", brand)
   if m:
     gen = int(m.group(1))
@@ -129,12 +104,7 @@ def _family_from_brand(brand: str) -> int:
 
 
 def detect_family() -> int:
-  """Best-effort target family for the host ANE. Resolution order:
-
-    1. `ANEFORGE_TARGET` env var (an arch string, e.g. 'h13') - explicit override.
-    2. the CPU brand string, for the measured anchors (M1, M5).
-    3. MIN_FAMILY (the safe floor) for any unmeasured chip, with a one-time warning.
-    """
+  """Best-effort target family for the host ANE (ANEFORGE_TARGET env override, else CPU brand, else MIN_FAMILY)."""
   override = os.environ.get("ANEFORGE_TARGET")
   if override: return family_of_arch(override)
   brand = _cpu_brand()
@@ -150,8 +120,7 @@ def detect_family() -> int:
 
 
 # --- op floors -------------------------------------------------------------------------
-# Minimum native family per op. Unlisted ops default to family 2 (the F0/F2 vocabulary,
-# all native on M1+). See docs/developer/capabilities-and-targets.md.
+# Minimum native family per op; unlisted ops default to family 2 (all native on M1+).
 _OP_FLOOR = {
   # F4 trig (A15+) - the one genuinely family-gated trig pair in this MIL vocabulary.
   "sin": Family.A15, "cos": Family.A15,
@@ -168,8 +137,7 @@ _OP_FLOOR = {
   "topk": Family.A14, "sort": Family.A14, "dynamic_slice": Family.A14,
 }
 
-# Below-floor ops with a working substitution (sin/cos -> Horner; dropout/random -> host
-# RNG). Texture-engine and bridge-codegen ops have none, so they hard-reject below floor.
+# Below-floor ops with a working substitution (sin/cos -> Horner; dropout/random -> host RNG).
 _DECOMPOSABLE = {"sin", "cos", "dropout", "random"}
 
 
@@ -187,10 +155,8 @@ def has_texture_engine(family: int) -> bool:
   return int(family) >= int(Family.A14)
 
 
-# Per-family numeric limits, keyed by the lowest family at which a value takes effect;
-# limit() picks the highest threshold <= the queried family. Caps are generation-monotone
-# (A13 == A14 <= A16) and ride the op's LOWERING, not the tensor. Measured per family. See
-# docs/developer/capabilities-and-targets.md.
+# Per-family numeric limits, keyed by the lowest family a value takes effect; limit() picks
+# the highest threshold <= the queried family. Generation-monotone, ride the op's LOWERING.
 _LIMITS = {
   "max_tensor_dim": {Family.A13: 16384, Family.A16: 65536},     # spatial/contraction (H,W,matmul-K)
   "channel_extent": {Family.A13: 65536},                        # C (elementwise, conv Cin)
@@ -210,21 +176,16 @@ def limit(name: str, family: int) -> int:
 
 
 # --- cross-chip fp16 divergence predictor (Direction B) --------------------------------
-# The MAC accumulator width and compiler __TEXT are uniform across chips, so cross-chip
-# fp16 VALUE divergence can only come from HAL-data-selected codegen routes that reorder or
-# saturate fp16 ops - predictable from a few per-family HAL fields (keyed by lowest family;
-# _field_for resolves highest threshold <= family). See docs/developer/capabilities-and-targets.md.
+# Cross-chip fp16 VALUE divergence comes only from HAL-data-selected codegen routes that
+# reorder/saturate fp16 ops, predictable from a few per-family HAL fields.
 
 # fp16 max / 16 = 65504/16: the slice-x16 Q.4 crop-DMA saturation threshold (finite->inf).
 FP16_SLICE_SAT = 4094.0
 
 _HAL_FIELDS = {
-  # 0x494 reduce->square fusion: silicon-measured no-op (A13/A14/A16 all compute fp16(sum)^2,
-  # since the reduce output is fp16 before the square). Kept uniform 0 so the predictor never
-  # flags a nonexistent divergence.
+  # 0x494 reduce->square fusion: silicon-measured no-op; kept uniform 0 so the predictor never flags it.
   "reduce_square_fuse": {Family.A13: 0},
-  # 0x3f0 reduction->transpose route threshold (192 A13/A14, 384 A15+). Empirically a no-op,
-  # but a differing value still flags a <=1-ULP reorder risk.
+  # 0x3f0 reduction->transpose route threshold (192 A13/A14, 384 A15+); a differing value flags a <=1-ULP reorder.
   "reduce_route_thresh": {Family.A13: 192, Family.A15: 384},
 }
 
@@ -234,33 +195,19 @@ def _field_for(name: str, family: int) -> int | None:
   return next((table[t] for t in sorted(table, reverse=True) if int(family) >= int(t)), None)
 
 
-# Op-kind classes the predictor recognizes, mapped to the divergence axis they ride
-# (matched substring/exact against the resolved kind string).
+# Op-kind classes the predictor recognizes (matched substring/exact against the kind string).
 _REDUCE_OPS = ("reduce", "softmax", "norm", "mean", "sum", "variance", "rms")
 _SLICE_OPS = ("slice_by_size", "slice", "crop")
 
 
 def predict_fp16_divergence(kind: str, shape, target_a: int, target_b: int,
                             begin=None, max_abs: float | None = None) -> str:
-  """Statically predict whether an op's fp16 VALUE can diverge between two ANE families,
-    from the HAL fields that select its codegen route. Verdicts (strongest wins):
-
-      `"saturation"` - a slice with a nonzero last-axis begin-offset where one target is
-          A13: A13's Q.4 x16 crop-DMA clamps |value| > 4094 to +/-inf. Magnitude-gated by
-          `max_abs` (None = unknown = possible).
-      `"round1"`     - reduce-then-square (variance/L2/RMSNorm) where the 0x494 fuse bit
-          differs. Never currently returned (the field is a measured no-op); kept for completeness.
-      `"ulp1"`       - reduction/softmax/norm whose 0x3f0 route threshold differs (<=1-ULP reorder).
-      `"none"`       - no differing route.
-
-    `kind` is the node op or a coarse class; `begin` is the slice offset tuple; `max_abs`
-    bounds the value magnitude. See docs/developer/capabilities-and-targets.md."""
+  """Statically predict whether an op's fp16 VALUE can diverge between two ANE families: 'saturation' | 'round1' | 'ulp1' | 'none' (strongest wins)."""
   fa, fb = int(target_a), int(target_b)
   k = kind.lower()
 
-  # 1. slice with nonzero last-axis begin-offset -> Q.4 x16 crop-DMA saturation. The quirk
-  # is present on A13 AND A14 (measured), absent on A16; A15 pending. Flag when exactly one
-  # target is affected (family <= A14).
+  # 1. slice with nonzero last-axis begin-offset -> Q.4 x16 crop-DMA saturation (A13/A14, not
+  # A16). Flag when exactly one target is affected (family <= A14).
   if any(s in k for s in _SLICE_OPS):
     last_off = bool(begin) and len(begin) > 0 and int(begin[-1]) > 0
     sat_a, sat_b = fa <= int(Family.A14), fb <= int(Family.A14)
@@ -290,8 +237,7 @@ class OpReport:
 
 @dataclass
 class Preflight:
-  """Result of walking a graph for a target family. `ok` iff nothing hard-blocks: no
-    rejected ops, no oversize tensors. `decompose` ops are recoverable and keep ok True."""
+  """Result of walking a graph for a target family; `ok` iff no rejected ops and no oversize tensors."""
   family: int
   native: list = field(default_factory=list)
   decompose: list = field(default_factory=list)
@@ -303,9 +249,7 @@ class Preflight:
 
 
 def _internal_axis_oversize(t, max_dim: int) -> bool:
-  """Some ops reshape to a larger per-axis extent INSIDE their MIL lowering than any node
-    shape shows. group_norm's rank-4 lowering reshapes to [1,G,C/groups,H*W], so its largest
-    internal axis is max(C/groups, H*W) - can exceed the cap even when [1,C,H,W] does not."""
+  """True if an op's internal lowering exceeds the per-axis cap (group_norm's max(C/groups, H*W)) even when its node shape does not."""
   if t.op == "group_norm" and len(t.shape) == 4:
     _, c, h, w = t.shape
     g = int(t.attrs.get("groups", 1)) or 1
@@ -314,15 +258,12 @@ def _internal_axis_oversize(t, max_dim: int) -> bool:
 
 
 def preflight(out, family: int) -> Preflight:
-  """Walk the graph feeding `out` and report, per target family, which ops are
-    native/decompose/reject, plus any tensor exceeding the family's limits. Pure static
-    analysis (no compile, no hardware)."""
+  """Static walk of the graph feeding `out`, reporting per-family native/decompose/reject ops + oversize tensors."""
   rep = Preflight(family=int(family))
   seen: set = set()
 
   if not supports_mil(family):
-    # Below the H13+ MIL floor: NOTHING runs (hard assert). Report every op rejected
-    # without querying limits (limit() is undefined below the floor).
+    # below the H13+ MIL floor: report every op rejected (limit() is undefined here).
     walk = [out]
     while walk:
       t = walk.pop()
@@ -335,8 +276,7 @@ def preflight(out, family: int) -> Preflight:
   max_dim = limit("max_tensor_dim", family)          # spatial/contraction extent
   chan_dim = limit("channel_extent", family)
   tr_dim = limit("transpose_extent", family)
-  # nodes whose extent rides the WIDE transpose lowering: transposes and their direct
-  # inputs (the cap covers both sides of the op).
+  # nodes whose extent rides the WIDE transpose lowering: transposes + their direct inputs.
   nodes, walk = [], [out]
   tr_wide: set = set()
   while walk:
@@ -349,9 +289,8 @@ def preflight(out, family: int) -> Preflight:
       tr_wide.add(id(t))
       tr_wide.update(id(s) for s in t.srcs if s.op == "input")
   for t in nodes:
-    # per-axis caps ride the op's lowering: transposes take the wide offset-field extent on
-    # every axis; rank-4 tensors get the channel cap on axis 1 and spatial elsewhere; other
-    # ranks are spatial-capped.
+    # per-axis caps ride the op's lowering: transposes use the wide offset-field extent;
+    # rank-4 tensors get the channel cap on axis 1 and spatial elsewhere; else spatial-capped.
     if id(t) in tr_wide:
       over = any(int(d) > tr_dim for d in t.shape)
     elif len(t.shape) == 4:
@@ -359,8 +298,7 @@ def preflight(out, family: int) -> Preflight:
     else:
       over = any(int(d) > max_dim for d in t.shape)
     over = over or _internal_axis_oversize(t, max_dim)
-    # conv kernel width is a per-family cap (A13<=13, A16<=15). conv_transpose shares it;
-    # kW is the last weight axis for both layouts.
+    # conv kernel width is a per-family cap (A13<=13, A16<=15); kW is the last weight axis.
     if t.op in ("conv", "conv_transpose") and "weight" in getattr(t, "attrs", {}):
       over = over or int(t.attrs["weight"].shape[-1]) > limit("conv_kw_max", family)
     status = op_status(t.op, family)

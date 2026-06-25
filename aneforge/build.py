@@ -1,9 +1,4 @@
-"""Build-on-demand for the e5rt dispatch dylib.
-
-The package ships the dispatch shim SOURCE (links Apple's private frameworks, so it is
-compiled per-machine), built on first ANE dispatch (or `python -m aneforge.build`) and
-cached. ANEFORGE_NO_AUTOBUILD=1 requires an explicit build. See docs/developer/compile-pipeline.md.
-"""
+"""Build-on-demand for the e5rt dispatch dylib (shipped as source, compiled per-machine on first dispatch and cached). ANEFORGE_NO_AUTOBUILD=1 requires an explicit build."""
 from __future__ import annotations
 
 import os
@@ -37,16 +32,14 @@ def build_dylib(out_path: Path | None = None, *, quiet: bool = False) -> Path:
   if not src.exists():
     raise FileNotFoundError(f"packaged dispatch source missing: {src}")
   if out_path is None:
-    # Build next to the source (matches build.sh and the canonical lookup); fall
-    # back to a user cache dir if the installed package tree is read-only.
+    # build next to the source; fall back to a user cache dir if the package tree is read-only
     out_path = _lib_dir() / _DYLIB
     if not os.access(_lib_dir(), os.W_OK):
       out_path = _cache_dir() / _DYLIB
   out_path.parent.mkdir(parents=True, exist_ok=True)
   if not quiet:
     print(f"aneforge: building {_DYLIB} (one-time, ~1s)...", file=sys.stderr)
-  # Compile to a temp file in the target dir, then atomically move it into place so a
-  # concurrent import never loads a half-written dylib.
+  # compile to a temp file then atomically move into place (no half-written dylib)
   fd, tmp = tempfile.mkstemp(dir=str(out_path.parent), suffix=".dylib"); os.close(fd)
   cmd = ["xcrun", "clang++", "-O2", "-Wall", "-Wextra", "-dynamiclib", "-fPIC",
          "-fobjc-arc", "-framework", "Foundation", "-I", str(_lib_dir()),

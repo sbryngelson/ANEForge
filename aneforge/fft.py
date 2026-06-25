@@ -1,15 +1,4 @@
-"""aneforge.fft - a real FFT on the Apple Neural Engine, Cooley-Tukey factored into
-MATMUL STAGES (the ANE has no complex dtype, so complex is carried as (re, im) pairs).
-
-N is split into <=3 balanced groups; the signal stays a fully-split rank-4 tensor for
-the whole computation (each group is one dense-DFT matmul stage), cutting cost from
-O(N^2) to ~O(N*sum(groups)). The complex-as-real-pairs twiddle scheme, the rank-4 cap,
-and the transpose-chain mis-fusion wall are documented in docs/developer/applied-math.md
-and docs/developer/numerics.md.
-
-    fft / ifft / rfft, fft2 / ifft2, magnitude, power. Plans compile once, run many.
-    PYTHONPATH=. python3 aneforge/fft.py
-"""
+"""aneforge.fft - staged Cooley-Tukey FFT on the ANE (complex carried as (re, im) pairs, each stage a matmul)."""
 from __future__ import annotations
 
 import os
@@ -29,22 +18,19 @@ from aneforge.graph import Tensor  # noqa: E402
 # complex-as-real-pairs algebra: a value is a (re, im) tuple of Tensors.
 
 def _cmatmul_const(re: Tensor, im: Tensor, Wr: np.ndarray, Wi: np.ndarray):
-  """Complex matmul (re+im*i) @ (Wr+Wi*i), W a fp16 constant: four real matmuls
-    Cre = re@Wr - im@Wi, Cim = re@Wi + im@Wr."""
+  """Complex matmul (re+im*i) @ (Wr+Wi*i) as four real matmuls (W a fp16 constant)."""
   Wr = Wr.astype(np.float16); Wi = Wi.astype(np.float16)
   Cre = (re @ Wr) - (im @ Wi)
   Cim = (re @ Wi) + (im @ Wr)
   return Cre, Cim
 
 
-# Cross twiddles ([N1,restlen] constants) ride in as graph INPUTS, not folded weights:
-# the public frontend folds only matmul/conv weights, while elementwise mul needs two
-# graph Tensors. The Plan threads the arrays in on every call, in input-slot order.
+# Cross twiddles ride in as graph INPUTS, not folded weights: the frontend folds only
+# matmul/conv weights, while elementwise mul needs two graph Tensors.
 
 
 def _dft_matrix(M: int):
-  """The [M,M] DFT twiddle W[k,n] = exp(-2pi i k n / M), split into (Wr, Wi). Used as a
-    streamed fp16 weight y = x @ W^T (folding W^T so x@Wt gives X[k])."""
+  """The [M,M] DFT twiddle W[k,n] = exp(-2pi i k n / M), split into (Wr, Wi); streamed as x @ W^T."""
   n = np.arange(M)
   k = n.reshape(-1, 1)
   W = np.exp(-2j * np.pi * k * n / M).astype(np.complex128)   # W[k,n]
@@ -67,8 +53,7 @@ def _idft_matrix(M: int):
            np.ascontiguousarray(Wt_im).astype(np.float16)
 
 
-# The ANE caps transpose+matmul at rank-4 tensors (rank>=5 fails ANECCompile), so the
-# fully-split FFT tensor [1, g0, g1, g2] carries AT MOST 3 factor groups. See numerics.md.
+# The ANE caps transpose+matmul at rank-4, so the fully-split FFT tensor carries at most 3 factor groups.
 _MAX_GROUPS = 3
 
 
@@ -84,13 +69,12 @@ def _prime_factors(N: int) -> list[int]:
 
 
 def _factor(N: int) -> list[int]:
-  """Factor N into AT MOST 3 balanced groups (each a dense-DFT matmul stage), keeping the
-    tensor rank<=4. Balanced minimizes total matmul work; a prime N -> one dense DFT."""
+  """Factor N into at most 3 balanced groups (each a dense-DFT matmul stage); prime N -> one dense DFT."""
   primes = _prime_factors(N)
   if len(primes) == 1: return [N]                                  # prime -> one dense DFT block
   k = min(_MAX_GROUPS, len(primes))
   groups = [1] * k
-  # greedy balanced bin-packing: assign largest primes first to the currently-smallest group
+  # greedy balanced bin-packing: largest primes first into the smallest group
   for p in sorted(primes, reverse=True):
     i = min(range(k), key=lambda j: groups[j])
     groups[i] *= p
@@ -98,13 +82,10 @@ def _factor(N: int) -> list[int]:
   return groups
 
 
-# --------------------------------------------------------------------------- #
-# the staged Cooley-Tukey graph builder                                       #
-# --------------------------------------------------------------------------- #
+# the staged Cooley-Tukey graph builder
 
 class _Builder:
-  """Builds the staged FFT graph for one direction (forward or inverse).
-    Collects the cross-twiddle constant arrays as auxiliary graph inputs."""
+  """Builds the staged FFT graph for one direction, collecting cross-twiddle constants as aux inputs."""
 
   def __init__(self, inverse: bool):
     self.inverse = inverse
@@ -116,9 +97,7 @@ class _Builder:
     return _idft_matrix(M) if self.inverse else _dft_matrix(M)
 
   def _cross(self, N1: int, restlen: int, Ntot: int, bshape):
-    """Cross twiddle T[k1, n2] = exp(sign*2pi i k1 n2 / Ntot), registered as a pair of
-        graph INPUTS (no free constant op; the Plan threads the arrays in at call time,
-        in creation order == input order) and reshaped to `bshape` to broadcast."""
+    """Cross twiddle T[k1, n2] = exp(sign*2pi i k1 n2 / Ntot), registered as a pair of graph inputs and reshaped to `bshape`."""
     k1 = np.arange(N1).reshape(-1, 1)
     n2 = np.arange(restlen).reshape(1, -1)
     T = np.exp(self.sign * 2j * np.pi * k1 * n2 / Ntot).astype(np.complex128)   # [N1, restlen]
@@ -128,10 +107,7 @@ class _Builder:
     return Tr.reshape(*bshape), Ti.reshape(*bshape)
 
   def _axis_dft(self, re: Tensor, im: Tensor, axis: int, r: int):
-    """DFT of radix `r` along `axis`: ONE transpose (axis -> last) + complex matmul + ONE
-        transpose back. At most a SINGLE transpose per side of the matmul - chaining
-        transpose->reshape->transpose mis-fuses on this ANE (correct values, permuted
-        order). See docs/developer/numerics.md."""
+    """Radix-r DFT along `axis`: one transpose (axis -> last) + complex matmul + one transpose back (chaining transposes mis-fuses here)."""
     nd = len(re.shape)
     perm = list(range(nd))
     perm[axis], perm[nd - 1] = perm[nd - 1], perm[axis]
@@ -142,8 +118,7 @@ class _Builder:
     return re, im
 
   def _rec(self, re: Tensor, im: Tensor, axes: list[int], lengths: list[int]):
-    """Cooley-Tukey unrolled over the split axes (DIT): per level, one radix-N1 DFT on the
-        first axis, a cross twiddle against the trailing block, then recurse the rest."""
+    """Cooley-Tukey unrolled over the split axes (DIT): radix-N1 DFT on the first axis, cross twiddle, recurse the rest."""
     if len(axes) == 1: return self._axis_dft(re, im, axes[0], lengths[0])
     N1 = lengths[0]
     restlen = int(np.prod(lengths[1:]))
@@ -168,10 +143,7 @@ class _Builder:
     return self._rec(re, im, axes[1:], lengths[1:])
 
   def transform(self, re: Tensor, im: Tensor, N: int):
-    """Length-N FFT of the last axis of (re, im) [1, N]; returns [1, N] in natural
-        (numpy.fft) order. Multi-stage mixed-radix Cooley-Tukey on a fully-split tensor
-        (no collapse-to-1-D between stages - that triggers the transpose-chain mis-fusion);
-        one final axis-reversal transpose puts output in natural order. Work ~ O(N*sum r_k)."""
+    """Length-N FFT of the last axis of (re, im) [1, N]; returns [1, N] in natural (numpy.fft) order."""
     factors = _factor(N)
     m = len(factors)
     if m == 1:
@@ -196,38 +168,31 @@ def _stage_count(N: int) -> int:
 
 
 def _leaf_cost(N: int) -> int:
-  """Total complex-matmul work N*sum(groups) (each group g_i costs N*g_i MACs); the dense
-    single DFT is N*N."""
+  """Total complex-matmul work N*sum(groups) (dense single DFT is N*N)."""
   groups = _factor(N)
   if len(groups) == 1: return N * N
   return N * sum(groups)
 
 
-# --------------------------------------------------------------------------- #
-# Plans (compile once, run many)                                              #
-# --------------------------------------------------------------------------- #
+# Plans (compile once, run many)
 
 class Plan:
-  """A compiled staged-FFT program, holding the e5rt Model plus the cross-twiddle
-    constant arrays it threads in on every call."""
+  """A compiled staged-FFT program plus the cross-twiddle constants it threads in each call."""
 
   def __init__(self, N: int, inverse: bool, real_input: bool):
     self.N = N
     self.inverse = inverse
     self.real_input = real_input
     b = _Builder(inverse)
-    # two user inputs: real and imag parts of the signal. For rfft the imag input is
-    # fed as zeros (kept as a declared input so the graph stays a pure function).
+    # real/imag inputs; for rfft the imag input is fed as zeros.
     xr = af.input((1, N)); xi = af.input((1, N))
     Xr, Xi = b.transform(xr, xi, N)
     if inverse:
       Xr = Xr * (1.0 / N)
       Xi = Xi * (1.0 / N)
-      # one fused program with a single output: concat(re, im) -> [1, 2N], split on host
-    out = af.concat([Xr, Xi], axis=1)
+    out = af.concat([Xr, Xi], axis=1)        # [1, 2N], split on host
     self._aux_values = b.aux_values
     self.n_stages = _stage_count(N)          # number of dense-DFT matmul stages (<=3)
-    # exact-by-construction DFT subtracts trip cancel_sub; numerically verified vs np.fft.
     self.model = af.compile(out, _check_precision=False)
     self.n_ops = self.model.n_ops
 
@@ -243,11 +208,7 @@ class Plan:
 
 
 class Plan2:
-  """A compiled 2-D FFT for [M,N] complex fields, ONE fused program. The 2-D DFT is
-    separable X_hat = F_M @ X @ F_N^T - each axis transform is a single complex matmul
-    over the whole matrix (eight real GEMMs total), NOT a per-row loop. Dense per-axis
-    form (O(M*N*(M+N)) MACs); a staged split would exceed the rank-4 cap. See
-    docs/developer/numerics.md."""
+  """A compiled 2-D FFT for [M,N] complex fields, one fused program (separable F_M @ X @ F_N^T, eight real GEMMs)."""
 
   def __init__(self, M: int, N: int, inverse: bool):
     self.M, self.N, self.inverse = M, N, inverse
@@ -255,8 +216,7 @@ class Plan2:
     WrN, WiN = mk(N)                                          # row twiddle (x @ Wt)
     WrM, WiM = mk(M)                                          # column twiddle
     if inverse:
-        # fold 1/(M*N) INTO the twiddles (1/N row pass, 1/M column pass), NOT one final
-        # scale: an unscaled first-axis transform of a large spectrum overflows fp16.
+        # fold 1/(M*N) into the twiddles per-pass (an unscaled first-axis transform overflows fp16).
       WrN, WiN = WrN * (1.0 / N), WiN * (1.0 / N)
       WrM, WiM = WrM * (1.0 / M), WiM * (1.0 / M)
     xr = af.input((M, N)); xi = af.input((M, N))
@@ -265,7 +225,6 @@ class Plan2:
     re, im = _cmatmul_const(re, im, WrM, WiM)                 # all N columns, one matmul
     re = re.transpose([1, 0]); im = im.transpose([1, 0])
     out = af.concat([re, im], axis=0)                          # [2M, N], split on host
-    # exact-by-construction DFT subtracts trip cancel_sub; verified vs np.fft.fft2.
     self.model = af.compile(out, _check_precision=False)
     self.n_ops = self.model.n_ops
 
@@ -313,40 +272,32 @@ def ifft2_plan(M: int, N: int) -> Plan2:
   return cast(Plan2, _PLAN_CACHE[key])
 
 
-# --------------------------------------------------------------------------- #
-# the public one-shot API                                                     #
-# --------------------------------------------------------------------------- #
+# the public one-shot API
 
 def fft(x_re, x_im, N: int):
-  """Forward FFT of a complex signal (real/imag arrays), length N, on the ANE.
-    Returns (X_re, X_im) numpy arrays of length N."""
+  """Forward FFT of a complex signal (real/imag arrays), length N, on the ANE; returns (X_re, X_im)."""
   return fft_plan(N)(x_re, x_im)
 
 
 def ifft(X_re, X_im, N: int):
-  """Inverse FFT (1/N normalized) of a complex spectrum on the ANE.
-    Returns (x_re, x_im)."""
+  """Inverse FFT (1/N normalized) of a complex spectrum on the ANE; returns (x_re, x_im)."""
   return ifft_plan(N)(X_re, X_im)
 
 
 def rfft(x_real, N: int):
-  """Forward FFT of a REAL signal (imag = 0) on the ANE. Returns the full-length
-    complex spectrum (X_re, X_im); the upper half is the conjugate mirror."""
+  """Forward FFT of a real signal (imag = 0) on the ANE; returns the full-length spectrum (X_re, X_im)."""
   return rfft_plan(N)(x_real, None)
 
 
 def fft2(x_re, x_im=None):
-  """2-D FFT of an [M,N] complex field on the ANE as ONE fused program
-    (F_M @ X @ F_N^T as eight real GEMMs). x_im=None means a real field.
-    Returns (X_re, X_im) [M,N] numpy arrays, np.fft.fft2 convention."""
+  """2-D FFT of an [M,N] complex field on the ANE (x_im=None means a real field); returns (X_re, X_im)."""
   x_re = np.asarray(x_re)
   M, N = x_re.shape
   return fft2_plan(M, N)(x_re, x_im)
 
 
 def ifft2(X_re, X_im):
-  """Inverse 2-D FFT (1/(M*N) normalized) on the ANE, one fused program.
-    Returns (x_re, x_im), np.fft.ifft2 convention."""
+  """Inverse 2-D FFT (1/(M*N) normalized) on the ANE; returns (x_re, x_im)."""
   X_re = np.asarray(X_re)
   M, N = X_re.shape
   return ifft2_plan(M, N)(X_re, X_im)
@@ -368,9 +319,7 @@ __all__ = [
 ]
 
 
-# --------------------------------------------------------------------------- #
-# self-test / validation                                                      #
-# --------------------------------------------------------------------------- #
+# self-test / validation
 
 def _relerr(a, b):
   a = np.asarray(a); b = np.asarray(b)
@@ -378,9 +327,7 @@ def _relerr(a, b):
 
 
 def _naive_dft_relerr(N: int, xr: np.ndarray, xi: np.ndarray):
-  """Reference: the single dense [N,N] DFT-matmul in fp16 (the previous approach),
-    computed in numpy with fp16-rounded inputs/twiddles and a wide accumulator - i.e.
-    what the ANE's naive DFT-matmul produces. Lets us compare staged vs naive fp16."""
+  """Reference: the single dense [N,N] DFT-matmul in fp16 (the previous approach), for comparison vs staged."""
   n = np.arange(N); k = n.reshape(-1, 1)
   W = np.exp(-2j * np.pi * k * n / N).astype(np.complex128)
   Wr = W.real.astype(np.float16).astype(np.float64)

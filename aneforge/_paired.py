@@ -1,11 +1,4 @@
-"""Paired-fp16 ("double-fp16") extended precision with NO fp32 in the compute path.
-
-A value is an unevaluated pair `(hi, lo)`, hi=fp16(x), lo=fp16(x-hi), so hi+lo carries
-~2x the fp16 significand. Both limbs are ordinary Tensors -> pure-fp16 graph on the ANE.
-Uses the classic error-free transforms (TwoSum/TwoProduct), every intermediate fp16; the
-compensated dot accumulates through `@ ones` (the WIDE matmul accumulator), never
-reduce_sum. See docs/developer/numerics.md.
-"""
+"""Paired-fp16 ("double-fp16") extended precision, no fp32 in the compute path. A value is an unevaluated pair `(hi, lo)` carrying ~2x the fp16 significand via error-free transforms (TwoSum/TwoProduct); the compensated dot accumulates through `@ ones`, never reduce_sum."""
 from __future__ import annotations
 
 import numpy as np
@@ -49,8 +42,7 @@ def _renorm(s: Tensor, e: Tensor):
 
 
 class Paired:
-  """A value carried as an unevaluated fp16 pair `hi + lo` (double-fp16). Construct
-    via :func:`paired` (`af.paired`) unless you hold matched (hi, lo) Tensors."""
+  """A value carried as an unevaluated fp16 pair `hi + lo` (double-fp16); construct via :func:`paired`."""
 
   __slots__ = ("hi", "lo")
 
@@ -90,9 +82,7 @@ class Paired:
     return Paired(self.hi * -1.0, self.lo * -1.0)
 
   def dot(self, o: "Paired", axis: int = -1) -> "Paired":
-    """Compensated dot/contraction over `axis`: TwoProduct each element, then accumulate
-        products AND error streams through `@ ones` (WIDE matmul accumulator), never
-        reduce_sum. Returns a Paired reduced along `axis` (keepdims). Pure fp16."""
+    """Compensated dot over `axis`: TwoProduct each element, accumulate products and error streams through `@ ones` (never reduce_sum). Returns a Paired reduced along `axis` (keepdims)."""
     o = _as_paired(o)
     if self.shape != o.shape: raise ValueError(f"dot: shape mismatch {self.shape} vs {o.shape}")
     ax = axis % len(self.shape)
@@ -101,7 +91,7 @@ class Paired:
     p, e = _two_prod(self.hi, o.hi)
     e = e + (self.hi * o.lo + self.lo * o.hi)
 
-    # accumulate via matmul (wide accumulator): move `axis` to last, contract with [K,1] ones.
+    # accumulate via matmul (wide accumulator): move `axis` last, contract with [K,1] ones
     def _accum(t: Tensor) -> Tensor:
       perm = [i for i in range(len(t.shape)) if i != ax] + [ax]
       tp = t.transpose(perm) if perm != list(range(len(t.shape))) else t
@@ -115,9 +105,7 @@ class Paired:
 
   # -- conversions ------------------------------------------------------- #
   def to_tensor(self) -> Tensor:
-    """Best single-fp16 value. Returns `hi + lo` (== hi for a normalized pair) as an
-        explicit add so the compiler MATERIALIZES lo - guards against a dead-code pass
-        dropping the lo computation (which would regress on-device error to plain fp16)."""
+    """Best single-fp16 value: `hi + lo` as an explicit add so the compiler materializes lo (else a dead-code pass would regress to plain fp16)."""
     return self.hi + self.lo
 
   combine = to_tensor
@@ -133,17 +121,11 @@ def _as_paired(o) -> Paired:
 
 
 def paired(hi: Tensor, lo: Tensor | None = None) -> Paired:
-  """Public constructor for a :class:`Paired` (double-fp16) value.
-
-    `af.paired(x)`      - split a Tensor into a pair (lo = 0); the win is the compensated
-                          ops capturing each operation's rounding.
-    `af.paired(hi, lo)` - wrap an already-split pair carrying sub-ulp info (regime B, where
-                          paired-fp16 recovers the most). See docs/developer/numerics.md."""
+  """Construct a :class:`Paired` (double-fp16) value. `af.paired(x)` splits a Tensor into a pair (lo=0); `af.paired(hi, lo)` wraps an already-split pair carrying sub-ulp info (regime B)."""
   if not isinstance(hi, Tensor):
     raise TypeError("af.paired(hi[, lo]) expects an aneforge Tensor for hi")
   if lo is None:
-    # lo = x - x: structurally zero, but emitted as ops so the pair is a real two-limb
-    # dataflow (no Python-side fp32 collapse).
+    # lo = x - x: structurally zero, emitted as ops so the pair is a real two-limb dataflow
     lo = hi - hi
   elif not isinstance(lo, Tensor): raise TypeError("af.paired(hi, lo): lo must be an aneforge Tensor")
   elif hi.shape != lo.shape: raise ValueError(f"af.paired: hi shape {hi.shape} != lo shape {lo.shape}")
