@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
+
+if TYPE_CHECKING:
+  from ._netplist_worker import _Worker
 
 from ._runtime import E5RT, ANE_MASK
 
@@ -47,7 +51,7 @@ def _topo(out: Tensor) -> list[Tensor]:
 # per-op MIL emitters (registry)                                              #
 # --------------------------------------------------------------------------- #
 
-_EMIT: dict[str, "callable"] = {}
+_EMIT: dict[str, Callable[..., Any]] = {}
 
 
 def op(*names: str):
@@ -886,7 +890,7 @@ def _emit_program_dir(em, inputs, out_var, out_shape, build_dir):
 def _assemble_and_compile(em, inputs, out_var, out_shape, build_dir):
   """Write one e5rt program (MIL + weights) for a set of input tensors and compile it."""
   d = _emit_program_dir(em, inputs, out_var, out_shape, build_dir)
-  return E5RT.compile(mil_path=d / "model.mil", cache_dir=d / "cache",
+  return E5RT.compile(mil_path=d / "model.mil", cache_dir=str(d / "cache"),
             inputs={t._name: t.shape for t in inputs}, outputs={out_var: out_shape},
             device_mask=ANE_MASK, input_dtypes=_input_dtypes(inputs))
 
@@ -1029,7 +1033,7 @@ def compile_multi(outs, build_dir=None) -> MultiModel:
   d.mkdir(parents=True, exist_ok=True)
   (d / "model.mil").write_text(mil)
   (d / "weights.bin").write_bytes(em.blob.build())
-  prog = E5RT.compile(mil_path=d / "model.mil", cache_dir=d / "cache",
+  prog = E5RT.compile(mil_path=d / "model.mil", cache_dir=str(d / "cache"),
             inputs={t._name: t.shape for t in inputs},
             outputs={o._name: o.shape for o in outs}, device_mask=ANE_MASK,
             input_dtypes=_input_dtypes(inputs))
@@ -1192,7 +1196,7 @@ def _warn_fp16_cross_chip(out: Tensor, host_family: int, target_family: int) -> 
 
   from . import _targets as TG
   if int(host_family) == int(target_family): return
-  risks: dict[tuple, str] = {}
+  risks: dict[tuple, tuple] = {}
   for t in _topo(out):
     kind = _fp16_risk_kind(t)
     if not kind: continue
@@ -1591,8 +1595,8 @@ class SegmentedModel:
     # route. Built lazily on first call (keyed by the stage), reused for the
     # rest of this model's lifetime, released in release(). Set
     # ANEFORGE_NETPLIST_WORKER=0 to force the A1 (subprocess-per-call) path.
-    self._workers: dict[int, object] = {}
-    self._worker_runs: dict[int, object] = {}
+    self._workers: dict[int, "_Worker"] = {}
+    self._worker_runs: dict[int, Callable[..., Any]] = {}
     self._worker_warned: set[str] = set()
 
   def __call__(self, *arrays: np.ndarray) -> np.ndarray:
@@ -1612,7 +1616,7 @@ class SegmentedModel:
         env[st["tid"]] = np.asarray(runner(src_arrays, st["attrs"]), dtype=np.float16)
     return env[self._out_id].astype(np.float32)
 
-  def _netplist_runner(self, st):
+  def _netplist_runner(self, st) -> Callable[..., Any]:
     """Resolve the runner for a netplist stage. Prefer a persistent Path-A worker
         (load-once-eval-many), built lazily on first use and cached for this model's
         lifetime. Fall back to the subprocess-per-call bridge when no worker route

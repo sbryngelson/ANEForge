@@ -57,7 +57,7 @@ def _write_netplist(
   subtract_max: bool = True,
 ) -> tuple[Path, list[Path]]:
   """Generate a one-op SDPA netplist + weights at workdir."""
-  from ._netplist import write_model  # type: ignore
+  from ._netplist import write_model
   write_model(
     "sdpa",
     workdir,

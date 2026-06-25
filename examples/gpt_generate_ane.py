@@ -115,7 +115,7 @@ class TinyDecoderANE:
         hn = h.rms_norm(self.rn2)
         hout = h + ((hn @ self.W["Wg"]).silu() * (hn @ self.W["Wu"])) @ self.W["Wd"]
         net = compile_multi([hout, Kout, Vout])
-        inm = {id(t): n for t, n in net.input_ports}; om = {t: n for t, n in net.output_ports}
+        inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
         net.prog.share_buffer(0, om[Kout], 0, inm[id(Kin)])   # cache stays resident across execute()
         net.prog.share_buffer(0, om[Vout], 0, inm[id(Vin)])
         net.prog.set_input(inm[id(Kin)], np.zeros((H, M, dh), f16))   # seed once

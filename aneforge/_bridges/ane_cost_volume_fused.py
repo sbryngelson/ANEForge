@@ -15,6 +15,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -22,7 +23,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def cost_volume_fused(aux: np.ndarray, ref: np.ndarray,
-                      disparity_range: int = 1) -> np.ndarray:
+                      disparity_range: int | np.integer[Any] = 1) -> np.ndarray:
   """L1 cost volume of two single-channel rows.
 
     Args:
@@ -36,7 +37,7 @@ def cost_volume_fused(aux: np.ndarray, ref: np.ndarray,
   ref = np.asarray(ref, dtype=np.float16).reshape(-1)
   Wa, Wr = aux.size, ref.size
   R = int(disparity_range)
-  from ._netplist import write_model, ensure_invoker  # type: ignore
+  from ._netplist import write_model, ensure_invoker
 
   with tempfile.TemporaryDirectory(prefix="ane_costvol_") as d:
     wd = Path(d)
@@ -67,7 +68,7 @@ def cost_volume_fused(aux: np.ndarray, ref: np.ndarray,
 
 
 def numpy_reference(aux: np.ndarray, ref: np.ndarray,
-                    disparity_range: int = 1) -> np.ndarray:
+                    disparity_range: int | np.integer[Any] = 1) -> np.ndarray:
   a = np.asarray(aux, np.float16).astype(np.float32).reshape(-1)
   r = np.asarray(ref, np.float16).astype(np.float32).reshape(-1)
   Wa, R = a.size, int(disparity_range)

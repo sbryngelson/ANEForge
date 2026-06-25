@@ -630,9 +630,9 @@ def test_charlm_trains_and_predicts():
   rng = np.random.default_rng(0)
   P = lambda sh, s=0.08: agrad.parameter((rng.standard_normal(sh) * s).astype(np.float32))
   W_emb, W_pos, W_out = P((V, D)), P((S, D)), P((D, V)); fin = agrad.parameter(np.ones((1, D), np.float32))
-  blocks = [dict(Wq=P((D, D)), Wk=P((D, D)), Wv=P((D, D)), Wo=P((D, D)), Wg=P((D, FF)), Wu=P((D, FF)),
-                 Wd=P((FF, D)), rn1=agrad.parameter(np.ones((1, D), np.float32)),
-                 rn2=agrad.parameter(np.ones((1, D), np.float32))) for _ in range(NL)]
+  blocks = [{"Wq": P((D, D)), "Wk": P((D, D)), "Wv": P((D, D)), "Wo": P((D, D)), "Wg": P((D, FF)), "Wu": P((D, FF)),
+                 "Wd": P((FF, D)), "rn1": agrad.parameter(np.ones((1, D), np.float32)),
+                 "rn2": agrad.parameter(np.ones((1, D), np.float32))} for _ in range(NL)]
   params = [W_emb, W_pos, W_out, fin] + [p for b in blocks for p in b.values()]
   heads = lambda t: t.reshape(S, Hh, dh).transpose([1, 0, 2])
   x = af.input((S, V)); y = af.input((S, V)); mask = af.input((S, S)); mask.attrs["value"] = cmask
@@ -679,9 +679,9 @@ def test_charlm_generalizes_on_corpus():
   cmask = np.triu(np.full((S, S), -1e4, np.float32), 1)
   P = lambda sh, s=0.08: agrad.parameter((rng.standard_normal(sh) * s).astype(np.float32))
   W_emb, W_pos, W_out = P((V, D)), P((S, D)), P((D, V)); fin = agrad.parameter(np.ones((1, D), np.float32))
-  blocks = [dict(Wq=P((D, D)), Wk=P((D, D)), Wv=P((D, D)), Wo=P((D, D)), Wg=P((D, FF)), Wu=P((D, FF)),
-                 Wd=P((FF, D)), rn1=agrad.parameter(np.ones((1, D), np.float32)),
-                 rn2=agrad.parameter(np.ones((1, D), np.float32))) for _ in range(NL)]
+  blocks = [{"Wq": P((D, D)), "Wk": P((D, D)), "Wv": P((D, D)), "Wo": P((D, D)), "Wg": P((D, FF)), "Wu": P((D, FF)),
+                 "Wd": P((FF, D)), "rn1": agrad.parameter(np.ones((1, D), np.float32)),
+                 "rn2": agrad.parameter(np.ones((1, D), np.float32))} for _ in range(NL)]
   params = [W_emb, W_pos, W_out, fin] + [p for b in blocks for p in b.values()]
   heads = lambda t: t.reshape(S, Hh, dh).transpose([1, 0, 2])
   x = af.input((S, V)); y = af.input((S, V)); mask = af.input((S, S)); mask.attrs["value"] = cmask
@@ -1048,7 +1048,7 @@ def test_resident_sgd_matches_host_reference():
   W1n = agrad._sgd_update(W1, grads[W1], lr)
   W2n = agrad._sgd_update(W2, grads[W2], lr)
   mm = _c.compile_multi([W1n, W2n]); prog = mm.prog
-  inn = {t: n for t, n in mm.input_ports}; out = {t: n for t, n in mm.output_ports}
+  inn = dict(mm.input_ports); out = dict(mm.output_ports)
   prog.share_buffer(0, out[W1n], 0, inn[W1]); prog.share_buffer(0, out[W2n], 0, inn[W2])
   prog.set_input(inn[W1], W1_0); prog.set_input(inn[W2], W2_0)
   lr_arr = np.array([[LR]], np.float32)

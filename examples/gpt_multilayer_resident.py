@@ -53,14 +53,14 @@ class TinyGPTResident:
             h, Ko, Vo = self._block(h, self.lyr[l], Kin[l], Vin[l], oh, inv, mask)
             Kout.append(Ko); Vout.append(Vo)
         net = compile_multi([h] + Kout + Vout)
-        inm = {id(t): n for t, n in net.input_ports}; om = {t: n for t, n in net.output_ports}
+        inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
         for l in range(L):                       # every layer's cache resident, seeded once
             net.prog.share_buffer(0, om[Kout[l]], 0, inm[id(Kin[l])])
             net.prog.share_buffer(0, om[Vout[l]], 0, inm[id(Vin[l])])
             net.prog.set_input(inm[id(Kin[l])], np.zeros((H, M, dh), np.float16))
             net.prog.set_input(inm[id(Vin[l])], np.zeros((H, M, dh), np.float16))
         self.net, self.inm, self.om = net, inm, om
-        self.ports = dict(x=inm[id(x)], oh=inm[id(oh)], inv=inm[id(inv)], mask=inm[id(mask)], h=om[h])
+        self.ports = {"x": inm[id(x)], "oh": inm[id(oh)], "inv": inm[id(inv)], "mask": inm[id(mask)], "h": om[h]}
 
     def _step(self, tok, p):
         M, f16 = self.M, np.float16

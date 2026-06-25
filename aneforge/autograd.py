@@ -4,13 +4,15 @@ updated host-side, no recompile)."""
 from __future__ import annotations
 
 import math
+from typing import Callable
 
 import numpy as np
 
 from . import graph
+from ._compile import Model as _Model
 from .graph import Tensor
 
-VJP: dict[str, "callable"] = {}
+VJP: dict[str, Callable] = {}
 
 
 def vjp(*names: str):
@@ -1041,8 +1043,8 @@ class Trainer:
     mm = _c.compile_multi(outs)
     self._res = mm
     prog = mm.prog
-    self._res_in_name = {t: n for t, n in mm.input_ports}
-    self._res_out_name = {t: n for t, n in mm.output_ports}
+    self._res_in_name = dict(mm.input_ports)
+    self._res_out_name = dict(mm.output_ports)
     # alias each updated-state output onto its own input port (resident), then
     # seed the (now shared) buffers once - params to their masters, moments to 0.
     for out_t, in_t in alias:
@@ -1198,6 +1200,7 @@ class Trainer:
     # the feature input is the non-trainable, non-target input whose per-sample
     # shape matches X (handles 2-D [B,D] MLP and N-D [B,...] CNN inputs).
     feat_shape = X.shape[1:]
+    assert isinstance(self._fwd, _Model)  # Trainer always compiles non-sdpa graphs
     xin = next(t for t in self._fwd._input_tensors
                if not t.attrs.get("trainable") and t is not getattr(self.ce, "target", None)
                and tuple(t.shape[1:]) == tuple(feat_shape))
@@ -1303,7 +1306,7 @@ class UnrolledTrainer:
         g = backward(mse(out, t_inputs[k]), P, loss_scale=self.scale)
       P, M, V = adam_step(P, M, V, g, lr_ins[k], (self.b1, self.b2), self.eps)
     self._net = _c.compile_multi([*P, *M, *V])
-    self._oname = {t: n for t, n in self._net.output_ports}
+    self._oname = dict(self._net.output_ports)
     self._P_out, self._M_out, self._V_out = P, M, V
     self._m_in, self._v_in, self._lr_ins = m_in, v_in, lr_ins
     # map each data input tensor -> (step k, 'x'|'t') for feeding
@@ -1411,6 +1414,7 @@ class UnrolledTrainer:
       if pad:
         chunk = np.concatenate([chunk, np.zeros((pad, *chunk.shape[1:]), np.float32)])
       # eval inputs are [weight leaves..., xe]; feed masters then the chunk
+      assert isinstance(self._eval, _Model)  # UnrolledTrainer eval never uses sdpa nodes
       args = []
       for t in self._eval._input_tensors:
         args.append(feeds_w[self._ev_w.index(t)] if t in self._ev_w

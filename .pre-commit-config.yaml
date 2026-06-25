@@ -1,0 +1,32 @@
+# Local pre-commit hooks, all `language: system` (they call the tools installed in
+# your environment), mirroring the CI gates: ruff lint, the tinygrad-compact 2-space
+# lock (pylint W0311/C0303), and pyright. Like tinygrad, the type checker runs in
+# pre-commit too — so it assumes a full type-check env. Install everything with:
+#   pip install -e ".[dev,models]" scipy pre-commit && pre-commit install
+# (the `models` extra + scipy let pyright resolve the lazy model-loader / dsp imports;
+# without them pyright reports those as missing — same as the CI `types` job env.)
+# Run on all files with: pre-commit run --all-files
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff check
+        entry: ruff check --no-fix   # report only; do not silently rewrite on commit
+        language: system
+        types: [python]
+        pass_filenames: false        # ruff resolves its own paths from pyproject.toml
+
+      - id: two-space
+        name: 2-space indent + no trailing whitespace (pylint W0311/C0303)
+        entry: python -m pylint --disable=all -e W0311 -e C0303 --indent-string='  '
+        language: system
+        types: [python]
+        # lint only the shippable code + tests (matches CI); skip examples/bench/utils
+        files: ^(aneforge|tests)/.*\.py$
+
+      - id: pyright
+        name: pyright (0 errors)
+        entry: pyright aneforge
+        language: system
+        pass_filenames: false        # pyright analyzes the whole package, not per-file
+        always_run: true

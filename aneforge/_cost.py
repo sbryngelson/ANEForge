@@ -75,9 +75,9 @@ def _constants() -> dict:
       # cut penalty: a native bridge sub-program's floor sits ~90-110us above
       # nothing; use the smallest bridge min as the marginal cut cost when present.
       bridge = model.get("bridge_ops", {})
-      mins = [v.get("min_us") for v in bridge.values()
+      mins = [float(v["min_us"]) for v in bridge.values()
               if isinstance(v, dict) and v.get("min_us") and v["min_us"] < 1000]
-      if mins: c["cut_us"] = float(min(mins))
+      if mins: c["cut_us"] = min(mins)
     except Exception:
       pass
   return c
@@ -613,7 +613,8 @@ def _estimate_analytic(out, arch: str, int8: bool) -> float:
   region_nodes = [t for t in nodes if t.op not in NETPLIST_OPS]
   region_work = sum(_node_roofline_us(t, c, int8) for t in region_nodes)
   if not cut_nodes: return c["floor_us"] + region_work
-  n_regions = (n_cuts := len(cut_nodes)) + 1 if region_nodes else 0
+  n_cuts = len(cut_nodes)
+  n_regions = n_cuts + 1 if region_nodes else 0
   cut_work = sum(_node_roofline_us(t, c, int8) for t in cut_nodes)
   return n_regions * c["floor_us"] + region_work + cut_work + n_cuts * c["cut_us"]
 

@@ -65,7 +65,7 @@ def main():
     net = compile_multi([loss_row, *P, *M, *V])
     prog = net.prog
     inm = {id(t): n for t, n in net.input_ports}
-    om = {t: n for t, n in net.output_ports}
+    om = dict(net.output_ports)
 
     # SEED ONCE, then the host does nothing but press "go". Everything the program
     # needs lives on-device across dispatches:

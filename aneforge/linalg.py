@@ -69,6 +69,7 @@ Run the self-test:
 from __future__ import annotations
 
 import os
+from typing import Any
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import numpy as np
@@ -111,7 +112,7 @@ def _ane_gemm(A16: np.ndarray, B16: np.ndarray, transpose_a: bool = False) -> np
 # host helpers                                                                 #
 # =========================================================================== #
 
-def _spectral_omega(A16: np.ndarray) -> float:
+def _spectral_omega(A16: np.ndarray | np.floating[Any]) -> float:
   """Richardson/Jacobi relaxation factor omega from the max abs row-sum (an
     upper bound on the spectral radius). Host-side scalar."""
   rowsum = np.abs(np.asarray(A16, np.float64)).sum(1).max()
@@ -700,7 +701,7 @@ def qr(A):
     z = rjj - rjj if z is None else z                      # exact-zero [1,1]
     Rcols.append(af.concat(rcol + [z] * (n - j - 1), axis=0))   # R column j -> [n,1]
   net = compile_multi([af.concat(Q, axis=1), af.concat(Rcols, axis=1)])
-  nm = {t: nme for t, nme in net.output_ports}
+  nm = dict(net.output_ports)
   out = net(A16)
   Qv = np.asarray(out[nm[net.output_tensors[0]]], np.float32)
   Rv = np.asarray(out[nm[net.output_tensors[1]]], np.float32)
@@ -745,7 +746,7 @@ def lu(A):
       for t in range(i): s = s - L[(k, t)] * U[(t, i)]
       L[(k, i)] = s / U[(i, i)]
   net = compile_multi([_grid(L, n, z), _grid(U, n, z)])
-  nm = {t: nme for t, nme in net.output_ports}
+  nm = dict(net.output_ports)
   out = net(A16)
   Lv = np.asarray(out[nm[net.output_tensors[0]]], np.float32)
   Uv = np.asarray(out[nm[net.output_tensors[1]]], np.float32)

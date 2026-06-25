@@ -295,7 +295,7 @@ _HAL_FIELDS = {
 }
 
 
-def _field_for(name: str, family: int) -> int:
+def _field_for(name: str, family: int) -> int | None:
   table = _HAL_FIELDS[name]
   return next((table[t] for t in sorted(table, reverse=True) if int(family) >= int(t)), None)
 
