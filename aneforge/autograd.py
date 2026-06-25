@@ -199,8 +199,7 @@ def _vjp_reduce_mean(t, g):
   # fails on a reduce output - see reduce_muls_fusion_probe.py. The tensor*tensor
   # form is kept as the uniform, wall-proof pattern.)
   x = t.srcs[0]
-  n = 1
-  for a in t.attrs["axes"]: n *= x.shape[a]
+  n = math.prod(x.shape[a] for a in t.attrs["axes"])
   return [g * _const_like(x, 1.0 / n)]
 
 
@@ -1101,34 +1100,23 @@ class Trainer:
       entry["p"].attrs["value"] = w.reshape(entry["p"].shape)
     self._res_dirty = False
 
-  def _feed_update(self, net, p, extra):
-    """Feed a per-param update program: the param leaf -> its master value;
-        every other input -> the value mapped in `extra` (keyed by Tensor)."""
-    vals = []
-    for t in net._input_tensors:
-      if t.attrs.get("trainable"):
-        vals.append(t.attrs["value"].astype(np.float16))
-      elif t in extra:
-        vals.append(np.asarray(extra[t]).astype(np.float16))
-      else:
-        vals.append(np.asarray(t.attrs["value"]).astype(np.float16))   # baked value-input (e.g. norm gamma)
-    return vals
+  def _feed(self, model, override: dict | None = None):
+    """Map each compiled input Tensor to a fp16 array: trainable -> current
+        master value; present in `override` -> override[t] (used by the device
+        optimizer to inject grads/lr); otherwise a baked value-input carrying
+        attrs['value'] (e.g. the gamma a norm VJP re-injects).
+        `model._input_tensors` is the ordered input list stored by compile."""
+    lk = self.data if override is None else override
+    return [
+      t.attrs["value"].astype(np.float16) if t.attrs.get("trainable")
+      else np.asarray(lk[t] if t in lk else t.attrs["value"]).astype(np.float16)
+      for t in model._input_tensors
+    ]
 
-  def _feed(self, model):
-    # Map each compiled input Tensor to a value: trainable -> current master
-    # value; provided data -> its data value; otherwise a baked value-input
-    # carrying attrs['value'] (e.g. the gamma a norm VJP re-injects).
-    # `model._input_tensors` is the ordered input list stored by compile
-    # (matches the call signature).
-    vals = []
-    for t in model._input_tensors:
-      if t.attrs.get("trainable"):
-        vals.append(t.attrs["value"].astype(np.float16))
-      elif t in self.data:
-        vals.append(np.asarray(self.data[t]).astype(np.float16))
-      else:
-        vals.append(np.asarray(t.attrs["value"]).astype(np.float16))   # baked value-input (e.g. norm gamma)
-    return vals
+  def _feed_update(self, net, p, extra):
+    """Feed a per-param update program; delegates to _feed with the `extra`
+        override dict (grad/lr inputs keyed by their Tensor leaves)."""
+    return self._feed(net, extra)
 
   def set_dataset(self, x_input, X_full, target_input, Y_onehot, seed: int = 0):
     """Provide the full dataset for mini-batch sampling. `x_input`/`target_input`
