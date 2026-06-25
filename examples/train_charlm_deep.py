@@ -41,7 +41,7 @@ def run_multi(mm, vals, outs):              # MultiModel -> list of named output
     for t, n in mm.input_ports:
         mm.prog.set_input(n, np.asarray(_val(t, vals), np.float16))
     mm.prog.execute()
-    om = {t: n for t, n in mm.output_ports}
+    om = dict(mm.output_ports)
     return [np.asarray(mm.prog.read_output(om[o]), np.float32) for o in outs]
 
 

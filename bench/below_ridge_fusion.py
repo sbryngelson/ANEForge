@@ -94,9 +94,9 @@ def build_block_ops(C, H, W):
     act_bytes = C * H * W * BYTES_FP16              # one CxHxW fp16 tensor
     weight_bytes = (C * C + 2 * C) * BYTES_FP16     # conv + gn gamma/beta
     n_ops = 4   # conv, group_norm, gelu, gelu
-    return dict(Wc=Wc, gn_g=gn_g, gn_b=gn_b, GROUPS=GROUPS, ref=ref, flops=flops,
-                act_bytes=act_bytes, weight_bytes=weight_bytes, n_ops=n_ops,
-                C=C, H=H, W=W)
+    return {"Wc": Wc, "gn_g": gn_g, "gn_b": gn_b, "GROUPS": GROUPS, "ref": ref, "flops": flops,
+                "act_bytes": act_bytes, "weight_bytes": weight_bytes, "n_ops": n_ops,
+                "C": C, "H": H, "W": W}
 
 
 def gelu_np(x):

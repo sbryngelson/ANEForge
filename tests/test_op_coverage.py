@@ -163,7 +163,7 @@ def test_op(case):
   assert np.isfinite(res).all() or name in _MAYBE_WALLED_M1, f"{name}: non-finite"
   if ref is not None:
     try:
-      r = ref(*[f for f in feeds])
+      r = ref(*list(feeds))
       _check(res, r)
     except AssertionError:
       if name in _MAYBE_WALLED_M1:

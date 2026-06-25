@@ -701,7 +701,7 @@ def qr(A):
     z = rjj - rjj if z is None else z                      # exact-zero [1,1]
     Rcols.append(af.concat(rcol + [z] * (n - j - 1), axis=0))   # R column j -> [n,1]
   net = compile_multi([af.concat(Q, axis=1), af.concat(Rcols, axis=1)])
-  nm = {t: nme for t, nme in net.output_ports}
+  nm = dict(net.output_ports)
   out = net(A16)
   Qv = np.asarray(out[nm[net.output_tensors[0]]], np.float32)
   Rv = np.asarray(out[nm[net.output_tensors[1]]], np.float32)
@@ -746,7 +746,7 @@ def lu(A):
       for t in range(i): s = s - L[(k, t)] * U[(t, i)]
       L[(k, i)] = s / U[(i, i)]
   net = compile_multi([_grid(L, n, z), _grid(U, n, z)])
-  nm = {t: nme for t, nme in net.output_ports}
+  nm = dict(net.output_ports)
   out = net(A16)
   Lv = np.asarray(out[nm[net.output_tensors[0]]], np.float32)
   Uv = np.asarray(out[nm[net.output_tensors[1]]], np.float32)

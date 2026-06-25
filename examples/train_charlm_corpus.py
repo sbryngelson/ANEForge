@@ -53,10 +53,10 @@ def main():
     P = lambda sh, s=0.08: agrad.parameter((rng.standard_normal(sh) * s).astype(np.float32))
     W_emb, W_pos, W_out = P((V, D)), P((S, D)), P((D, V))
     fin = agrad.parameter(np.ones((1, D), np.float32))
-    blocks = [dict(Wq=P((D, D)), Wk=P((D, D)), Wv=P((D, D)), Wo=P((D, D)),
-                   Wg=P((D, FF)), Wu=P((D, FF)), Wd=P((FF, D)),
-                   rn1=agrad.parameter(np.ones((1, D), np.float32)),
-                   rn2=agrad.parameter(np.ones((1, D), np.float32)))
+    blocks = [{"Wq": P((D, D)), "Wk": P((D, D)), "Wv": P((D, D)), "Wo": P((D, D)),
+                   "Wg": P((D, FF)), "Wu": P((D, FF)), "Wd": P((FF, D)),
+                   "rn1": agrad.parameter(np.ones((1, D), np.float32)),
+                   "rn2": agrad.parameter(np.ones((1, D), np.float32))}
               for _ in range(NLAYERS)]
     params = [W_emb, W_pos, W_out, fin] + [p for b in blocks for p in b.values()]
     heads = lambda t: t.reshape(S, HEADS, dh).transpose([1, 0, 2])

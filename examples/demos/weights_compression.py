@@ -21,7 +21,7 @@ def _time_conv(Cin, Cout, HW, int8):
     rng = np.random.default_rng(0)
     W = (rng.standard_normal((Cout, Cin, 3, 3)) * 0.02).astype(np.float32)
     x = af.input((1, Cin, HW, HW))
-    net = af.compile(af.conv(x, W, pad=1), **(dict(int8=True) if int8 else {}))
+    net = af.compile(af.conv(x, W, pad=1), **({"int8": True} if int8 else {}))
     img = (rng.standard_normal((1, Cin, HW, HW)) * 0.1).astype(np.float32)
     for _ in range(10):
         net(img)

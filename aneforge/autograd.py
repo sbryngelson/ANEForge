@@ -1043,8 +1043,8 @@ class Trainer:
     mm = _c.compile_multi(outs)
     self._res = mm
     prog = mm.prog
-    self._res_in_name = {t: n for t, n in mm.input_ports}
-    self._res_out_name = {t: n for t, n in mm.output_ports}
+    self._res_in_name = dict(mm.input_ports)
+    self._res_out_name = dict(mm.output_ports)
     # alias each updated-state output onto its own input port (resident), then
     # seed the (now shared) buffers once - params to their masters, moments to 0.
     for out_t, in_t in alias:
@@ -1306,7 +1306,7 @@ class UnrolledTrainer:
         g = backward(mse(out, t_inputs[k]), P, loss_scale=self.scale)
       P, M, V = adam_step(P, M, V, g, lr_ins[k], (self.b1, self.b2), self.eps)
     self._net = _c.compile_multi([*P, *M, *V])
-    self._oname = {t: n for t, n in self._net.output_ports}
+    self._oname = dict(self._net.output_ports)
     self._P_out, self._M_out, self._V_out = P, M, V
     self._m_in, self._v_in, self._lr_ins = m_in, v_in, lr_ins
     # map each data input tensor -> (step k, 'x'|'t') for feeding
