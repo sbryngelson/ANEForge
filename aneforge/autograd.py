@@ -50,6 +50,13 @@ def _topo(out: Tensor, stop: set | None = None) -> list[Tensor]:
   return order
 
 
+def _value_input(arr, shape) -> Tensor:
+  """A fed value-leaf: input holding `arr` reshaped to `shape` in attrs['value']."""
+  t = graph.input(shape)
+  t.attrs["value"] = np.asarray(arr, np.float32).reshape(shape)
+  return t
+
+
 def _const_like(t: Tensor, c: float) -> Tensor:
   """Constant `c` shaped like `t`, built from existing ops (no const-tensor op).
     `(t - t)` not `(t * 0.0)`: mul-by-zero on a reduce output trips an ANECCompile
@@ -222,13 +229,19 @@ def _vjp_silu(t, g):
 
 # normalization vjps: gamma (a per-channel const) is re-injected as a fed
 # value-input; closed-form grad_x. See docs/developer/autograd.md.
+def _layer_norm_backward(x, gn, ax, eps):
+  """Closed-form LayerNorm grad_x over axes `ax`: rstd*(gn - mean(gn) - n*mean(gn*n)),
+    gn = upstream*gamma. Shared by layer_norm / channel_layer_norm / group_norm."""
+  xc = x - x.mean(ax)                                          # x - mean
+  rstd = xc.square().mean(ax).adds(eps).rsqrt()               # 1/std
+  n = xc * rstd                                                # normalized
+  return (gn - gn.mean(ax) - n * (gn * n).mean(ax)) * rstd
+
+
 def _gamma_input(t):
   """gamma from a norm node's attrs, shaped [1,...,1,D] as a fed value-input."""
-  gamma = np.asarray(t.attrs["gamma"], np.float32)
   gshape = (1,) * (len(t.shape) - 1) + (t.shape[-1],)
-  gt = graph.input(gshape)
-  gt.attrs["value"] = gamma.reshape(gshape)
-  return gt
+  return _value_input(t.attrs["gamma"], gshape)
 
 
 @vjp("rms_norm")
@@ -244,26 +257,16 @@ def _vjp_rms_norm(t, g):
 @vjp("layer_norm")
 def _vjp_layer_norm(t, g):
   x = t.srcs[0]; last = (len(x.shape) - 1,)
-  eps = float(t.attrs["eps"]); gn = g * _gamma_input(t)        # g * gamma (beta drops out)
-  xc = x - x.mean(last)                                        # x - mean
-  rstd = xc.square().mean(last).adds(eps).rsqrt()              # 1/std  [..,1]
-  n = xc * rstd                                                # normalized
-  grad = gn - gn.mean(last) - n * (gn * n).mean(last)          # gn - mean(gn) - n*mean(gn*n)
-  return [grad * rstd]
+  gn = g * _gamma_input(t)                                     # g * gamma (beta drops out)
+  return [_layer_norm_backward(x, gn, last, float(t.attrs["eps"]))]
 
 
 @vjp("channel_layer_norm")
 def _vjp_channel_layer_norm(t, g):
-  x = t.srcs[0]; ax = (1,)                                     # LayerNorm over the channel axis
-  eps = float(t.attrs["eps"]); C = x.shape[1]
-  gamma = np.asarray(t.attrs["gamma"], np.float32)            # per-channel gamma as [1,C,1,1]
-  gt = graph.input((1, C, 1, 1)); gt.attrs["value"] = gamma.reshape(1, C, 1, 1)
+  x = t.srcs[0]; ax = (1,); C = x.shape[1]                    # LayerNorm over the channel axis
+  gt = _value_input(t.attrs["gamma"], (1, C, 1, 1))           # per-channel gamma as [1,C,1,1]
   gn = g * gt                                                  # g * gamma (beta drops out)
-  xc = x - x.mean(ax)                                          # x - channel mean
-  rstd = xc.square().mean(ax).adds(eps).rsqrt()              # 1/std  [N,1,1,S]
-  n = xc * rstd                                                # normalized
-  grad = gn - gn.mean(ax) - n * (gn * n).mean(ax)            # same LayerNorm backward, over C
-  return [grad * rstd]
+  return [_layer_norm_backward(x, gn, ax, float(t.attrs["eps"]))]
 
 
 # unary math / activation vjps: closed-form derivatives from existing ops; the
@@ -320,9 +323,8 @@ def _vjp_leaky_relu(t, g):
 @vjp("prelu")
 def _vjp_prelu(t, g):
   x = t.srcs[0]; C = x.shape[1]
-  alpha = np.asarray(t.attrs["alpha"], np.float32)
   ashape = (1, C) + (1,) * (len(x.shape) - 2)
-  at = graph.input(ashape); at.attrs["value"] = alpha.reshape(ashape)
+  at = _value_input(t.attrs["alpha"], ashape)
   ab = at + _const_like(x, 0.0)                     # broadcast per-channel alpha to x's shape
   return [g * graph.select(x.greater(_const_like(x, 0.0)), _ones_like(x), ab)]
 
@@ -397,14 +399,10 @@ def _vjp_group_norm(t, g):
   x = t.srcs[0]                                     # [N, C, H, W]
   N, C, H, W = x.shape
   G = int(t.attrs["groups"]); eps = float(t.attrs["eps"]); M = (C // G) * H * W
-  gamma = np.asarray(t.attrs["gamma"], np.float32)
-  gt = graph.input((1, C, 1, 1)); gt.attrs["value"] = gamma.reshape(1, C, 1, 1)
+  gt = _value_input(t.attrs["gamma"], (1, C, 1, 1))
   gn = (g * gt).reshape(N, G, M)                    # (g*gamma) grouped
-  xc = x.reshape(N, G, M); xc = xc - xc.mean((2,))  # per-group center
-  rstd = xc.square().mean((2,)).adds(eps).rsqrt()   # per-group 1/std
-  n = xc * rstd
-  grad = gn - gn.mean((2,)) - n * (gn * n).mean((2,))   # LN backward within group
-  return [(grad * rstd).reshape(N, C, H, W)]
+  xg = x.reshape(N, G, M)                           # per-group view
+  return [_layer_norm_backward(xg, gn, (2,), eps).reshape(N, C, H, W)]
 
 
 # structural vjps (transpose / reshape): pure index re-arrangements, fp16-exact;
@@ -738,7 +736,7 @@ class Adam:
 _A13_CONV_WGRAD_LOSS_SCALE_MAX = 512.0
 
 
-def _has_conv_wgrad(params, objective) -> bool:
+def _has_conv_wgrad(params) -> bool:
   """True iff a param is a trainable conv weight with kW>1 (only those hit the
     A13 width-offset saturation path)."""
   for p in params:
@@ -747,7 +745,7 @@ def _has_conv_wgrad(params, objective) -> bool:
   return False
 
 
-def _guard_a13_conv_loss_scale(params, objective, loss_scale: float) -> float:
+def _guard_a13_conv_loss_scale(params, loss_scale: float) -> float:
   """On A13/M1 with a trainable conv weight, warn when loss_scale could push
     backward activations past 4094 (width-offset im2col saturation). WARN only;
     returns loss_scale unchanged. Other families unaffected."""
@@ -757,7 +755,7 @@ def _guard_a13_conv_loss_scale(params, objective, loss_scale: float) -> float:
   except Exception:
     return loss_scale
   if int(fam) != int(TG.Family.A13): return loss_scale
-  if not _has_conv_wgrad(params, objective): return loss_scale
+  if not _has_conv_wgrad(params): return loss_scale
   if loss_scale >= _A13_CONV_WGRAD_LOSS_SCALE_MAX:
     import warnings
     warnings.warn(
@@ -792,7 +790,7 @@ class Trainer:
     from . import _compile as _c
     self.params = list(params)
     # A13/M1 conv weight-grad saturation guard (before scale is consumed).
-    loss_scale = _guard_a13_conv_loss_scale(self.params, objective, float(loss_scale))
+    loss_scale = _guard_a13_conv_loss_scale(self.params, float(loss_scale))
     self.data = dict(data_inputs or {})       # {input Tensor: numpy value}
     self.scale = float(loss_scale)
     self.lr = float(lr)
