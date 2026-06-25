@@ -96,7 +96,7 @@ _WINDOWS = {"hann": hann, "hamming": hamming, "blackman": blackman}
 def get_window(window, M: int) -> np.ndarray:
   """Resolve `window` (name str, 'boxcar'/None for rectangular, or an array) to a
     length-M fp32 coefficient vector (periodic form for the named cosine windows)."""
-  if window is None or window == "boxcar" or window == "rect":
+  if window in (None, "boxcar", "rect"):
     return np.ones(M, np.float32)
   if isinstance(window, str):
     if window not in _WINDOWS:
