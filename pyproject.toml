@@ -65,6 +65,9 @@ models = [
 # suites need real ANE hardware to run.
 dev = [
     "ruff",
+    "pyright==1.1.410",  # type checker; pinned so a new release can't add errors out from under CI
+    "pylint",            # CI 2-space + trailing-whitespace lock (W0311/C0303); see .github/workflows/ci.yml
+    "pre-commit",        # local hooks mirroring CI; see .pre-commit-config.yaml
     "pytest",
     "pytest-forked",   # per-test process isolation (--forked); see tests/conftest.py
 ]
@@ -103,11 +106,19 @@ addopts = "--forked"
 
 [tool.ruff]
 line-length = 120
+indent-width = 2          # tinygrad-compact: the codebase is 2-space (also enforced via pylint W0311 in CI)
 # Lint the shippable code only; utils/ is gitignored local tooling.
 extend-exclude = ["utils"]
 
 [tool.ruff.lint]
-# Default rule set (E4/E7/E9 + F) minus the dense-style idioms this codebase uses
-# deliberately: multi-import lines, module imports after a sys.path shim, semicolon /
-# colon multi-statements, assigned lambdas, and short math names (l, I, af, ...).
+# E4/E7/E9 + F (pyflakes), plus flake8-comprehensions (C4) and flake8-builtins (A).
+select = ["E4", "E7", "E9", "F", "C4", "A"]
+# Minus the dense-style idioms this codebase uses deliberately: multi-import lines,
+# module imports after a sys.path shim, semicolon / colon multi-statements, assigned
+# lambdas, and short math names (l, I, af, ...).
 ignore = ["E401", "E402", "E701", "E702", "E703", "E731", "E741"]
+
+[tool.ruff.lint.flake8-builtins]
+# `input` and `compile` are intentional public-API op names (af.input / af.compile),
+# like torch/tinygrad; allow them while A still catches accidental builtin shadowing.
+builtins-ignorelist = ["input", "compile"]

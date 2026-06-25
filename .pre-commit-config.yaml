@@ -1,0 +1,27 @@
+# Local pre-commit hooks mirroring CI (.github/workflows/ci.yml): ruff lint, the
+# tinygrad-compact 2-space lock (pylint W0311/C0303), and pyright. Install with
+#   pip install pre-commit && pre-commit install
+# Run on all files with `pre-commit run --all-files`.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff               # uses [tool.ruff] in pyproject.toml (E/F/C4/A, 120 cols, 2-space)
+        args: [--no-fix]       # report only; do not silently rewrite on commit
+
+  - repo: local
+    hooks:
+      - id: two-space
+        name: 2-space indent + no trailing whitespace (pylint W0311/C0303)
+        entry: python -m pylint --disable=all -e W0311 -e C0303 --indent-string='  '
+        language: system
+        types: [python]
+        # lint only the shippable code + tests (matches CI); skip examples/bench/utils
+        files: ^(aneforge|tests)/.*\.py$
+
+      - id: pyright
+        name: pyright (0 errors)
+        entry: pyright aneforge
+        language: system
+        pass_filenames: false   # pyright analyzes the whole package, not per-file
+        files: ^aneforge/.*\.py$
