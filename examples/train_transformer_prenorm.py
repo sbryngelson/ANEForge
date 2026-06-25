@@ -1,17 +1,4 @@
-"""Train a PRE-NORM transformer block on the Apple Neural Engine, with LayerNorm
-applied before attention and before the MLP - forward AND backward on the engine.
-
-This is the end-to-end demonstration that LayerNorm no longer blocks training: the
-gradient flows through `layer_norm` to the trainable attention projections and MLP
-weights, and the block converges. The LayerNorm affine here is also trainable: passing
-parameter Tensors for gamma/beta composes the normalize op with a learnable scale and
-shift, so the norm's own affine learns alongside the projections.
-
-Compare with `train_transformer.py`, which trains the same shape with plain residual
-additions and no normalization.
-
-    python3 examples/train_transformer_prenorm.py
-"""
+"""Train a pre-norm transformer block (LayerNorm before attention + MLP) on the ANE, forward + backward including the layer_norm gradient and trainable affine. Run: python3 examples/train_transformer_prenorm.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np

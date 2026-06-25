@@ -1,14 +1,4 @@
-"""DEMO: the same workload on ANE vs CPU vs GPU.
-
-Exercises:
-  - running one matmul on the ANE (aneforge) and timing it
-  - the same matmul on the CPU (numpy fp32) and, if available, the GPU (torch MPS)
-  - the qualitative takeaway: per-call the ANE is latency-bound (dispatch floor) but very
-    power-efficient; CPU/GPU have their own floors and far higher power
-
-torch is optional (the [bench] extra). Run:
-  python3 examples/demos/ane_vs_gpu_cpu.py
-"""
+"""Same matmul on ANE vs CPU vs GPU. Run: python3 examples/demos/ane_vs_gpu_cpu.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

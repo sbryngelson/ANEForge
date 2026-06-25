@@ -1,31 +1,4 @@
-"""aneforge spectral demo - FFT-class spectral analysis of a real 1-D signal on the ANE.
-
-This is "FFT-class spectral analysis on the ANE". The Apple Neural Engine has no
-complex dtype (compute is fp16 real only), so we run the Discrete Fourier Transform
-as a TWIDDLE-MATRIX MATMUL with complex emulated as real/imag PAIRS:
-
-    X_k = sum_n x_n * exp(-2*pi*i*k*n/N) = x @ W^T,   W[k,n] = exp(-2*pi*i*k*n/N).
-
-For a real input x (imag part = 0):
-    Xr = x @ Wr^T,   Xi = x @ Wi^T,   magnitude = sqrt(Xr^2 + Xi^2)
-where Wr, Wi are the real/imag parts of the twiddle matrix, folded as fp16 weight
-constants. The two GEMMs + the squared-magnitude map fuse into ONE e5rt program.
-
-We analyze a synthetic signal - a sum of pure sinusoids plus a linear chirp - and:
-  1. compute its magnitude spectrum on the ANE, validate vs numpy.fft.rfft magnitude;
-  2. recover the planted tone frequencies from the ANE spectrum's peaks and check
-     they match the ground truth;
-  3. sweep N from 64 to 2048 and print the relerr-vs-N curve - demonstrating the
-     "wide accumulator" finding: the length-N twiddle sum is accumulated in >=fp32,
-     so fp16 rounding does NOT compound with N and the spectrum stays fp16-CLEAN.
-
-CAVEAT: this is the NAIVE O(N^2) DFT (a dense twiddle matmul), not an O(N log N)
-FFT - the cost is the quadratic twiddle-matrix size/bandwidth, NOT precision. The
-relerr stays ~3e-4..1e-3 FLAT in N (it does not grow), so fp16 is not the wall for
-the transform. The reference is numpy's exact fft over the same fp16-rounded signal.
-
-    python3 examples/spectral_analysis.py
-"""
+"""FFT-class spectral analysis on the ANE: real-input DFT as a twiddle-matrix matmul (real/imag pairs), fused into one program and validated vs numpy.fft. Run: python3 examples/spectral_analysis.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np
@@ -33,29 +6,20 @@ import aneforge as af
 
 
 def make_signal(N, fs):
-    """A real signal: three pure tones + a linear chirp, on a length-N grid.
-    Returns (signal fp16, list of planted tone freqs in Hz)."""
+    """Real signal: three pure tones + a faint linear chirp. Returns (signal fp16, tone freqs)."""
     t = np.arange(N) / fs
     tones = [60.0, 180.0, 350.0]          # Hz - three clean spectral lines
     x = np.zeros(N, np.float32)
     for f in tones:
         x += np.sin(2 * np.pi * f * t)
-    # a faint linear chirp 400 -> 480 Hz (broadband, fills in the spectrum)
-    x += 0.4 * np.sin(2 * np.pi * (400 * t + 0.5 * 40.0 * t * t))
+    x += 0.4 * np.sin(2 * np.pi * (400 * t + 0.5 * 40.0 * t * t))   # chirp 400->480 Hz
     x /= np.abs(x).max()                  # normalize into fp16 range
     return x.astype(np.float16), tones
 
 
 def dft_program(N):
-    """Compile the real-input DFT magnitude spectrum as ONE fused ANE program.
-    Folds the fp16 twiddle matrices Wr, Wi as constant weights.
-
-    The twiddles carry a 1/sqrt(N) NORMALIZATION (the standard unitary DFT scaling).
-    This is not cosmetic: without it the peak |X_k| grows ~amplitude*N/2, so at
-    N=2048 the SQUARED intermediate Xr^2+Xi^2 (~1.2e5) OVERFLOWS fp16's 65504 max
-    and the spectrum becomes inf. The unitary normalization keeps the magnitude AND
-    its square comfortably in fp16 range at every N - a real fp16 dynamic-range
-    note (the wall here is fp16's max value, not its precision)."""
+    """Real-input DFT magnitude spectrum as one fused ANE program; twiddles folded as fp16
+    constants with a 1/sqrt(N) unitary normalization (keeps Xr^2+Xi^2 within fp16 range)."""
     n = np.arange(N)
     k = n.reshape(-1, 1)
     W = np.exp(-2j * np.pi * k * n / N) / np.sqrt(N)  # unitary [N,N] DFT matrix

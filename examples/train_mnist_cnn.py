@@ -1,14 +1,4 @@
-"""Train a small CNN on MNIST FULLY on the Apple Neural Engine - conv + relu + avg_pool
-+ fc + softmax-CE, forward + backward + Adam, with K steps UNROLLED into ONE program.
-
-Same fully-on-engine story as the MLP (examples/train_mnist_mlp.py) but with a
-TRAINABLE conv: the native ANE conv needs a baked weight, so `af.conv2d`/`af.conv_param`
-build the conv from primitives (static im2col + batched matmul), giving a weight gradient
-that runs on the engine. `af.UnrolledTrainer` unrolls K steps into one dispatch; the conv
-weight's `conv_shape` is carried across each in-graph optimizer update automatically.
-
-    python3 examples/train_mnist_cnn.py
-"""
+"""Train a CNN on MNIST fully on the ANE with a trainable conv, K steps unrolled into one program. Run: python3 examples/train_mnist_cnn.py"""
 import sys, time
 from pathlib import Path
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

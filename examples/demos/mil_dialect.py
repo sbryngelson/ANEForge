@@ -1,12 +1,4 @@
-"""DEMO: see the CoreML MIL that aneforge feeds the ANE compiler.
-
-Reverse-engineering finding: aneforge emits a text CoreML MIL program (program(1.3),
-func main<ios18>) with weights referenced by BLOBFILE offset; that MIL is what the on-device
-ANECompiler lowers to a .hwx. compile(build_dir=...) writes the generated model.mil so you
-can read exactly what the compiler received.
-
-Run:  python3 examples/demos/mil_dialect.py
-"""
+"""See the CoreML MIL that aneforge feeds the ANE compiler. Run: python3 examples/demos/mil_dialect.py"""
 import sys, tempfile, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

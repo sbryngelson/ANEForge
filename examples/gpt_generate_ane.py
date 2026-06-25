@@ -1,27 +1,4 @@
-"""End-to-end autoregressive (GPT-style) text generation on the Apple Neural Engine.
-
-This runs the full decoder inference loop - prefill, KV-cache, per-step decode, greedy
-sampling - natively on the ANE. The attention is the ANE's native fused-attention layer:
-prefill uses CAUSAL sdpa, and each decode step uses the **KV-cache DECODE shape**
-(``af.sdpa`` with seq_q=1 query attending to the cached K/V of length seq_kv), which the
-native SDPA layer supports (the validator constrains only "K,V same seq" + "Q,K same embed").
-
-A single decoder block (RMSNorm -> multi-head attention -> residual -> RMSNorm -> SwiGLU ->
-residual). Two compiled graphs are reused every step:
-  - ``proj``  : x -> (k, v) projections, to grow the host-side KV cache.
-  - ``decode``: x + cached K/V -> next hidden state (the decode-shape attention + FFN).
-The decode graph is compiled per cache length (aneforge programs are fixed-shape); the e5rt
-compile cache makes repeat lengths cheap. Greedy ``argmax`` over an unembedding gives the next
-token. Validated to produce token-for-token identical output to a numpy reference (see
-tests/test_decoder_block.py::test_ane_generate_matches_numpy).
-
-``generate_resident`` goes one step further: the fixed-max KV-cache lives ON-DEVICE across
-steps via ``share_buffer`` (the masked positional write is in-graph and the cache output is
-aliased onto its own input), so the cache never round-trips through the host - re-stream-free
-decode, the host feeding only the token embedding + a tiny position one-hot/mask each step.
-The decode attention is decomposed there (matmul->softmax->matmul) so the whole step is one
-fused program (the resident-cache ``compile_multi`` path cannot take the native-SDPA graph cut).
-"""
+"""End-to-end GPT-style autoregressive generation on the ANE: prefill + KV-cache decode (host, fixed-max, and on-device resident)."""
 from __future__ import annotations
 import numpy as np
 import aneforge as af
@@ -106,9 +83,7 @@ class TinyDecoderANE:
         k, v, q = self._heads1(xn @ self.W["Wk"]), self._heads1(xn @ self.W["Wv"]), self._heads1(xn @ self.W["Wq"])
         Kout = Kin * inv + k * oh                  # masked write of this token's K/V at position p
         Vout = Vin * inv + v * oh
-        # decode-shape attention DECOMPOSED (matmul->softmax->matmul) so the whole step is ONE
-        # fused program: compile_multi (the resident-cache share_buffer path) cannot take the
-        # native-SDPA graph cut. seq_q=1 makes the decomposed attention cheap.
+        # decode-shape attention decomposed (matmul->softmax->matmul): one fused program.
         scores = ((q @ Kout.transpose([0, 2, 1])) * scale + mask).softmax(-1)   # [H,1,M]
         a = (scores @ Vout).reshape(H, 1, dh)                                        # [H,1,dh]
         h = x + a.transpose([1, 0, 2]).reshape(1, D) @ self.W["Wo"]

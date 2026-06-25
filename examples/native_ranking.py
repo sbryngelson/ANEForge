@@ -1,13 +1,4 @@
-"""Native ANE ranking ops - sort / argmax / topk via netplist bridges.
-
-Order statistics are the classic "neural engines can't do that" ops. The ANE has
-native hardware layers for all three (Sort, GlobalArgMinMax, TopK) - Path-A layer
-kinds Apple's public MIL/CoreML pipeline never emits. aneforge surfaces them as
-graph ops; each runs as a native-ANE netplist-bridge sub-program (a graph cut,
-like af.sdpa). The bridges in aneforge/_bridges/ must be reachable on disk.
-
-    python3 examples/native_ranking.py
-"""
+"""Native ANE ranking ops via netplist bridges: sort / argmax / topk. Run: python3 examples/native_ranking.py"""
 import sys
 
 from _common import report   # sets env + repo-root path; import before aneforge

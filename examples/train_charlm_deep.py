@@ -1,20 +1,4 @@
-"""Train a DEEP character-level language model on the Apple Neural Engine using a
-layer-streamed (gradient-checkpointed) compile, so depth is not bounded by compile size.
-
-`train_charlm.py` fuses the whole model's forward + backward + optimizer into one e5rt
-program, where compile time grows superlinearly with depth (about 9s/37s/84s/162s for
-2/4/6/8 layers). Here the identical transformer layers are compiled ONCE and reused for
-every layer via `aneforge.streaming.CheckpointedStack`, so the layer stack's compile cost
-is constant in depth. This trains a 16-layer model whose monolithic compile would be
-impractical, with forward, backward, and the optimizer all on the engine.
-
-The stack handles the repeated layers; the embedding and output stages are each compiled
-once (forward plus a `backward_from` gradient program). Cross-entropy and its gradient at
-the logits are computed host-side. Token embedding is a one-hot matmul (no `gather`), and
-causal masking is an additive bias the stack carries as a baked constant.
-
-    python3 examples/train_charlm_deep.py
-"""
+"""Train a deep (16-layer) char-LM on the ANE with a layer-streamed (gradient-checkpointed) compile, so depth doesn't bound compile size. Run: python3 examples/train_charlm_deep.py"""
 import sys
 import time
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

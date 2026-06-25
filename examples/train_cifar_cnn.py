@@ -1,17 +1,4 @@
-"""Train a real CNN on CIFAR-10 ENTIRELY on the Apple Neural Engine, and compare to
-a PyTorch model with the same layer topology (same conv/GroupNorm/pool/fc shapes
-and Adam). The comparison is close but not exact: the ANE convs have no bias and
-use He-normal init, while torch's nn.Conv2d adds a bias and uses its default
-Kaiming-uniform init - so expect the curves to track, not coincide.
-
-  conv(pad=1)->GroupNorm->ReLU->maxpool  x2,  then conv->GroupNorm->ReLU,
-  global-avg-pool, fc.  forward + backward + Adam all run on the ANE
-  (device_optimizer=True); the host only feeds mini-batches and the scalar lr_t.
-  Includes a cosine LR schedule, periodic eval, and a checkpoint of the trained
-  params.
-
-  python3 examples/train_cifar_cnn.py
-"""
+"""Train a CNN on CIFAR-10 entirely on the ANE (forward + backward + Adam, device_optimizer) vs a same-topology torch reference. Run: python3 examples/train_cifar_cnn.py"""
 import math, sys, time
 from pathlib import Path
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
@@ -71,8 +58,7 @@ def main():
     print(f"\nANE final test accuracy {ane_acc:.4f}  ({STEPS} steps, {dt:.1f}s)")
     print(f"checkpoint saved to {CKPT}")
 
-    # --- torch reference: same layer topology + Adam (note: torch convs add a bias
-    # and use default Kaiming-uniform init; the ANE model has no conv bias + He-normal) ---
+    # torch reference: same layer topology + Adam (torch convs add bias + Kaiming-uniform; ANE has neither)
     try:
         import torch, torch.nn as nn, torch.nn.functional as F
     except ImportError:

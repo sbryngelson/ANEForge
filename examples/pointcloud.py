@@ -1,26 +1,4 @@
-"""ANE point-cloud demo - a PointNet++-style sample/group/geometry step.
-
-Runs three private ANE point-cloud primitives that no mainstream Python
-framework exposes on this hardware - all unentitled, no CoreML - wired into one
-PointNet++-style set-abstraction step:
-
-    1. FurthestPointSampling  (ane_fps_fused)            sample K centroids from N points
-    2. RadiusSearch           (ane_radius_search_fused)  membership in an L2 ball per centroid
-    3. CrossProduct           (ane_cross_product_fused)  surface normal from two edge vectors
-
-These layers aren't in the aneforge frontend yet, so the demo calls the in-package
-``aneforge._bridges`` modules directly. Each stage is validated against a numpy reference (exact for
-the integer-discretised FPS/RadiusSearch, fp16-tolerance for the cross product).
-
-Conventions worth stating:
-    * FPS is L2-only on this arch - the ``DistanceMetric`` netplist param is
-      ignored, so the reference uses Euclidean distance regardless. Seed = point 0.
-    * RadiusSearch returns a [points x centroids] uint8 membership matrix
-      (1 = inside the L2 ball); we transpose to [centroids x points] for grouping.
-
-    PYTHONPATH=. \\
-        python3 examples/pointcloud.py
-"""
+"""ANE point-cloud demo: a PointNet++-style FPS -> RadiusSearch -> CrossProduct step via bridges. Run: PYTHONPATH=. python3 examples/pointcloud.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np
@@ -54,8 +32,6 @@ def main():
           f"neighbors/centroid={nbrs.tolist()}")
 
     # Stage 3: CrossProduct on the ANE (surface normal per centroid)
-    # For each centroid, take two neighbor edge vectors and compute their cross
-    # product on the ANE -> an (unnormalised) surface normal.
     max_err, n_normals = 0.0, 0
     for j in range(K):
         members = np.flatnonzero(grp[j])

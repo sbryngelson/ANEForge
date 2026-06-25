@@ -1,17 +1,4 @@
-"""Train an MNIST MLP FULLY on the Apple Neural Engine - forward, backward, and the
-Adam optimizer, with K steps UNROLLED into ONE fused program.
-
-ResNet *inference* already runs as one fused ANE program (examples/resnet18.py).
-Training is the part that used to run a HOST loop (one dispatch per step). Because a
-fixed number of steps has no data-dependent control flow, the whole forward -> backward
--> Adam-update recurrence unrolls into a single graph (the same trick as the iterative
-solvers in aneforge.linalg). `af.UnrolledTrainer` builds it: each `step()` runs K steps
-in ONE dispatch on the engine; the host feeds K minibatches + the per-step learning
-rates and shuttles weight/optimizer arrays between K-step blocks (an array move, no host
-tensor-math, no per-step round-trip).
-
-    python3 examples/train_mnist_mlp.py
-"""
+"""Train an MNIST MLP fully on the ANE (forward + backward + Adam), K steps unrolled into one fused program. Run: python3 examples/train_mnist_mlp.py"""
 import sys, time
 from pathlib import Path
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

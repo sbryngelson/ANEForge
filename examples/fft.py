@@ -1,13 +1,4 @@
-"""FFT on the ANE - staged Cooley-Tukey as dense-DFT matmuls (sub-quadratic MACs).
-
-The ANE has no complex dtype and no butterfly primitive, but a radix-decomposed FFT
-is a chain of SMALL dense-DFT matmuls + elementwise twiddle multiplies (complex
-carried as real/imag pairs). aneforge.fft stages N = f1 x f2 x ... so the MAC count
-is N*sum(f) instead of the dense DFT's N^2 - sub-quadratic, 32-51x fewer MACs at
-N=2048 - and each transform compiles to one fused ANE program.
-
-    python3 examples/fft.py
-"""
+"""FFT on the ANE: staged Cooley-Tukey as dense-DFT matmuls (sub-quadratic MACs). Run: python3 examples/fft.py"""
 import sys
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

@@ -1,16 +1,4 @@
-"""DEMO: ANE power efficiency - high throughput at very low watts.
-
-Exercises:
-  - sustaining a compute-bound matmul and measuring achieved fp16 throughput
-  - estimating energy/op from the RE-measured ANE rail draw (~1.48 W sustained on M1)
-  - the efficiency story: the ANE is a low-power accelerator, not a latency racer
-
-Note: the exact rail draw needs `sudo powermetrics --samplers cpu_power` (prints "ANE Power");
-this demo reports throughput and an energy estimate from the measured 1.48 W so it runs without
-sudo. (RE measured: 0 W idle, ~0.75 W dispatch-bound N=1, ~1.48 W sustained N=512.)
-
-Run:  python3 examples/demos/power_efficiency.py
-"""
+"""ANE power efficiency: high throughput at very low watts. Run: python3 examples/demos/power_efficiency.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

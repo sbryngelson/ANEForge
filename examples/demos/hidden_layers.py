@@ -1,14 +1,4 @@
-"""DEMO: hidden hardware layers - native ops the fused MIL route can't express.
-
-Exercises:
-  - a native hardware layer reached via the netplist-bridge route: af.sdpa maps to the ANE's
-    ANECSDPALayerDesc attention layer, which the public MIL toolchain does not emit, yet runs
-    here on M1 from unentitled user space (cos ~1 vs numpy)
-  - per-family gating of OTHER hidden ops (af.min_native_family): some need newer ANE families
-    (e.g. topk needs family 3+, so it is NOT reachable on M1/family-2)
-
-Run:  python3 examples/demos/hidden_layers.py
-"""
+"""Hidden hardware layers: native ops the fused MIL route can't express. Run: python3 examples/demos/hidden_layers.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,15 +9,13 @@ import aneforge as af
 
 def main() -> int:
     warnings.filterwarnings("ignore")
-    # a hidden hardware layer that IS reachable on M1 via the bridge route: native SDPA
     H, S, D = 2, 16, 16
     rng = np.random.default_rng(0)
     Q, K, V = (rng.standard_normal((1, H, S, D)).astype(np.float16) for _ in range(3))
     q, k, v = (af.input((1, H, S, D)) for _ in range(3))
     net = af.compile(af.sdpa(q, k, v), opt=0)
     got = np.asarray(net(Q, K, V)).astype(np.float64)
-    # numpy reference (non-causal)
-    ref = np.zeros((1, H, S, D))
+    ref = np.zeros((1, H, S, D))    # numpy reference (non-causal)
     for h in range(H):
         sc = Q[0, h].astype(np.float64) @ K[0, h].astype(np.float64).T / np.sqrt(D)
         sc -= sc.max(1, keepdims=True); p = np.exp(sc); p /= p.sum(1, keepdims=True)

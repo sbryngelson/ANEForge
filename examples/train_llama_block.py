@@ -1,18 +1,4 @@
-"""Train a LLaMA-style transformer block on the Apple Neural Engine - RMSNorm
-pre-normalization and a SwiGLU feed-forward, forward AND backward on the engine.
-
-This exercises the two gradients that modern LLM blocks depend on and that previously
-had no backward rule: `rms_norm` and `silu` (the SwiGLU gate). The gradient flows
-through both to the trainable attention projections and the three SwiGLU weights, and
-the block converges. The RMSNorm affine (gamma) is held at its unit initialization - the norm VJP differentiates the input, not the affine.
-
-The block is the standard LLaMA layer: ``h = x + attn(rms_norm(x))`` then
-``out = h + swiglu(rms_norm(h))`` where ``swiglu(z) = (silu(z @ Wg) * (z @ Wu)) @ Wd``.
-The RMSNorm gains are trainable parameters: passing a parameter Tensor for gamma
-composes the normalize op with a learnable scale, so the gains learn too.
-
-    python3 examples/train_llama_block.py
-"""
+"""Train a LLaMA-style block (RMSNorm pre-norm + SwiGLU) on the ANE, forward + backward including the rms_norm/silu gradients. Run: python3 examples/train_llama_block.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np

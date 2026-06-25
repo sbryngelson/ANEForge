@@ -1,12 +1,4 @@
-"""DEMO: dispatch straight to the ANE, without CoreML.
-
-Exercises:
-  - the aneforge compile->dispatch path (MIL -> on-device ANECompiler -> e5rt execute)
-  - that this reaches ANE silicon from plain user space, no CoreML / .mlmodel involved
-  - compile-once / eval-many reuse (the program handle persists across calls)
-
-Run:  python3 examples/demos/dispatch_no_coreml.py
-"""
+"""Dispatch straight to the ANE, without CoreML. Run: python3 examples/demos/dispatch_no_coreml.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,7 +14,7 @@ def main() -> int:
     x = af.input((1, 8, 16, 16))
 
     t = time.perf_counter()
-    net = af.compile(af.conv(x, W, pad=1).relu())     # MIL -> ANECompiler -> e5rt program
+    net = af.compile(af.conv(x, W, pad=1).relu())
     compile_ms = (time.perf_counter() - t) * 1e3
 
     img = (rng.standard_normal((1, 8, 16, 16)) * 0.5).astype(np.float32)

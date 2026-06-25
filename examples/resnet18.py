@@ -1,12 +1,4 @@
-"""aneforge vision demo - torchvision ResNet-18 on the Apple Neural Engine.
-
-Loads ImageNet ResNet-18 (BatchNorm folded into conv at load), runs the whole
-network as ONE fused ANE program, and checks the logits against the torchvision
-fp32 reference. Conv is the ANE's strongest workload (3.8x faster, 9x more
-energy-efficient than the GPU).
-
-    python3 examples/resnet18.py
-"""
+"""torchvision ResNet-18 as one fused ANE program, validated vs fp32. Run: python3 examples/resnet18.py"""
 import sys
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge

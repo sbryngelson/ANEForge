@@ -1,19 +1,4 @@
-"""A1 vs A2 latency benchmark for af.argmax and af.topk (native rank ops).
-
-A1 = correctness-first subprocess-per-call netplist dispatch: every argmax/topk
-     call spawns a one-shot ObjC probe (ane_invoke_probe_rank) that
-     compiles+loads+maps the netplist, evaluates, exits. For topk that's ONE
-     subprocess *per row* (C rows -> C spawns/call).
-
-A2 = persistent Path-A worker (aneforge/_netplist_worker.py +
-     ane_persistent_worker probe): compiles+loads+maps ONCE, then services many
-     evals over a pipe. topk reuses ONE loaded 1-channel program, eval'd C times.
-
-We measure per-call wall latency under each, single-call (cold) and over a
-32-call steady-state loop, and assert A2 produces BIT-IDENTICAL outputs.
-
-    PYTHONPATH=. python3 examples/benchmarks/rank_worker_bench.py
-"""
+"""A1 (subprocess/call) vs A2 (persistent worker) latency for af.argmax and af.topk, asserting bit-identical outputs. Run: PYTHONPATH=. python3 examples/benchmarks/rank_worker_bench.py"""
 import os
 import sys
 import time

@@ -1,19 +1,4 @@
-"""A1 vs A2 latency benchmark for af.sdpa at a fixed shape.
-
-A1 = correctness-first subprocess-per-call netplist dispatch (the current path):
-     every af.sdpa call spawns a one-shot ObjC probe that compiles+loads+maps the
-     netplist, evaluates once, exits. Repeated calls pay that tax every time.
-
-A2 = persistent Path-A worker (aneforge/_netplist_worker.py + the
-     ane_persistent_worker probe): compiles+loads+maps ONCE, then services many
-     evals over a pipe. Repeated calls pay only the eval + host<->surface memcpy.
-
-We measure per-call wall latency under each, single-call and over a 32-call loop,
-to show A2's amortization. A2 is selected by default; A1 is forced with
-ANEFORGE_NETPLIST_WORKER=0.
-
-    PYTHONPATH=. python3 examples/benchmarks/sdpa_worker_bench.py
-"""
+"""A1 (subprocess/call) vs A2 (persistent worker) latency for af.sdpa at a fixed shape, showing A2's amortization. Run: PYTHONPATH=. python3 examples/benchmarks/sdpa_worker_bench.py"""
 import os
 import sys
 import time
@@ -33,19 +18,16 @@ def make_inputs(rng):
 
 
 def time_path(label):
-    """Compile a fresh SDPA model, then time N calls. The compiled-model
-    lifetime is what the worker is cached against, so we build it here."""
+    """Compile a fresh SDPA model (the worker is cached against its lifetime), then time N calls."""
     rng = np.random.default_rng(0)
     Q, K, V = make_inputs(rng)
     net = af.compile(af.sdpa(af.input((1, H, S, D)), af.input((1, H, S, D)), af.input((1, H, S, D))))
 
-    # First call (cold): under A2 this includes the one-time worker
-    # compile+load+map; under A1 it's just the first subprocess spawn.
+    # cold first call (A2: includes one-time worker compile+load+map)
     t0 = time.perf_counter()
     out0 = net(Q, K, V)
     cold_ms = (time.perf_counter() - t0) * 1e3
 
-    # Steady-state: time each subsequent call.
     per_call_ms = []
     for _ in range(N):
         t0 = time.perf_counter()

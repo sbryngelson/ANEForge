@@ -1,35 +1,4 @@
-"""aneforge flagship: a fluid simulation on the Apple Neural Engine.
-
-This solves the 2-D incompressible Navier-Stokes equations (vorticity-streamfunction
-form) on a periodic grid by the *pseudo-spectral* method, and every Fourier transform
-in the loop runs on the ANE as one fused e5rt program. A passive dye is painted as
-the word "ANEForge" and carried by the flow: it is legible at t=0, then a field of
-vortices stirs it into thin glowing filaments.
-
-    vorticity transport:  d(omega)/dt + (u . grad) omega = nu  * lap(omega)
-    dye    transport:     d(c)/dt     + (u . grad) c     = kap * lap(c)
-    velocity from vorticity: lap(psi) = -omega,  u = d(psi)/dy,  v = -d(psi)/dx
-
-Each timestep transforms between physical and Fourier space to take derivatives and
-form the advection terms; the FFTs are the entire compute core. `aneforge.fft`
-realizes each 2-D transform as eight real GEMMs (`F_M @ X @ F_N^T`) fused into ONE
-ANE program (the engine has no complex dtype, so values ride as real/imag pairs).
-The two transform programs are compiled ONCE and reused for every step. A high-order
-spectral filter (hyperviscosity) holds the enstrophy cascade at the grid scale.
-
-CAVEAT (fp16). The ANE computes in fp16. The dense DFT is unnormalized, so spectral
-coefficients at this 256-grid exceed fp16's range; the transforms are scaled by
-linearity (exact) to fit, see FWD/INV below. Advection is chaotic, so an fp16
-trajectory is its own slightly-perturbed flow. The point here is that it stays
-bounded (the hyperviscosity filter holds the grid-scale modes) and looks like the
-scalar mixing it is, not that it tracks an fp64 run step for step. The run is gated
-on staying finite and bounded, nothing more.
-
-    python3 examples/fluid_vorticity.py
-
-Writes docs/assets/fluid_vorticity.png as an APNG (the dye dissolving, animated,
-full 24-bit colour) if Pillow is installed; the simulation runs either way.
-"""
+"""aneforge flagship: 2-D pseudo-spectral Navier-Stokes with every FFT on the ANE, stirring "ANEForge" dye. Run: python3 examples/fluid_vorticity.py"""
 import sys
 import time
 from pathlib import Path
@@ -132,9 +101,7 @@ def main():
 
     ane_t = [0.0]   # seconds spent in ANE transforms (dispatch included)
 
-    # The dense DFT is unnormalized, so at N=256 the spectra pierce fp16 range. Both
-    # transforms are scaled by linearity (exact) to fit: the forward INPUT by an upper
-    # bound on its largest coefficient (sum of |field|), the inverse INPUT by its max.
+    # Scale both transforms by linearity (exact) to fit the unnormalized spectra into fp16.
     def FWD(field):
         c = max(1.0, float(np.abs(field).sum()) / 4.0e4)
         t = time.perf_counter(); r, i = fwd((field / c).astype(np.float32))
@@ -222,8 +189,7 @@ def main():
     return 0 if ok else 1
 
 
-# rendering                                                                   #
-
+# rendering
 def colormap(c):
     """Map a dye field in [0,1] to RGB via the perceptual inferno table. Flat (no
     fake lighting), so it reads like a scientific scalar field, not an oil slick."""

@@ -1,13 +1,4 @@
-"""Direct factorizations on the ANE - QR / Cholesky / LU, plus pivoted LU.
-
-A direct factorization is a fixed recurrence: with no pivot there is no
-data-dependent branch, so the whole O(n^3) recurrence UNROLLS into one on-engine
-program (small-n - the graph caps QR/Cholesky/LU near n=32). Pivoted LU (LAPACK
-gesv) runs too, via a true on-engine argmax pivot - but the argmax is a bridge op,
-so the program is SEGMENTED (one graph cut per column) rather than fully fused.
-
-    python3 examples/factorize.py
-"""
+"""Direct factorizations on the ANE: QR / Cholesky / LU as unrolled recurrences, plus pivoted LU. Run: python3 examples/factorize.py"""
 import sys
 
 from _common import head, f16, relerr, spd, general   # sets env + repo-root path

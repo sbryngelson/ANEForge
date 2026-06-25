@@ -1,13 +1,4 @@
-"""DEMO: the ANE fp16 compute ceiling - measured ~4.8 TFLOP/s on M1.
-
-Reverse-engineering finding: large, compute-bound matmuls (call time >> the ~0.2 ms floor)
-reach ~4.8 TFLOP/s fp16 on M1 (~87% of the ~5.5 theoretical). This is the "saturating"
-ceiling - higher than aneforge's dispatch-bound cost-model anchor (which is calibrated for
-small ops). Past ~4096-8192 dim the weight stream exceeds on-chip capacity and it goes
-bandwidth-bound (see roofline_bandwidth).
-
-Run:  python3 examples/demos/roofline_compute.py
-"""
+"""The ANE fp16 compute ceiling: ~4.8 TFLOP/s on M1. Run: python3 examples/demos/roofline_compute.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

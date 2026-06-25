@@ -1,34 +1,4 @@
-"""aneforge optimizer demo - measured speedups on REAL models, correctness preserved.
-
-The aneforge autotuner (``af.tune``) is a rewrite engine over a metamorphic-proven-
-safe variant space (see aneforge/_optimize.py): it enumerates the legal variants
-(native<->decomposed SDPA route, fp16<->int8 weight streaming), prunes with the
-cost model, MEASURES the survivors on the ANE, VALIDATES each against the opt=0
-baseline, and returns the fastest CORRECT one.
-
-This demo runs that tuner end-to-end on real models and proves two things at once:
-
-  1. CORRECTNESS (the headline, non-negotiable): the optimized program reproduces
-     the opt=0 baseline output. Default tune() is accuracy-PRESERVING (lossless
-     route selection / fp16) -> matches within fp16 noise. tune(atol=0.1) admits
-     int8 -> matches within its stated ~0.1 budget.
-  2. SPEED: the REAL measured end-to-end latency (warmup, then MIN over reps) of
-     opt=0 vs tune-lossless vs tune-int8.
-
-Models:
-  - ResNet-18           (af.load_resnet18; weight-heavy convs -> int8 candidate)
-  - MiniLM encoder      (af.load all-MiniLM-L6-v2; matmul-heavy, has attention)
-  - Attention block     (q/k/v proj + af.sdpa + out-proj; exercises the route
-                         rewrite: native SDPA cut vs decomposed-fused) at two sizes
-
-CAVEAT: this prints the REAL measured speedups. The route rewrite is expected to
-move the attention block; weight-heavy models may show an int8 win under atol=0.1;
-a floor-bound / already-optimal model correctly returns ~1.0x (tune returns the
-baseline) - that is correct behavior, not a failure. We report exactly what the
-tuner chose and never claim a speedup the measurement does not show.
-
-    python3 examples/autotune.py
-"""
+"""aneforge optimizer demo: measured tune() speedups on real models, correctness preserved. Run: python3 examples/autotune.py"""
 import sys, time
 
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
@@ -39,7 +9,7 @@ from aneforge._compile import compile as _compile
 from aneforge._optimize import _config_label, _graph_key, _input_shapes
 
 
-# measurement helpers                                                          #
+# measurement helpers
 def bench(net, inputs, reps: int = 30, warmup: int = 8) -> float:
     """End-to-end latency in microseconds: warmup, then MIN over reps."""
     for _ in range(warmup):
@@ -72,9 +42,7 @@ def tuner_decision(out) -> str:
         return "?"
 
 
-# graph builders (aneforge public ops + the loaders' exposed real weights)     #
-# These rebuild the SAME graph the loaders compile internally, but return the  #
-# output Tensor so af.tune() can optimize it. Inputs already-embedded (host).  #
+# graph builders: rebuild each loader's graph, returning the output Tensor for af.tune().
 def resnet18_graph(clf):
     """Rebuild ResNet-18's ANE graph from clf.sd (folded BN) -> output Tensor."""
     sd = clf.sd
@@ -139,7 +107,7 @@ def attn_block_graph(H, S, D):
     return o.linear(Wo)
 
 
-# per-model runner: opt=0 baseline vs tune-lossless vs tune-int8              #
+# per-model runner: opt=0 baseline vs tune-lossless vs tune-int8
 def run_model(label, build_graph, make_inputs, has_int8):
     """Compile/measure opt=0, tune-lossless, tune-int8 (if applicable); assert the
     optimized outputs match the opt=0 baseline; return a results row."""

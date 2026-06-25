@@ -1,15 +1,4 @@
-"""One-time: fetch MNIST and save a small subset for the on-ANE classifier
-demo/test. Run once: python examples/make_mnist_subset.py  (needs network + sklearn).
-
-The subset is 1000 train / 1000 test (equal sizes): a single forward-logits program
-at the N=1000 batch shape then serves BOTH the train loss and the test accuracy with
-no different-shape recompile (see the classifier plan, Task 5/7 scope).
-
-Provenance: sklearn `fetch_openml("mnist_784", version=1)`. If OpenML is unavailable,
-falls back to the `ossci-datasets` MNIST IDX mirror
-(https://ossci-datasets.s3.amazonaws.com/mnist/), decoding the IDX files directly and
-taking the same seed-0 permutation subset.
-"""
+"""One-time: fetch MNIST and save a 1000/1000 subset for the on-ANE classifier demo. Run: python examples/make_mnist_subset.py"""
 import gzip
 import struct
 from pathlib import Path

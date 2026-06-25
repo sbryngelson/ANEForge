@@ -1,12 +1,4 @@
-"""DEMO: the cost model + autotuner pick a fast lowering without you measuring by hand.
-
-Exercises:
-  - af.estimate(out): a no-device microsecond prediction (the optimizer's pruner)
-  - af.tune(out): compile several equivalent lowerings, measure on-device, keep the fastest
-  - the cost model orders variants so the tuner skips ones predicted far worse
-
-Run:  python3 examples/demos/optimization_autotune.py
-"""
+"""Cost model + autotuner pick a fast lowering without hand-measuring. Run: python3 examples/demos/optimization_autotune.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

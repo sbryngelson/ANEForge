@@ -1,13 +1,4 @@
-"""DEMO: the measurement-free cost model + cross-chip peak projection.
-
-Reverse-engineering finding: the ANE compiler's analytic roofline was extracted and walked
-for every chip. aneforge exposes af.estimate(out) (predicted microseconds, no device) and
-af.project_peak(arch) (fp16 peak per chip). The anchors are dispatch-bound-regime effective
-values (validated on M1 convs within +/-17%); the saturating ceilings are higher (see
-05/06). This shows the predictor and the cross-generation scaling.
-
-Run:  python3 examples/demos/cross_chip_cost_model.py
-"""
+"""Measurement-free cost model + cross-chip peak projection. Run: python3 examples/demos/cross_chip_cost_model.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

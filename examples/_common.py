@@ -1,12 +1,4 @@
-"""Shared example scaffolding - environment setup plus the few helpers every demo
-repeated verbatim. Import this FIRST in an example: it puts the repo root on
-sys.path and imports aneforge, which sets the OpenMP duplicate-runtime guard
-before numpy loads.
-
-Deliberately minimal: error metrics, conditioned random test matrices, and the
-one-line pass/fail report. Demo logic stays in the demos so each file remains a
-self-contained, copy-pasteable example.
-"""
+"""Shared example scaffolding: env setup, error metrics, test matrices, pass/fail report. Import FIRST."""
 import os
 import sys
 import warnings
@@ -19,9 +11,7 @@ import numpy as np
 
 f16 = np.float16
 
-# Section headers print in green - the conventional INFO colour every logging
-# colouriser (colorlog, coloredlogs, rich) uses for ordinary output. tty-guarded
-# and NO_COLOR-aware, so piped output or redirected files stay plain text.
+# Green INFO headers / yellow warnings; tty-guarded and NO_COLOR-aware.
 _COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 _GREEN, _YELLOW, _BOLD, _DIM, _RESET = "\033[32m", "\033[33m", "\033[1m", "\033[2m", "\033[0m"
 
@@ -40,11 +30,7 @@ def aside(msg=""):
         print(msg)
 
 
-# Colour warnings yellow - the conventional WARNING level colour, paired with the
-# green INFO headers above - and show each distinct warning ONCE per run. The
-# examples compile at many call sites, so aneforge's DispatchFloorWarning would
-# otherwise repeat its whole paragraph per site; we collapse identical (category,
-# text) repeats here at the render step, leaving the library's filters untouched.
+# Show each distinct warning ONCE per run (collapse identical repeats at render).
 _warned: set = set()
 
 
@@ -103,7 +89,6 @@ def report(name, out, ref, route="netplist", exact=False, tol=0.02, abserr=None)
 
 
 # Conditioned random test matrices (geometric spectrum 1..cond).
-
 def spd(n, cond, seed):
     """Symmetric positive definite [n,n] with condition number `cond`."""
     r = np.random.default_rng(seed)

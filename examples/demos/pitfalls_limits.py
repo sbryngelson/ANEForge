@@ -1,12 +1,4 @@
-"""DEMO: the pitfalls and the hard limits - what to expect and design around.
-
-Exercises:
-  - the two compile-time signals: PrecisionWarning (fp16 cancellation) and
-    DispatchFloorWarning (tiny dispatch-bound graph)
-  - the hard limits the RE established, stated plainly so they're not surprises
-
-Run:  python3 examples/demos/pitfalls_limits.py
-"""
+"""The pitfalls and the hard limits: what to expect and design around. Run: python3 examples/demos/pitfalls_limits.py"""
 import sys, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,7 +10,7 @@ import aneforge as af
 def main() -> int:
     rng = np.random.default_rng(0)
 
-    # PITFALL 1: a dispatch-floor-bound graph (tiny work) -> DispatchFloorWarning
+    # PITFALL 1: tiny work -> DispatchFloorWarning
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         W = (rng.standard_normal((8, 8, 3, 3)) * 0.1).astype(np.float32)
@@ -27,7 +19,7 @@ def main() -> int:
     net.release()
     print(f"tiny graph -> DispatchFloorWarning: {floor}")
 
-    # PITFALL 2: a signed reduce_sum over a long axis (narrow fp16 accumulator) -> PrecisionWarning
+    # PITFALL 2: signed reduce_sum over a long axis -> PrecisionWarning
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         warnings.filterwarnings("ignore", category=af.DispatchFloorWarning)

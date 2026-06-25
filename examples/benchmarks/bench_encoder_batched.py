@@ -1,17 +1,4 @@
-"""Batched encoder throughput on the ANE - the serving number for embeddings.
-
-Encoders are the ANE's niche (compute-bound, fp16-tolerant, one forward). This
-processes B sequences of the SAME length as a width-B batch (length-bucketing - a
-real serving pattern that needs no padding/mask), measuring embeddings/sec vs B.
-Batched ANE matmuls are flat in B, so per-stream cost should fall sharply.
-
-Reuses the weights loaded by af.Encoder; builds a batched [B,S,D] encoder graph and
-fuses it into one program per (B,S). Correctness is checked against the
-transformers fp32 reference; throughput is reported vs B.
-
-    PYTHONPATH=. \\
-        python3 examples/benchmarks/bench_encoder_batched.py
-"""
+"""Batched encoder throughput on the ANE: B same-length sequences as a width-B batch, embeddings/sec vs B, validated vs fp32. Run: PYTHONPATH=. python3 examples/benchmarks/bench_encoder_batched.py"""
 import os, sys, time
 from pathlib import Path
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")

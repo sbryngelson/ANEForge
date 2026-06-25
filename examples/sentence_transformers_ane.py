@@ -1,14 +1,4 @@
-"""Drop-in sentence-transformers on the Apple Neural Engine.
-
-`aneforge.sentence_transformers.SentenceTransformer` mirrors the `.encode` surface
-of the sentence-transformers package, but runs the encoder on the ANE. It reads the
-model's own pooling config, so a mean-pooled model (MiniLM, E5) and a cls-pooled
-model (BGE, GTE) both produce the right vectors, matching the reference to cosine
-~1.0 at a fraction of the GPU's energy.
-
-    pip install "aneforge[models]"
-    python3 examples/sentence_transformers_ane.py
-"""
+"""Drop-in sentence-transformers SentenceTransformer running the encoder on the ANE. Run: python3 examples/sentence_transformers_ane.py"""
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np
 

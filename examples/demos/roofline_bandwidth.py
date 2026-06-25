@@ -1,12 +1,4 @@
-"""DEMO: the ANE streaming-bandwidth ceiling - measured ~51 GB/s on M1.
-
-Reverse-engineering finding: an M=1 matmul reads each weight exactly once (no reuse), so it
-is bandwidth-bound. Measured ~51 GB/s at large sizes on M1 (~74% of the ~68 GB/s unified
-memory), which matches the compiler's OWN internal GetEngineBwGbPerS = 50 GB/s constant. This
-is the streaming regime weights fall into once they exceed on-chip (KMEM/L2) capacity.
-
-Run:  python3 examples/demos/roofline_bandwidth.py
-"""
+"""The ANE streaming-bandwidth ceiling: ~51 GB/s on M1. Run: python3 examples/demos/roofline_bandwidth.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

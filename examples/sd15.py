@@ -1,41 +1,4 @@
-"""Real Stable-Diffusion-1.5 text->image on the Apple Neural Engine (via aneforge).
-
-Runs the per-step UNet and (the front of) the VAE decoder on the ANE using REAL
-SD-1.5 weights (downloaded from the `stable-diffusion-v1-5/stable-diffusion-v1-5`
-checkpoint via diffusers), drives a host-side scheduler denoise loop with
-classifier-free guidance, decodes the final latent to a 512x512 PNG, and validates
-every component against the reference diffusers pipeline.
-
-What runs where:
-  - TEXT (host, torch): CLIP tokenize + text_encoder -> cond/uncond [1,77,768].
-    (CLIP-on-ANE is out of scope; one-time host cost.)
-  - UNET (ANE): the full UNet2DConditionModel forward built from real weights with
-    aneforge ops. The whole UNet compiles as ONE fused e5rt program (1349 ops);
-    group_norm runs at every UNet size now that it lowers with rank-4 tiling, so no
-    block falls back to host. A per-RESNET split (conv_in / each resnet+attn /
-    samplers, chained host-side via numpy) remains as a fallback if the single
-    program ever fails to compile. Run twice per step (cond + uncond).
-  - SCHEDULER (host): the pipeline's own scheduler.step + CFG combine.
-  - VAE (ANE, partial): the AutoencoderKL decoder runs on the ANE through the
-    512ch@128x128 block; only the final 128ch@512x512 up block + conv_out exceed the
-    ANE per-axis cap (max(C/groups, H*W) > 65536) and run on host torch. VAE decode
-    is once per image, so the host tail is minor.
-
-This is the heaviest aneforge demo. PER-COMPONENT validates on real weights (UNet
-one-step ~2.9% relerr, VAE decode ~4.4%, both <5%). The END-TO-END image, however,
-is fp16-degraded - the cause is CATASTROPHIC CANCELLATION in classifier-free
-guidance: cond-uncond is only a ~0.4% difference of two near-identical UNet outputs,
-so the per-output fp16 error (which does NOT cancel, because cond and uncond take
-different rounding paths through the deep net) swamps the guidance signal, then x7.5
-amplifies it. The saved PNG is a coherent-but-abstract blob, not a recognizable
-scene. Computing cond-uncond in-graph (before the fp16 export) does NOT help -
-measured zero improvement, since the error is from divergent internal rounding, not
-the export. The script reports the real per-component + end-to-end relerr and the
-CFG-cancellation diagnostic, and saves the actual image produced - no faked clean
-generation. There is no known fp16-safe form of this sampling loop on the ANE.
-
-    python3 examples/sd15.py
-"""
+"""Real SD-1.5 text->image: UNet + VAE front on the ANE, per-component validated (end-to-end fp16-degraded by CFG cancellation). Run: python3 examples/sd15.py"""
 import os
 import sys
 import time
@@ -96,29 +59,19 @@ def _unet_transformer(x, context, g, p, H):
     return af.conv(hh, g(p + ".proj_out.weight"), bias=g(p + ".proj_out.bias")) + res
 
 
-# UNet as a CHAIN of per-block e5rt programs.
-#   conv_in -> [down0 down1 down2 down3] -> mid -> [up0 up1 up2 up3] -> conv_out
-# Each builder takes aneforge input Tensors and returns the block output Tensor;
-# at run time we compile each once and feed numpy between them, carrying the skip
-# stack (verified vs diffusers: conv_in pushes 1; down0-2 push [r0,r1,downsamp];
-# down3 pushes [r0,r1] -> 12 total; each up block pops 3, resnet r concats
-# skips[2-r] because diffusers pops res_hidden_states_tuple[-1] first).
+# UNet as a chain of per-block e5rt programs, chained host-side via numpy.
 class UNetANE:
     def __init__(self, g, has):
         self.g, self.has = g, has
         self.progs = {}
-        # per-block input channel/resolution (from real SD-1.5 config)
         self.ch = {0: 320, 1: 640, 2: 1280, 3: 1280}
         self.hw = {0: 64, 1: 32, 2: 16, 3: 8}      # down block input HW
-        # up block: input channels/HW and the 3 skip channels it concats
         self.up_in_ch = {0: 1280, 1: 1280, 2: 1280, 3: 640}
         self.up_in_hw = {0: 8, 1: 16, 2: 32, 3: 64}
         # skip channels in PUSH order (res[-3:]); resnet r concats skips[2-r].
-        # verified vs diffusers down-block trace.
         self.up_skip_ch = {0: [1280, 1280, 1280], 1: [640, 1280, 1280],
                            2: [320, 640, 640], 3: [320, 320, 320]}
 
-    # block graph builders
     def _conv_in(self, x):
         g = self.g
         return af.conv(x, g("conv_in.weight"), pad=1, bias=g("conv_in.bias"))
@@ -212,7 +165,7 @@ def main():
     one_program = False
     try:
         tc = time.time()
-        # 1) attempt the WHOLE UNet as one e5rt program (expected to fail at SD-1.5 scale)
+        # attempt the whole UNet as one e5rt program
         ce = af.input((77, 768)); te = af.input((1, 1280)); xx = af.input((1, 4, 64, 64))
         h = unet_blocks._conv_in(xx)
         res = [h]
@@ -238,19 +191,13 @@ def main():
         with torch.no_grad():
             return unet.time_embedding(unet.time_proj(torch.as_tensor([int(t)])).float()).numpy()
 
-    # Per-RESNET ANE sub-programs (the split that actually compiles)
-    # Each down/up resnet (+ its transformer) and each downsampler/upsampler is one
-    # small e5rt program, chained host-side; the skip stack is carried as numpy.
-    # up3 (final CrossAttnUpBlock at 64x64) and conv_out hit the group_norm
-    # feature-map limit (>=640 ch @ 64x64 -> Espresso "Not implemented"), so they
-    # run on HOST torch - a real hardware boundary, not a numerics choice.
+    # Per-RESNET ANE sub-programs (the split that actually compiles); up3 + conv_out
+    # run on host torch (group_norm feature-map limit at >=640 ch @ 64x64).
     if not one_program:
         g, has = ug, uhas
         progs = {}
         unet_ops = 0
-        # compiled-program input order == af.input() creation order (graph idx). We
-        # therefore create each program's inputs in a FIXED order: x, then temb (if
-        # used), then context (if used), and call with the same positional order.
+        # input order == af.input() creation order: x, temb (if used), context (if used).
         def reg(name, xshape, builder, use_temb=False, use_ctx=False):
             x = af.input(xshape)
             te = af.input((1, 1280)) if use_temb else None
@@ -258,11 +205,9 @@ def main():
             net = af.compile(builder(x, te, ce))
             progs[name] = net
             return net.n_ops
-        # conv_in (x only)
         unet_ops += reg("conv_in", (1, 4, 64, 64),
                         lambda x, te, ce: af.conv(x, g("conv_in.weight"), pad=1, bias=g("conv_in.bias")))
-        # down blocks: per resnet(+attn) + downsampler.
-        # resnet input channels == its norm1.weight size (matches diffusers exactly).
+        # down blocks: per resnet(+attn) + downsampler
         for b in range(4):
             attn = has(f"down_blocks.{b}.attentions.0.proj_in.weight")
             H = unet_blocks.hw[b]
@@ -279,7 +224,6 @@ def main():
                 unet_ops += reg(f"d{b}_ds", (1, Cd, H, H),
                                 lambda x, te, ce, b=b: af.conv(x, g(f"down_blocks.{b}.downsamplers.0.conv.weight"),
                                                                stride=2, pad=1, bias=g(f"down_blocks.{b}.downsamplers.0.conv.bias")))
-        # mid (whole block fits one program; uses temb + context)
         unet_ops += reg("mid", (1, 1280, 8, 8),
                         lambda x, te, ce: unet_blocks._mid(x, te, ce), use_temb=True, use_ctx=True)
         # up blocks 0,1,2 on ANE (per resnet+attn, then upsampler); up3 -> host
@@ -306,7 +250,7 @@ def main():
 
     def run_unet(lat_np, t, ctx_np):
         if one_program:
-            # inputs were created as (ce, te, xx) = (context, temb, latent); match that order
+            # input order: (context, temb, latent)
             return unet_net(ctx_np, temb_of(t), lat_np)
         te = temb_of(t)
         P = progs
@@ -329,7 +273,7 @@ def main():
                 concat = np.concatenate([h, sk[2 - r]], axis=1)
                 h = P[f"u{b}_r{r}"](concat, te, ctx_np) if attn else P[f"u{b}_r{r}"](concat, te)
             h = P[f"u{b}_us"](h)
-        # up3 + conv_out on HOST torch (group_norm hardware limit at 64x64 / >=640 ch)
+        # up3 + conv_out on host torch
         sk = res[-3:]; res = res[:-3]
         with torch.no_grad():
             ht = torch.as_tensor(h, dtype=torch.float32)
@@ -346,7 +290,6 @@ def main():
             return unet(lat, torch.as_tensor([int(t)]), encoder_hidden_states=ctx).sample
 
     # VAE: ANE through 128x128, host for 256/512
-    # build ANE programs for post_quant->conv_in->mid->up0->up1 (all <=128x128).
     vsd = {k: v.detach().numpy().astype(np.float32) for k, v in vae.state_dict().items()}
     vg, vhas = (lambda k: vsd[k]), (lambda k: k in vsd)
 
@@ -369,8 +312,6 @@ def main():
         return x + o.reshape(1, H, W, C).transpose([0, 3, 1, 2])
 
     def vae_front(z):                            # post_quant -> conv_in -> mid -> up0
-        # mid + up0 resnets run at 64x64 (group_norm OK); up0's upsampler emits 128x128
-        # (plain conv, OK). up1 resnets at 128x128 hit the group_norm limit -> host.
         h = af.conv(z, vg("post_quant_conv.weight"), bias=vg("post_quant_conv.bias"))
         h = af.conv(h, vg("decoder.conv_in.weight"), pad=1, bias=vg("decoder.conv_in.bias"))
         h = vae_resnet(h, "decoder.mid_block.resnets.0")
@@ -400,7 +341,7 @@ def main():
             h = vae.decoder.conv_norm_out(h); h = vae.decoder.conv_act(h); h = vae.decoder.conv_out(h)
         return h.numpy()
 
-    # PER-COMPONENT validation (the real headline)
+    # PER-COMPONENT validation
     sched.set_timesteps(STEPS)
     t0 = sched.timesteps[0]
     gen = torch.Generator().manual_seed(SEED)
@@ -420,7 +361,7 @@ def main():
     print(f"  VAE decode  relerr    {vae_rel:.4f}   (ANE front <=128, host tail) "
           f"{'OK' if vae_rel < 0.05 else 'HIGH (fp16)'}")
 
-    # DENOISE LOOP (host scheduler, CFG, UNet on ANE)
+    # DENOISE LOOP (host scheduler + CFG, UNet on ANE)
     def denoise(unet_fn):
         sc = type(sched).from_config(sched.config)
         sc.set_timesteps(STEPS)
@@ -445,8 +386,6 @@ def main():
     lat_rel = relerr(lat_ane.numpy(), lat_ref.numpy())
 
     # Diagnose the CFG cancellation (why the image degrades)
-    # guided noise = uncond + g*(cond-uncond). |cond-uncond| is a TINY difference of
-    # two large near-identical UNet outputs, so the fp16 per-output error swamps it.
     nc_ane = run_unet(lat0.numpy(), t0, cond_np); nu_ane = run_unet(lat0.numpy(), t0, uncond_np)
     nc_ref = unet_torch(lat0, t0, cond).numpy(); nu_ref = unet_torch(lat0, t0, uncond).numpy()
     diff_ref = nc_ref - nu_ref

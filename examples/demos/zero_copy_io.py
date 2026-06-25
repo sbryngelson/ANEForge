@@ -1,13 +1,4 @@
-"""DEMO: zero-copy I/O views skip the per-call host<->device memcpy.
-
-Reverse-engineering finding: the kernel memcpys host data into the DART-mapped port buffer
-every call. Model.input_view()/output_view() expose that ANE-visible buffer as an fp16 numpy
-view, so a hot loop writes the input / reads the output IN PLACE. Removes the only host
-overhead aneforge can remove (the ~0.2 ms firmware floor still dominates tiny calls; the win
-scales with I/O size - measured ~30% faster per call on large I/O).
-
-Run:  python3 examples/demos/zero_copy_io.py
-"""
+"""Zero-copy I/O views skip the per-call host<->device memcpy. Run: python3 examples/demos/zero_copy_io.py"""
 import sys, time, warnings
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

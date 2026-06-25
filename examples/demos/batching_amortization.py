@@ -1,11 +1,4 @@
-"""DEMO: batching amortizes the fixed dispatch floor (per-sample cost collapses ~127x).
-
-Reverse-engineering finding: per-CALL latency is ~flat in the batch size up to a point (the
-~0.2 ms round-trip dominates), so per-SAMPLE cost falls roughly linearly toward the true
-compute rate. Measured on M1: 196 us/sample at N=1 -> ~1.5 us/sample at N=512.
-
-Run:  python3 examples/demos/batching_amortization.py
-"""
+"""Batching amortizes the fixed dispatch floor. Run: python3 examples/demos/batching_amortization.py"""
 import sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,7 +9,7 @@ import aneforge as af
 
 
 def main() -> int:
-    warnings.filterwarnings("ignore")          # the floor warning is demonstrated in 01
+    warnings.filterwarnings("ignore")
     rng = np.random.default_rng(0)
     print(f"{'batch N':>8} | {'us/call':>8} | {'us/sample':>10}")
     print("-" * 32)

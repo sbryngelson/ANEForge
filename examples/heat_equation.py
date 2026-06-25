@@ -1,32 +1,4 @@
-"""aneforge PDE demo - a 2D heat equation evolved over many timesteps on the ANE.
-
-This is "the ANE solving a PDE over time". The 2D heat equation
-
-    du/dt = alpha * Laplacian(u)
-
-is integrated with the explicit (forward-Euler) scheme. One timestep is a single
-3x3 convolution with the stencil  K = I + r*[[0,1,0],[1,-4,1],[0,1,0]],  where
-r = alpha*dt/h^2 (kept at 0.2, inside the r<=0.25 stability bound for the 2D
-explicit scheme). The conv is the ANE's home turf.
-
-We compile the step ONCE into a single fused e5rt program, then loop host-side:
-each step evaluates the program on the ANE and feeds the output field back in as
-the next input. We evolve a hot-spot initial condition for many steps on a 64x64
-grid (Dirichlet u=0 boundary, enforced host-side after each conv), then validate
-the FINAL field against the SAME scheme run in fp32 numpy.
-
-CAVEAT: fp16 rounding COMPOUNDS over the timesteps - the ANE trajectory and the
-fp32 numpy trajectory are genuinely different sequences, so they drift a little per
-step. We report the relerr-vs-steps curve (it grows ~linearly: ~9e-3 at 50 steps,
-~1.9e-2 at 100) and confirm the scheme stays STABLE: the field stays BOUNDED (no
-fp16 blow-up) and the total heat stays near its initial value (this clamped-edge
-diffusion is heat-conserving in the interior; fp16 rounding adds a small positive
-bias of ~2%, NOT a divergence). That distinguishes fp16 compounding (a few %,
-bounded, grows linearly) from a bug (an unstable scheme blows up by orders of
-magnitude). The reference is the SAME explicit scheme with the fp32-exact stencil.
-
-    python3 examples/heat_equation.py
-"""
+"""aneforge PDE demo: explicit 2D heat equation as one fused conv stencil, looped over timesteps on the ANE. Run: python3 examples/heat_equation.py"""
 import sys
 import _common   # noqa: F401 - sets env + repo-root path; import before aneforge
 import numpy as np
@@ -109,9 +81,7 @@ def main():
     u_ref = evolve_numpy(u0, Kfp32, STEPS)
     relerr = float(np.linalg.norm(u_ane - u_ref) / (np.linalg.norm(u_ref) + 1e-12))
 
-    # stability: the field must stay BOUNDED (no fp16 blow-up) and total heat must
-    # stay near its initial value (clamped-edge diffusion conserves interior heat;
-    # fp16 adds only a small positive bias).
+    # stability: field stays bounded and total heat stays near its initial value.
     bounded = bool(peak.max() <= 1.0 + 1e-3)          # max never exceeds the hot-spot
     blew_up = bool(peak.max() > 10.0)
     heat_drift = abs(heats[-1] - heat0) / heat0

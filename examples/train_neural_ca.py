@@ -1,39 +1,4 @@
-"""aneforge flagship: a neural cellular automaton TRAINED on the Apple Neural Engine.
-
-Growing Neural Cellular Automata (Mordvintsev et al., Distill 2020): one small
-per-cell update rule - a CNN shared across every cell and every step - is trained
-so that, from a single live seed pixel, repeated application of the rule grows a
-target image. It is morphogenesis as a learned local rule.
-
-The learning runs on the engine. Each training step rolls the rule forward T times,
-takes the MSE of the grown image to the target, and backpropagates through the whole
-rollout - and every one of those forward and backward steps is a compiled ANE
-program. The rollout is gradient-checkpointed (`aneforge.streaming.CheckpointedStack`):
-the per-step forward and the per-step backward each compile ONCE and stream over the T
-steps, so the rollout's depth does not bound the compile and the grid can be larger
-than a single fused forward+backward+Adam program would allow. The optimizer (Adam)
-runs host-side over the streamed gradients, the same path as `train_charlm_deep.py`.
-The trained rule is then dispatched step by step to grow the image, again on the engine.
-
-The rule, per cell, per step:
-  1. perceive   - a fixed depthwise [identity, Sobel_x, Sobel_y] stencil, periodic
-                  (wrap) padding built from slices of the state itself;
-  2. a 1x1 conv (-> 128) + ReLU, then a 1x1 conv (-> C) initialised to ZERO so the
-     initial update is a no-op (the dynamics start as the identity and stay stable);
-  3. an alive mask: a cell updates only if it or a neighbour is alive (alpha > 0.1),
-     computed as a 3x3 box conv of alpha so growth can spread into empty cells;
-  4. residual: state += update * alive.
-
-Two simplifications from the paper, both for a clean on-engine graph: the per-cell
-stochastic update is dropped (deterministic updates), and the alive mask uses a
-differentiable box-conv-and-sigmoid rather than a max-pool (whose overlapping backward
-is not on the engine).
-
-    python3 examples/train_neural_ca.py
-
-Writes docs/assets/neural_ca.png as an APNG (the image growing from the seed, full
-24-bit colour) if Pillow is installed; training runs either way.
-"""
+"""Growing Neural Cellular Automata (Mordvintsev et al., Distill 2020) trained on the ANE: a per-cell CNN rule grown from a seed via a gradient-checkpointed rollout (forward + backward on-engine, Adam host-side). Writes docs/assets/neural_ca.png if Pillow is present. Run: python3 examples/train_neural_ca.py"""
 import sys
 import time
 from pathlib import Path
@@ -98,10 +63,7 @@ _BOX = af.conv_param(np.ones((1, 1, 3, 3), np.float32))
 
 
 def layer_fn(params, x):
-    """One CA step as a graph builder (the `CheckpointedStack` layer). `params` are
-    the trainable 1x1-conv weights as flat conv tensors; the fixed perception and box
-    convs are module constants. Stamping `conv_shape` lets `conv2d` consume the stack's
-    plain parameter leaves as 1x1 conv weights."""
+    """One CA step as a CheckpointedStack layer builder; conv_shape stamps let conv2d treat the param leaves as 1x1 weights."""
     W1, b1, W2, b2 = params
     W1.attrs["conv_shape"] = (128, 3 * C, 1, 1)
     W2.attrs["conv_shape"] = (C, 128, 1, 1)
@@ -282,8 +244,7 @@ def render(frames, total_energy):
     ims = []
     for i, c in enumerate(frames):
         rgb = (np.clip(c, 0, 1) * 255).astype(np.uint8)
-        # crisp nearest-neighbour upscale: a cellular automaton's cells are the point,
-        # so show them as clean squares rather than blurring up from the grid.
+        # crisp nearest-neighbour upscale: show cells as clean squares
         im = Image.fromarray(rgb).resize((ANIM_SIZE, ANIM_SIZE), Image.NEAREST)
         e = total_energy * min(1.0, i / max(1, len(frames) - 1))
         ims.append(telemetry(im, e))
