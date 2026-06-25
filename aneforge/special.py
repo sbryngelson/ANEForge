@@ -52,7 +52,7 @@ except ImportError:  # run directly as `python3 aneforge/special.py`
 # --------------------------------------------------------------------------- #
 
 def _const(like: Tensor, c: float) -> Tensor:
-    """A constant tensor of value `c` broadcasting against `like`.
+  """A constant tensor of value `c` broadcasting against `like`.
 
     There is no scalar-add op, but `exp(0) == 1` gives a ones tensor of the
     right shape for free (`like * 0` is the zeros), and `* c` scales it. So
@@ -63,23 +63,23 @@ def _const(like: Tensor, c: float) -> Tensor:
     cos-based constant would silently break this whole module on M1/H13 - and
     `special.cos` below is one of the things that must run there.
     """
-    return (like * 0.0).exp() * float(c)
+  return (like * 0.0).exp() * float(c)
 
 
 def _horner(x: Tensor, coeffs) -> Tensor:
-    """Evaluate `coeffs[0]*x^n + ... + coeffs[-1]` by Horner's rule as a fused
+  """Evaluate `coeffs[0]*x^n + ... + coeffs[-1]` by Horner's rule as a fused
     mul/add chain. `coeffs` is highest-degree first (numpy `polyfit` order).
     """
-    acc = _const(x, coeffs[0])
-    for c in coeffs[1:]:
-        acc = acc * x + _const(x, c)
-    return acc
+  acc = _const(x, coeffs[0])
+  for c in coeffs[1:]:
+    acc = acc * x + _const(x, c)
+  return acc
 
 
 def _poly_in(x2: Tensor, coeffs_low_first) -> Tensor:
-    """Horner in `x2` with coefficients given LOW-degree first (the natural
+  """Horner in `x2` with coefficients given LOW-degree first (the natural
     order for the Abramowitz-Stegun series `c0 + c1 t + c2 t^2 + ...`)."""
-    return _horner(x2, list(coeffs_low_first)[::-1])
+  return _horner(x2, list(coeffs_low_first)[::-1])
 
 
 # --------------------------------------------------------------------------- #
@@ -107,20 +107,20 @@ _COS_Q = [1.0, -0.4999308182201791, 0.041511585587052556, -0.0012786608784929124
 
 
 def sin(x: Tensor) -> Tensor:
-    """`sin(x)` for x in [-pi/2, pi/2] as a fused fp16 polynomial (`x * P(x^2)`).
+  """`sin(x)` for x in [-pi/2, pi/2] as a fused fp16 polynomial (`x * P(x^2)`).
 
     Portable trig: only mul/sub/exp, so it runs on ANE families lacking the native
     sin op (A15+), M1/H13 included. Outside [-pi/2, pi/2] reduce the argument on the
     host first (the static graph has no data-dependent range reduction)."""
-    return x * _poly_in(x * x, _SIN_P)
+  return x * _poly_in(x * x, _SIN_P)
 
 
 def cos(x: Tensor) -> Tensor:
-    """`cos(x)` for x in [-pi/2, pi/2] as a fused fp16 polynomial (`Q(x^2)`).
+  """`cos(x)` for x in [-pi/2, pi/2] as a fused fp16 polynomial (`Q(x^2)`).
 
     Portable companion to `sin` above - native cos is A15+, this runs everywhere
     M1 included. Reduce arguments outside [-pi/2, pi/2] on the host."""
-    return _poly_in(x * x, _COS_Q)
+  return _poly_in(x * x, _COS_Q)
 
 
 # --------------------------------------------------------------------------- #
@@ -136,17 +136,17 @@ _ERFC_A = [0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429]
 
 
 def erfc(x: Tensor) -> Tensor:
-    """Complementary error function `erfc(x) = 1 - erf(x)` for `x >= 0`.
+  """Complementary error function `erfc(x) = 1 - erf(x)` for `x >= 0`.
 
     Direct rational*exp form (A&S 7.1.26) - does NOT cancel for large x, unlike
     `1 - native_erf`. Valid for x in [0, ~6] (erfc decays smoothly; the exp
     underflows to 0 past x~6, the correct limit). For x<0 use the identity
     erfc(-x)=2-erfc(x) on the host (a branch the static graph can't do).
     """
-    t = _const(x, 1.0) / (_const(x, 1.0) + x * _ERFC_P)
-    # poly(t) = (((a4 t + a3) t + a2) t + a1) t + a0) * t   -> a0..a4 low-first, then *t
-    poly = _poly_in(t, _ERFC_A) * t
-    return poly * (x * x * -1.0).exp()
+  t = _const(x, 1.0) / (_const(x, 1.0) + x * _ERFC_P)
+  # poly(t) = (((a4 t + a3) t + a2) t + a1) t + a0) * t   -> a0..a4 low-first, then *t
+  poly = _poly_in(t, _ERFC_A) * t
+  return poly * (x * x * -1.0).exp()
 
 
 # --------------------------------------------------------------------------- #
@@ -154,12 +154,12 @@ def erfc(x: Tensor) -> Tensor:
 # --------------------------------------------------------------------------- #
 
 def expm1(x: Tensor) -> Tensor:
-    """`exp(x) - 1` accurate near 0 (where `exp(x)-1` cancels). Taylor
+  """`exp(x) - 1` accurate near 0 (where `exp(x)-1` cancels). Taylor
     `x(1 + x/2 + x^2/6 + ... + x^5/720)` - valid for |x| <= ~0.7. Outside that,
     use `x.exp()` and subtract 1 with `_const` (no cancellation there)."""
-    # x * (1 + x(1/2 + x(1/6 + x(1/24 + x(1/120 + x/720)))))
-    inner = _horner(x, [1.0 / 720, 1.0 / 120, 1.0 / 24, 1.0 / 6, 0.5, 1.0])
-    return x * inner
+  # x * (1 + x(1/2 + x(1/6 + x(1/24 + x(1/120 + x/720)))))
+  inner = _horner(x, [1.0 / 720, 1.0 / 120, 1.0 / 24, 1.0 / 6, 0.5, 1.0])
+  return x * inner
 
 
 _LOG1P_RATIO = [-0.052037525556684096, 0.15799617916430397, -0.20925805696435787,
@@ -168,10 +168,10 @@ _LOG1P_RATIO = [-0.052037525556684096, 0.15799617916430397, -0.20925805696435787
 
 
 def log1p(x: Tensor) -> Tensor:
-    """`log(1 + x)` accurate near 0 (where `log(1+x)` cancels). Evaluated as
+  """`log(1 + x)` accurate near 0 (where `log(1+x)` cancels). Evaluated as
     `x * poly(x)` with a deg-7 minimax of `log1p(x)/x` - valid for x in
     [-0.5, 1.0]. The `x*` factor keeps it exact at 0."""
-    return x * _horner(x, _LOG1P_RATIO)
+  return x * _horner(x, _LOG1P_RATIO)
 
 
 # --------------------------------------------------------------------------- #
@@ -197,15 +197,15 @@ _GAMMA_12 = [0.07271315700819278, -0.09524680924569022, 0.14250568218370452,
 
 
 def lgamma(x: Tensor) -> Tensor:
-    """Log-gamma `log|Gamma(x)|` for x in [1, 8] via a deg-8 minimax in the
+  """Log-gamma `log|Gamma(x)|` for x in [1, 8] via a deg-8 minimax in the
     centered variable (x-4.5). Accurate in ABSOLUTE terms (~3e-3); relative error
     is large only at the zeros x=1, x=2 where lgamma -> 0 (relative error is
     ill-defined there)."""
-    return _horner(x + _const(x, -_LGAMMA_C), _LGAMMA)
+  return _horner(x + _const(x, -_LGAMMA_C), _LGAMMA)
 
 
 def gamma(x: Tensor) -> Tensor:
-    """Gamma function on x in [1, 2] via a deg-6 minimax in the centered variable
+  """Gamma function on x in [1, 2] via a deg-6 minimax in the centered variable
     (x-1.5).
 
     SCOPE: gamma grows super-exponentially and overflows fp16 (>65504)
@@ -215,14 +215,14 @@ def gamma(x: Tensor) -> Tensor:
     still-fp16-bounded range use `gamma_via_lgamma` (x in [1, ~7.5]), which routes
     through `exp(lgamma(x))` instead.
     """
-    return _horner(x + _const(x, -_GAMMA_C), _GAMMA_12)
+  return _horner(x + _const(x, -_GAMMA_C), _GAMMA_12)
 
 
 def gamma_via_lgamma(x: Tensor) -> Tensor:
-    """`Gamma(x) = exp(lgamma(x))` for x in [1, ~7.5] (output stays under the
+  """`Gamma(x) = exp(lgamma(x))` for x in [1, ~7.5] (output stays under the
     fp16 max). Wider range than `gamma` at a small accuracy cost (the exp
     re-rounds)."""
-    return lgamma(x).exp()
+  return lgamma(x).exp()
 
 
 # --------------------------------------------------------------------------- #
@@ -238,31 +238,31 @@ _K0 = [-0.57721566, 0.42278420, 0.23069756, 0.03488590, 0.00262698, 0.00010750, 
 
 
 def bessel_j0(x: Tensor) -> Tensor:
-    """Bessel J0(x) for |x| <= 3 (A&S 9.4.1 polynomial in (x/3)^2). Smooth,
+  """Bessel J0(x) for |x| <= 3 (A&S 9.4.1 polynomial in (x/3)^2). Smooth,
     bounded; the dominant first lobe and first zero (x~2.405) are in range."""
-    t = (x * x) * (1.0 / 9.0)
-    return _poly_in(t, _J0)
+  t = (x * x) * (1.0 / 9.0)
+  return _poly_in(t, _J0)
 
 
 def bessel_i0(x: Tensor) -> Tensor:
-    """Modified Bessel I0(x) for |x| <= 3.75 (A&S 9.8.1 in (x/3.75)^2). I0 grows
+  """Modified Bessel I0(x) for |x| <= 3.75 (A&S 9.8.1 in (x/3.75)^2). I0 grows
     exponentially and overflows fp16 past x~12, so this small-argument branch is
     the fp16-useful range."""
-    t = (x * x) * (1.0 / (3.75 * 3.75))
-    return _poly_in(t, _I0)
+  t = (x * x) * (1.0 / (3.75 * 3.75))
+  return _poly_in(t, _I0)
 
 
 def bessel_k0(x: Tensor) -> Tensor:
-    """Modified Bessel K0(x) for 0 < x <= 2 (A&S 9.8.5):
+  """Modified Bessel K0(x) for 0 < x <= 2 (A&S 9.8.5):
     `K0(x) = -ln(x/2) I0(x) + series((x/2)^2)`. K0 has a -ln singularity at 0,
     so x must be strictly positive (and not tiny: log underflow). I0 here reuses
     the 9.8.1 polynomial (in (x/3.75)^2), valid through x=2; the K0 series part is
     in (x/2)^2 -- the two use DIFFERENT scaled arguments."""
-    half = x * 0.5
-    t_k0 = half * half                       # (x/2)^2  for the K0 series
-    t_i0 = (x * x) * (1.0 / (3.75 * 3.75))    # (x/3.75)^2 for the I0 factor
-    i0 = _poly_in(t_i0, _I0)
-    return half.log() * (i0 * -1.0) + _poly_in(t_k0, _K0)
+  half = x * 0.5
+  t_k0 = half * half                       # (x/2)^2  for the K0 series
+  t_i0 = (x * x) * (1.0 / (3.75 * 3.75))    # (x/3.75)^2 for the I0 factor
+  i0 = _poly_in(t_i0, _I0)
+  return half.log() * (i0 * -1.0) + _poly_in(t_k0, _K0)
 
 
 # --------------------------------------------------------------------------- #
@@ -270,7 +270,7 @@ def bessel_k0(x: Tensor) -> Tensor:
 # --------------------------------------------------------------------------- #
 
 def exp_wide(x: Tensor, splits: int = 1) -> Tensor:
-    """exp for wide `x` via argument splitting:
+  """exp for wide `x` via argument splitting:
     `exp(x) = (exp(x / 2^splits)) ^ (2^splits)` by repeated squaring (the inner
     `exp` runs on a smaller argument).
 
@@ -282,13 +282,13 @@ def exp_wide(x: Tensor, splits: int = 1) -> Tensor:
     caps exp at x~11 regardless of method - splitting can never extend the range,
     only (at best marginally) trade accuracy.
     """
-    e = (x * (1.0 / (1 << splits))).exp()
-    for _ in range(splits): e = e * e
-    return e
+  e = (x * (1.0 / (1 << splits))).exp()
+  for _ in range(splits): e = e * e
+  return e
 
 
 def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
-    """log for wide positive `x` via `log(x) = 2^sqrts * log(x^(1/2^sqrts))`.
+  """log for wide positive `x` via `log(x) = 2^sqrts * log(x^(1/2^sqrts))`.
     Repeated square roots pull a large argument toward 1, where log is most
     accurate, then scale back.
 
@@ -296,9 +296,9 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
     this matches rather than clearly beats it - the sqrt chain re-rounds. Useful
     mainly as a documented range-reduction recipe; the native `x.log()` is the
     better default on this hardware."""
-    r = x
-    for _ in range(sqrts): r = r.sqrt()
-    return r.log() * float(1 << sqrts)
+  r = x
+  for _ in range(sqrts): r = r.sqrt()
+  return r.log() * float(1 << sqrts)
 
 
 __all__ = [
