@@ -1,6 +1,5 @@
-"""A tiny reverse-mode autograd over the aneforge graph: forward and backward
-both run on the ANE. Trainable `parameter`s are graph inputs (fed each step,
-updated host-side, no recompile)."""
+"""Reverse-mode autograd over the aneforge graph; forward and backward both run
+on the ANE. See docs/developer/autograd.md."""
 from __future__ import annotations
 
 import math
@@ -25,8 +24,7 @@ def vjp(*names: str):
 
 def parameter(init) -> Tensor:
   """A trainable leaf: a graph input tagged trainable, holding an fp32 master
-    value in attrs['value']. Used like any input; fed its current value each
-    eval and updated by the optimizer."""
+    value in attrs['value']; fed each eval and updated by the optimizer."""
   init = np.asarray(init, dtype=np.float32)
   t = graph.input(init.shape)
   t.attrs["trainable"] = True
@@ -53,14 +51,9 @@ def _topo(out: Tensor, stop: set | None = None) -> list[Tensor]:
 
 
 def _const_like(t: Tensor, c: float) -> Tensor:
-  """A tensor of constant value `c` shaped like `t`, built from existing ops
-    (aneforge has no const-tensor op). Uses `(t - t).adds(c)` rather than the
-    obvious `(t * 0.0).adds(c)` because `mul(reduce_output, 0.0)` trips an
-    ANECCompile fusion wall: a `reduce_sum`/`reduce_mean` result times ZERO
-    fails (characterized in the reverse-engineering corpus). Only that
-    combination fails: `reduce * nonzero` compiles, and mul-by-zero without a
-    preceding reduce compiles. `t - t` is an exact-zero `sub` (not a
-    mul-by-zero), so it sidesteps the wall for any finite `t`."""
+  """Constant `c` shaped like `t`, built from existing ops (no const-tensor op).
+    `(t - t)` not `(t * 0.0)`: mul-by-zero on a reduce output trips an ANECCompile
+    fusion wall; an exact-zero sub sidesteps it. See docs/developer/autograd.md."""
   return (t - t).adds(float(c))
 
 
@@ -70,9 +63,8 @@ def _ones_like(t: Tensor) -> Tensor:
 
 
 def _reverse(order, g, params, stop: set | None = None):
-  """Core reverse-accumulation over a precomputed topo `order`, seeded grads `g`
-    (dict id->Tensor). Returns {param: grad_Tensor}. Tensors in `stop` accumulate a
-    gradient but don't propagate it to their sources (stop-gradient / detach)."""
+  """Reverse-accumulate over topo `order` from seeded grads `g` (id->Tensor) ->
+    {param: grad}. Tensors in `stop` accumulate but don't propagate (detach)."""
   stop = stop or set()
   for t in reversed(order):
     gt = g.get(id(t))
@@ -87,16 +79,9 @@ def _reverse(order, g, params, stop: set | None = None):
 
 
 def backward(loss: Tensor, params, loss_scale: float = 1.0, stop=None) -> dict:
-  """Reverse-mode grads of scalar `loss` wrt each Tensor in `params`. Returns
-    {param: grad_Tensor}. The seed dL/dloss = loss_scale (folded into the seed's
-    additive constant, avoiding a muls on the reduced loss output).
-
-    `stop` is the stop-gradient (detach) frontier: gradient reaches these tensors
-    but does not propagate past them. Defaults to `params` - a no-op when the
-    params are true graph leaves (the usual case), but it matters when an UNROLLED
-    training step threads one step's updated-weight TENSORS into the next step's
-    forward: there each step's gradient must treat the current weights as leaves
-    (plain SGD), not differentiate through the previous update (second-order)."""
+  """Reverse-mode grads of scalar `loss` wrt each Tensor in `params` ->
+    {param: grad}. `stop` is the stop-gradient (detach) frontier (defaults to
+    `params`); it matters for unrolled training. See docs/developer/autograd.md."""
   stop_ids = {id(t) for t in (params if stop is None else stop)}
   order = _topo(loss, stop_ids)
   return _reverse(order, {id(loss): _const_like(loss, float(loss_scale))}, params, stop_ids)
@@ -104,8 +89,7 @@ def backward(loss: Tensor, params, loss_scale: float = 1.0, stop=None) -> dict:
 
 def backward_from(grad_root, root, params, stop=None) -> dict:
   """Reverse-mode from an explicit gradient `grad_root` at `root` (e.g. logits),
-    rather than from a scalar loss + ones-seed. `stop` is the stop-gradient frontier
-    (defaults to `params`); see `backward` - it matters for unrolled training."""
+    not from a scalar loss + ones-seed. `stop` as in `backward`."""
   stop_ids = {id(t) for t in (params if stop is None else stop)}
   return _reverse(_topo(root, stop_ids), {id(root): grad_root}, params, stop_ids)
 
@@ -117,17 +101,14 @@ def _vjp_muls(t, g):
 
 @vjp("reduce_sum")
 def _vjp_reduce_sum(t, g):
-  # broadcast g (keepdims shape) back to the source shape
   x = t.srcs[0]
-  return [g * _ones_like(x)]
+  return [g * _ones_like(x)]                   # broadcast g back to the source shape
 
 
 def _unbroadcast(g, shape):
-  """Sum g down to `shape` (reverse of numpy broadcasting), reducing the
-    broadcast axes. Assumes g.shape broadcasts from shape."""
+  """Sum g down to `shape` (reverse of numpy broadcasting)."""
   shape = tuple(shape)
-  # sum leading extra dims
-  while len(g.shape) > len(shape):
+  while len(g.shape) > len(shape):             # sum leading extra dims
     g = g.sum((0,))            # reduce axis 0 (keepdims -> shape[0]=1)
     g = g.reshape(g.shape[1:])
   axes = tuple(i for i, (d, s) in enumerate(zip(g.shape, shape)) if s == 1 and d != 1)
@@ -174,11 +155,8 @@ def _T(t):
 
 @vjp("bmm")
 def _vjp_bmm(t, g):
-  # y = a @ b ; ga = g @ b^T ; gb = a^T @ g. When a or b broadcast over the batch
-  # dim(s) (e.g. patches[N,L,K] @ W[1,K,Cout] in the trainable conv), the raw
-  # products carry the full (max) batch and `_unbroadcast` sums them back to each
-  # operand's own shape. For equal-batch bmm it's a no-op, so the MLP/attention
-  # path is unchanged.
+  # ga = g @ b^T ; gb = a^T @ g. _unbroadcast handles a/b broadcasting over the
+  # batch dim (trainable conv); a no-op for equal-batch bmm (MLP/attention).
   a, b = t.srcs
   ga = g @ _T(b)
   gb = _T(a) @ g
@@ -187,19 +165,15 @@ def _vjp_bmm(t, g):
 
 @vjp("matmul")
 def _vjp_matmul(t, g):
-  # frozen baked weight (attrs['wt']=W^T stored [N,K]); only the activation input
-  # gets a grad. y = x @ W ; gx = g @ W^T = g @ wt (wt is [N,K]); baked matmul.
+  # baked weight (attrs['wt']=W^T [N,K]); only the activation gets a grad: gx = g @ wt.
   wt = t.attrs["wt"]
-  gx = g @ wt              # Tensor @ numpy -> baked matmul = g @ wt = gx
+  gx = g @ wt
   return [gx]
 
 
 @vjp("reduce_mean")
 def _vjp_reduce_mean(t, g):
-  # tensor*tensor `g * _const_like(x, 1/n)` broadcasts g to x and scales by 1/n in
-  # one op. (1/n is nonzero so a plain `muls` would also compile; only mul-by-zero
-  # fails on a reduce output - see reduce_muls_fusion_probe.py. The tensor*tensor
-  # form is kept as the uniform, wall-proof pattern.)
+  # tensor*tensor broadcasts g to x and scales by 1/n in one wall-proof op.
   x = t.srcs[0]
   n = math.prod(x.shape[a] for a in t.attrs["axes"])
   return [g * _const_like(x, 1.0 / n)]
@@ -246,13 +220,8 @@ def _vjp_silu(t, g):
   return [g * dz]
 
 
-# --------------------------------------------------------------------------- #
-# normalization vjps (rms_norm / layer_norm) - unlock transformer / LLM / CNN  #
-# training. gamma (a per-channel constant, not a graph Tensor) is re-injected   #
-# as a fed value-input (no const-tensor op; the trainer feeds any input         #
-# carrying attrs['value']). Both reduce over the LAST dim; closed-form grad_x    #
-# is exact.                                                                      #
-# --------------------------------------------------------------------------- #
+# normalization vjps: gamma (a per-channel const) is re-injected as a fed
+# value-input; closed-form grad_x. See docs/developer/autograd.md.
 def _gamma_input(t):
   """gamma from a norm node's attrs, shaped [1,...,1,D] as a fed value-input."""
   gamma = np.asarray(t.attrs["gamma"], np.float32)
@@ -297,12 +266,8 @@ def _vjp_channel_layer_norm(t, g):
   return [grad * rstd]
 
 
-# --------------------------------------------------------------------------- #
-# unary math / activation vjps - surfaced by the gradient audit (each forward   #
-# op already runs natively; these make them trainable). Closed-form derivatives  #
-# from existing ops; the forward output `t` is reused where it IS the derivative #
-# term (exp/inverse/rsqrt), else recomputed from t.srcs[0].                       #
-# --------------------------------------------------------------------------- #
+# unary math / activation vjps: closed-form derivatives from existing ops; the
+# forward output `t` is reused where it IS the derivative term (exp/inverse/rsqrt).
 @vjp("exp")
 def _vjp_exp(t, g):
   return [g * t]                                   # exp'(x) = exp(x) = t
@@ -442,18 +407,12 @@ def _vjp_group_norm(t, g):
   return [(grad * rstd).reshape(N, C, H, W)]
 
 
-# --------------------------------------------------------------------------- #
-# structural vjps (transpose / reshape) - unlock transformer (af.mha) training  #
-# --------------------------------------------------------------------------- #
-# af.mha is linear/bmm/softmax/muls (vjps above) + transpose + reshape. Adding
-# these two structural rules makes a whole transformer block differentiable end
-# to end on the ANE. Both are pure index re-arrangements, so the gradient is the
-# exact inverse re-arrangement of g (no numerics, fp16-exact).
+# structural vjps (transpose / reshape): pure index re-arrangements, fp16-exact;
+# unlock transformer (af.mha) training. See docs/developer/autograd.md.
 
 @vjp("transpose")
 def _vjp_transpose(t, g):
-  """y = transpose(x, perm); the cotangent flows back through the INVERSE
-    permutation: dx = transpose(g, argsort(perm))."""
+  """dx = transpose(g, inverse-perm)."""
   perm = t.attrs["perm"]
   inv = [0] * len(perm)
   for i, p in enumerate(perm): inv[p] = i
@@ -462,26 +421,22 @@ def _vjp_transpose(t, g):
 
 @vjp("reshape")
 def _vjp_reshape(t, g):
-  """y = reshape(x, out_shape); dx = reshape(g, x.shape) (reshape is a no-op on
-    the values, so the gradient reshapes straight back to the source shape)."""
+  """dx = reshape(g, x.shape)."""
   x = t.srcs[0]
   return [g.reshape(x.shape)]
 
 
 @vjp("flatten2d")
 def _vjp_flatten2d(t, g):
-  """Native flatten2d is a reshape; the gradient reshapes back to the source."""
+  """flatten2d is a reshape; dx reshapes back to the source."""
   x = t.srcs[0]
   return [g.reshape(x.shape)]
 
 
 @vjp("slice_by_size")
 def _vjp_slice_by_size(t, g):
-  """y = x[begin : begin+size] (per axis); dx scatters g back into a zeros-like-x
-    at the same offset. The scatter is built on-ANE by concatenating zero-slices
-    (carved from a zero tensor shaped like x) before/after g along each axis. The
-    overlapping slices an im2col emits accumulate through `_reverse`'s grad
-    summation. Verified cos 1.0 vs a numpy scatter reference."""
+  """dx scatters g back into a zeros-like-x at the slice offset, built on-ANE by
+    concatenating zero-slices around g (no scatter op). See docs/developer/autograd.md."""
   x = t.srcs[0]
   begin, size, full = t.attrs["begin"], t.attrs["size"], x.shape
   z = _const_like(x, 0.0)                          # zeros shaped like x
@@ -504,8 +459,7 @@ def _vjp_slice_by_size(t, g):
 
 @vjp("concat")
 def _vjp_concat(t, g):
-  """y = concat(srcs, axis); each source receives the slice of g spanning its
-    own extent along the concat axis (a static slice_by_size, on-ANE)."""
+  """Each source receives the slice of g spanning its own extent along the axis."""
   axis = t.attrs["axis"]
   outs, off = [], 0
   for src in t.srcs:
@@ -518,37 +472,18 @@ def _vjp_concat(t, g):
   return outs
 
 
-# --------------------------------------------------------------------------- #
-# relu vjp - previously deferred; now expressible via the exposed comparison +   #
-# select ops: dx = select(x > 0, g, 0).                                          #
-# --------------------------------------------------------------------------- #
-
 @vjp("relu")
 def _vjp_relu(t, g):
-  """dx = g where x > 0 else 0. Built as select(x > 0, g, zeros) via the
-    `greater` (-> bool cond) and `select` ops. `x.greater(z)` needs a Tensor rhs,
-    so compare against an exact-zero tensor (x - x)."""
+  """dx = select(x > 0, g, 0). `greater` needs a Tensor rhs, so compare vs (x - x)."""
   x = t.srcs[0]
   zero = _const_like(x, 0.0)
   cond = x.greater(zero)
   return [graph.select(cond, g, _const_like(g, 0.0))]
 
 
-# --------------------------------------------------------------------------- #
-# spatial vjps - conv (grad wrt input) and avg_pool (uniform spread)             #
-# --------------------------------------------------------------------------- #
-# The native ANE conv/conv_transpose require a CONST (baked) weight: a runtime
-# tensor-weight conv is rejected by Espresso ("Not implemented ... not supported
-# on any backend") - verified by probe. So a native `conv` node's weight is not
-# a graph input and the autograd never asks for its gradient; only the gradient
-# wrt the conv INPUT is defined here, as the standard transposed-conv backward:
-#   grad_input = conv_transpose(grad_out, W) with the forward stride/pad/dilation.
-# The conv weight [Cout,Cin,kH,kW] is passed AS-IS to conv_transpose (whose weight
-# layout [Cin_ct,Cout_ct,kH,kW] matches because the transposed conv's input
-# channels are the forward conv's OUTPUT channels). Verified cos 1.0 vs torch for
-# stride=1 (pad 0/1). stride>1 needs an output_padding the op lacks and is
-# rejected. For a trainable conv (weight gradient), use `conv_trainable` below,
-# which builds the conv from primitives so the weight is a real graph parameter.
+# spatial vjps. Native conv needs a baked weight, so only the conv INPUT grad is
+# defined here (transposed-conv backward, stride=1); for a trainable conv weight
+# use conv2d below. See docs/developer/autograd.md.
 
 @vjp("conv")
 def _vjp_conv(t, g):
@@ -571,9 +506,8 @@ def _vjp_conv(t, g):
 
 @vjp("avg_pool")
 def _vjp_avg_pool(t, g):
-  """Uniform spread of the cotangent over each pooling window. For the
-    non-overlapping case (stride == k, the demo's config) the backward is exactly
-    nearest-neighbour upsample by k, scaled by 1/k^2. Verified cos 1.0 vs torch."""
+  """Uniform spread over each window: nearest-neighbour upsample by k, scaled 1/k^2
+    (non-overlapping case, stride == k)."""
   k, st = t.attrs["k"], t.attrs["stride"]
   if st != k or t.attrs["pad"] != 0:
     raise NotImplementedError(
@@ -584,22 +518,10 @@ def _vjp_avg_pool(t, g):
 
 @vjp("max_pool")
 def _vjp_max_pool(t, g):
-  """Route the cotangent only to the max element of each pooling window, built
-    WITHOUT gather/scatter (both walled). For the non-overlapping, unpadded case
-    (stride == k, pad == 0) the pooled output `y` upsampled by `k` (nearest)
-    repeats each window's max over its k*k cells, so `y_up` aligns cell-for-cell
-    with the input `x`. The argmax mask is then `mask = (x == y_up)`, expressed
-    with the exposed comparison + select: since `y_up >= x` everywhere (it is the
-    window max), `x == y_up` is exactly `NOT (y_up > x)`, i.e.
-    `select(y_up.greater(x), 0, 1)`. The gradient is
-    `grad_x = upsample(grad_y, k) * mask`.
-
-    Tie handling: when several cells in a window share the max, the mask is 1 for
-    all of them, over-routing the gradient (torch routes to exactly one). On random
-    continuous fp16 inputs exact ties are rare, so this matches torch within the
-    fp16 band (cos > 0.99). The tie approximation is left documented rather than
-    normalized to keep the rule simple (normalization would need a per-window
-    reduce + broadcast)."""
+  """Route g only to each window's max (no gather/scatter): grad_x =
+    upsample(g, k) * mask, mask = select(y_up.greater(x), 0, 1) with y_up the
+    upsampled window max. Ties over-route (1 per tied cell) vs torch's one; rare
+    on continuous fp16. Non-overlapping, unpadded only. See docs/developer/autograd.md."""
   x = t.srcs[0]
   k, st = t.attrs["k"], t.attrs["stride"]
   if st != k or t.attrs["pad"] != 0:
@@ -611,23 +533,14 @@ def _vjp_max_pool(t, g):
   return [g.upsample(k) * is_max]
 
 
-# --------------------------------------------------------------------------- #
-# trainable conv - a conv whose weight is a real graph parameter                #
-# --------------------------------------------------------------------------- #
-# The native ANE conv requires a baked (const) weight, so its weight can never be
-# a trainable graph input. To train a conv on the engine we build it from
-# primitives: an im2col (static slice_by_size + concat, not the walled
-# KernelRasterizer) into patches, then a broadcast batched-matmul (bmm) by the
-# weight parameter. Every op has a vjp (slice_by_size/concat/transpose/reshape/
-# bmm), so both the input and weight gradients are produced automatically and run
-# on the ANE. Verified cos 1.0 vs torch for the forward and both gradients
-# (stride=1, pad=0). Downsampling is done by avg_pool, not stride.
+# trainable conv (weight is a real graph parameter): native conv needs a baked
+# weight, so build the conv from primitives (im2col via slice_by_size + concat,
+# then broadcast bmm) where every op has a vjp. See docs/developer/autograd.md.
 
 def conv_param(weight_init) -> Tensor:
   """A trainable conv weight parameter. `weight_init` is [Cout, Cin, kH, kW]
-    (PyTorch conv layout); stored internally as the flat patch matrix
-    [Cin*kH*kW, Cout] that `conv2d` consumes. The patch (row) order is
-    `ci*(kH*kW) + (u*kW + v)`, matching the im2col built in `conv2d`."""
+    (PyTorch layout), stored as the flat patch matrix [Cin*kH*kW, Cout] that
+    `conv2d` consumes (row order ci*(kH*kW) + (u*kW + v))."""
   W = np.asarray(weight_init, dtype=np.float32)
   Cout, Cin, kH, kW = W.shape
   flat = W.reshape(Cout, Cin * kH * kW).T.copy()        # [Cin*kH*kW, Cout]
@@ -638,19 +551,12 @@ def conv_param(weight_init) -> Tensor:
 
 def conv2d(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0) -> Tensor:
   """A trainable stride-1 2-D conv built from primitives so `weight` is a real
-    graph parameter (see `conv_param`). `x` is [N, Cin, H, W]; `weight` is a
-    `conv_param` (flat [Cin*kH*kW, Cout], carrying `conv_shape`). Returns
-    [N, Cout, Hout, Wout]. `stride` must be 1 (strided slicing is unavailable);
-    `pad` >= 0 zero-pads H and W IN-GRAPH (a zero-border `concat` before the
-    im2col), so a 'same' conv stays inside one fused program and the padding
-    differentiates through the existing concat VJP. With `pad=0` the behaviour is
-    byte-for-byte the previous implementation.
+    graph parameter (see `conv_param`). `x` is [N, Cin, H, W]; `weight` a
+    `conv_param`; returns [N, Cout, Hout, Wout]. `stride` must be 1; `pad` >= 0
+    zero-pads in-graph (concat before im2col, differentiated through concat's VJP).
 
-    COMPILE SCALES WITH BATCH N: the im2col materialises [N, Cin*kH*kW, Hout*Wout]
-    tensors, so the *compile* (tiling/partition) time grows with N - on M1/h13 a
-    very large full batch (e.g. N~1000 over 28x28) can take minutes or hang the
-    compiler (M5 compiles it fine). Train large datasets in MINI-BATCHES (a modest
-    N, e.g. <=128, fed per step) rather than one full-batch graph."""
+    Compile time grows with batch N (the im2col materialises [N, Cin*kH*kW,
+    Hout*Wout]); train in MINI-BATCHES (N <= ~128). See docs/developer/autograd.md."""
   if stride != 1:
     raise NotImplementedError("conv2d (trainable) supports stride=1 only; "
                               "downsample with avg_pool/max_pool.")
@@ -663,10 +569,8 @@ def conv2d(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0) -> Tensor:
   if Cin_w != Cin:
     raise ValueError(f"conv2d: weight Cin {Cin_w} != input Cin {Cin}")
   if pad:
-    # In-graph zero padding: concat zero-constant borders onto H (axis 2) then W
-    # (axis 3). The constant is a non-trainable input leaf; concat's VJP emits a
-    # grad slice for it but it's discarded (not a parameter), adding no
-    # trainable VJP.
+    # In-graph zero padding: concat zero-constant borders onto H then W (the
+    # constant is a non-trainable leaf; its grad slice is discarded).
     zh = graph.input((N, Cin, pad, W)); zh.attrs["value"] = np.zeros((N, Cin, pad, W), np.float32)
     x = graph.concat([zh, x, zh], axis=2)            # [N, Cin, H+2pad, W]
     H = H + 2 * pad
@@ -678,13 +582,9 @@ def conv2d(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0) -> Tensor:
   parts = []
   for u in range(kH):
     for v in range(kW):
-      # patch index goes on axis 2 (NOT the last axis): the concat's backward is a
-      # slice along that axis, and the h13 x16 crop-DMA saturation (>4094 -> +/-inf) fires
-      # ONLY on a nonzero begin-offset of the LAST (width) axis. With the patches on a
-      # non-last axis, the large loss-scaled input-gradient never transits the saturating
-      # slice, so multi-layer conv training is numerically correct on M1 at any loss_scale.
-      # (The forward x-slice still carries the small input; the transpose below moves K to
-      # the last axis, and transpose's backward is a pure permute with no slice.)
+      # patch index on axis 2 (not last): A13's x16 crop-DMA saturation (>4094)
+      # fires only on a nonzero last-axis slice offset, so keeping the large
+      # loss-scaled grad off the width axis keeps M1 conv training correct.
       parts.append(x.slice_by_size([0, 0, u, v], [N, Cin, Hout, Wout]).reshape(N, Cin, 1, L))
   patches = graph.concat(parts, axis=2).transpose([0, 3, 1, 2]).reshape(N, L, K)   # [N,L,K]
   y = patches @ weight.reshape(1, K, Cout)                  # broadcast bmm -> [N,L,Cout]
@@ -696,10 +596,9 @@ def conv2d(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0) -> Tensor:
 # --------------------------------------------------------------------------- #
 
 class CEHandle:
-  """A softmax-cross-entropy training objective: carries the logits and the
-    one-hot target (a graph input). The gradient at the logits is the analytic
-    fused form (softmax(logits) - target)/N, which is fp16-stable (no log). The
-    loss VALUE + accuracy are computed host-side in fp32 by the Trainer."""
+  """A softmax-cross-entropy objective carrying the logits and one-hot target.
+    The logit gradient is the analytic fused form (softmax(logits) - target)/N,
+    fp16-stable (no log); the loss value + accuracy are host-side fp32."""
   def __init__(self, logits: Tensor, target: Tensor):
     if len(logits.shape) != 2 or logits.shape != target.shape:
       raise ValueError(f"softmax_cross_entropy expects 2-D logits/target [N,K]; "
@@ -721,14 +620,9 @@ def mse(y: Tensor, target: Tensor) -> Tensor:
   return diff.square().mean(tuple(range(len(y.shape))))
 
 
-# --------------------------------------------------------------------------- #
-# on-ANE optimizer update graph builders                                       #
-# --------------------------------------------------------------------------- #
-# These build the optimizer update as aneforge graph ops, so the update
-# ARITHMETIC runs on the ANE (not the host). `lr_t` is a fed [1,1] input
-# (broadcast tensor-mul over the param), not a baked `muls`, so per-step bias
-# correction / loss-scale folding varies correctly each step. Verified on-device
-# (cosine 1.0 vs numpy).
+# on-ANE optimizer update graph builders: the update arithmetic runs as graph
+# ops. `lr_t` is a fed [1,1] input (broadcast tensor-mul, not a baked `muls`) so
+# per-step bias correction / loss-scale folding varies each step.
 
 def _sgd_update(w: Tensor, g: Tensor, lr_t: Tensor) -> Tensor:
   """w' = w - lr_t * g  (lr_t a fed [1,1] input, broadcast tensor-mul)."""
@@ -737,12 +631,8 @@ def _sgd_update(w: Tensor, g: Tensor, lr_t: Tensor) -> Tensor:
 
 def _adam_update(w: Tensor, m: Tensor, v: Tensor, g: Tensor, lr_t: Tensor,
                  b1: float = 0.9, b2: float = 0.999, eps: float = 1e-8):
-  """Adam update as ANE ops; b1/b2/eps baked, lr_t fed (bias correction folded
-    into lr_t host-side). Returns (w', m', v').
-
-    `lr_t * m2` is a tensor-`mul` broadcasting the fed [1,1] over the param shape
-    (not a baked `muls`). `m*b1`, `g*(1-b1)`, `.adds(eps)` are baked scalars -
-    fine, since none is mul-by-zero on a reduce output (the only `muls` wall)."""
+  """Adam update as ANE ops; b1/b2/eps baked, lr_t fed (bias correction folded in
+    host-side). Returns (w', m', v')."""
   m2 = (m * float(b1)) + (g * float(1 - b1))
   v2 = (v * float(b2)) + (g.square() * float(1 - b2))
   w2 = w - ((lr_t * m2) / (v2.sqrt().adds(float(eps))))
@@ -750,11 +640,10 @@ def _adam_update(w: Tensor, m: Tensor, v: Tensor, g: Tensor, lr_t: Tensor,
 
 
 def adam_step(params, m, v, grads: dict, lr_t, betas=(0.9, 0.999), eps: float = 1e-8):
-  """One Adam update as graph ops over lists `params`/`m`/`v` (grads keyed by
-    param), returning the new (params, m, v) TENSOR lists. Used to UNROLL K training
-    steps into one program: thread the returned lists into the next step's forward.
-    Propagates a `conv_param` weight's `conv_shape` onto the updated tensor so an
-    advanced conv weight still works as a `conv2d` weight in the next unrolled step."""
+  """One Adam update as graph ops over lists `params`/`m`/`v`, returning the new
+    (params, m, v) tensor lists. Used to UNROLL K steps into one program (thread the
+    returned lists into the next step's forward); `conv_shape` is propagated so a
+    conv weight still works as a `conv2d` weight next step."""
   b1, b2 = betas
   nP, nM, nV = [], [], []
   for p, mi, vi in zip(params, m, v):
@@ -765,18 +654,10 @@ def adam_step(params, m, v, grads: dict, lr_t, betas=(0.9, 0.999), eps: float = 
 
 
 def _stack3(w: Tensor, m: Tensor, v: Tensor) -> Tensor:
-  """STACK the three same-shape update outputs into ONE output by concatenating
-    along axis 0 in their NATURAL row width: `concat([w,m,v], axis=0)` ->
-    [3*rows, cols] for a [rows, cols] param. This makes a 3-output Adam update
-    compile as a SINGLE-output program (no _compile.py change needed); the host
-    splits it back row-block-wise via `_split3`.
-
-    The natural-width axis-0 stack is load-bearing: reshaping each output to a wide
-    [1, prod(shape)] row and concatenating those trips the ANECCompile wide-row
-    wall once prod(shape) is large (e.g. a 784x128 = 100352-wide row segfaults;
-    verified). Keeping the column width and stacking rows stays inside the verified
-    2-D envelope and matches numpy on-device at every param shape here. Params are
-    flattened to 2-D first so `cols` is well defined."""
+  """Concat (w, m, v) along axis 0 in their natural row width -> [3*rows, cols],
+    so a 3-output Adam update compiles as a SINGLE-output program (split host-side
+    via `_split3`). Natural-width axis-0 is load-bearing: reshaping to a wide row
+    first trips the ANECCompile wide-row wall. See docs/developer/autograd.md."""
   w2 = w.reshape(1, int(np.prod(w.shape))) if len(w.shape) == 1 else w
   m2 = m.reshape(1, int(np.prod(m.shape))) if len(m.shape) == 1 else m
   v2 = v.reshape(1, int(np.prod(v.shape))) if len(v.shape) == 1 else v
@@ -784,8 +665,7 @@ def _stack3(w: Tensor, m: Tensor, v: Tensor) -> Tensor:
 
 
 def _split3(out, shape):
-  """Split a [3*rows, cols] stacked-update result back into (w', m', v') in
-    `shape` (inverse of `_stack3`'s natural-width axis-0 stack)."""
+  """Inverse of `_stack3`: split [3*rows, cols] back into (w', m', v') in `shape`."""
   out = np.asarray(out)
   rows = shape[0] if len(shape) >= 2 else 1
   return (out[0 * rows:1 * rows].reshape(shape),
@@ -794,11 +674,9 @@ def _split3(out, shape):
 
 
 def _check_finite_grads(opt, grads) -> bool:
-  """True iff every gradient is finite (one np.isfinite reduction per array).
-    Otherwise bump the optimizer's consecutive-skip counter and warn (on the
-    first skip, then every 100th) so the caller skips the ENTIRE step - the
-    standard loss-scaling overflow idiom: a skipped step leaves the fp32 masters
-    (and Adam's t/moments) untouched, so a later finite step is unaffected."""
+  """True iff every gradient is finite. Otherwise bump the skip counter, warn
+    (1st skip then every 100th), and skip the whole step (loss-scaling overflow
+    idiom: masters + Adam state stay untouched)."""
   bad = [i for i, g in enumerate(grads) if not np.isfinite(np.asarray(g)).all()]
   if not bad:
     opt._nonfinite_skips = 0
@@ -817,8 +695,8 @@ def _check_finite_grads(opt, grads) -> bool:
 
 
 class SGD:
-  """Host fp32 SGD over the parameters' master values. `Trainer` applies loss
-    scaling (grads come in scaled; divide before the step)."""
+  """Host fp32 SGD over the parameters' master values (loss-scaled grads divided
+    out before the step)."""
   def __init__(self, params, lr: float, loss_scale: float = 1.0):
     self.params, self.lr, self.scale = list(params), float(lr), float(loss_scale)
     self._nonfinite_skips = 0
@@ -830,9 +708,8 @@ class SGD:
 
 
 class Adam:
-  """Host fp32 Adam over the parameters' master values. Loss-scaled grads are
-    divided by `loss_scale` before the moment update; fp16 written back into the
-    fed param value (sibling to SGD)."""
+  """Host fp32 Adam over the parameters' master values (loss-scaled grads divided
+    out before the moment update; sibling to SGD)."""
   def __init__(self, params, lr: float = 1e-3, betas=(0.9, 0.999),
                eps: float = 1e-8, loss_scale: float = 1.0):
     self.params = list(params)
@@ -854,22 +731,16 @@ class Adam:
       p.attrs["value"] = p.attrs["value"] - self.lr * mhat / (np.sqrt(vhat) + self.eps)
 
 
-# A13 (M1) conv weight-grad saturation ceiling: the trainable conv builds im2col from
-# width-offset slices (conv2d's `for u,v` slice_by_size, v>0), and on A13 a nonzero
-# last-axis/width slice offset routes through a Q.4 x16 crop-DMA that clamps any
-# |value| > 4094 (=fp16max/16) to +/-inf. The weight-grad runs loss-scaled backward
-# activations through those slices, so `loss_scale x |backward activation|` must stay
-# under 4094. The synthetic repro breaks at loss_scale >= 512, but end-to-end a real
-# normalized CNN trains identically at loss_scale 128/1024/65536 on M1 (the repro's
-# 0.5*sum(y^2) loss + random inputs push magnitudes a real net never reaches), so this
-# is a WARN, never an auto-cap. M5/A16: clean route.
+# A13 (M1) conv weight-grad saturation ceiling: a nonzero width-axis im2col slice
+# offset routes through A13's Q.4 x16 crop-DMA, clamping |value| > 4094 to +/-inf,
+# so loss_scale x |backward activation| must stay under 4094. Real normalized CNNs
+# clear it; a WARN, never an auto-cap (M5/A16 unaffected). See docs/developer/autograd.md.
 _A13_CONV_WGRAD_LOSS_SCALE_MAX = 512.0
 
 
 def _has_conv_wgrad(params, objective) -> bool:
-  """Does training this objective produce a conv WEIGHT-grad through the width-offset
-    im2col slices? True iff a param is a trainable conv weight with kW>1 (a kW=1 conv has
-    no width-offset slice, so never hits the A13 saturation path)."""
+  """True iff a param is a trainable conv weight with kW>1 (only those hit the
+    A13 width-offset saturation path)."""
   for p in params:
     cs = p.attrs.get("conv_shape")
     if cs is not None and int(cs[3]) > 1: return True   # conv_shape = (Cout, Cin, kH, kW)
@@ -877,13 +748,9 @@ def _has_conv_wgrad(params, objective) -> bool:
 
 
 def _guard_a13_conv_loss_scale(params, objective, loss_scale: float) -> float:
-  """If the compile target is A13-class (M1) and the graph trains a conv weight, warn
-    when loss_scale could push loss-scaled backward activations past 4094, where the
-    width-offset im2col slices saturate to +/-inf (corrupt weight-grad). WARN ONLY - a
-    real normalized CNN trains correctly at any loss_scale on M1 (the cap worry was
-    refuted end-to-end); saturation needs unusually large backward magnitudes. Returns
-    loss_scale unchanged. Target resolves via the same detect_family() path as compile
-    (honors ANEFORGE_TARGET); other families are unaffected."""
+  """On A13/M1 with a trainable conv weight, warn when loss_scale could push
+    backward activations past 4094 (width-offset im2col saturation). WARN only;
+    returns loss_scale unchanged. Other families unaffected."""
   from . import _targets as TG
   try:
     fam = TG.detect_family()
@@ -906,41 +773,25 @@ def _guard_a13_conv_loss_scale(params, objective, loss_scale: float) -> float:
 
 
 class Trainer:
-  """Compiles a forward program ONCE plus one backward program PER PARAMETER
-    (each emitting that param's gradient in its natural 2-D shape); `step` evals
-    the backward programs on the ANE and applies the optimizer (params update
-    host-side, fed back next eval - no recompile). One program per param avoids an
-    ANECCompile wall hit by reshaping a large weight grad into a wide row and
-    concatenating it with a differently-sized row (the math is unchanged).
+  """Compiles a forward program ONCE plus one backward program PER PARAMETER (each
+    emitting that param's grad in natural shape); `step` evals them and applies the
+    optimizer host-side (no recompile). Per-param programs avoid an ANECCompile
+    wide-row wall.
 
-    Accepts either:
-      * a scalar `loss` Tensor (regression): forward program outputs the loss
-        scalar; `loss()` reads it; backward seeds from a ones-seed at the loss.
-      * a `CEHandle` (classification): forward program outputs the logits;
-        backward seeds from the analytic on-ANE gradient
-        `(softmax(logits) - target) * (loss_scale / N)` at the logits.
-        Host-side `loss()` (fp32 cross-entropy) and `accuracy(X, y_labels)`
-        (argmax) read the logits program.
+    Accepts a scalar `loss` Tensor (regression; ones-seed) or a `CEHandle`
+    (classification; analytic on-ANE logit seed, host-side fp32 `loss()`/`accuracy`).
+    `optimizer="sgd"|"adam"`.
 
-    `optimizer="sgd"|"adam"` selects the optimizer.
-
-    `device_optimizer=True` runs the OPTIMIZER STEP on the ANE: alongside the
-    per-param backward programs (-> grads), a per-param UPDATE program computes the
-    new state with ANE graph ops, so no training tensor-math runs on the host. The
-    host only computes the scalar `lr_t`, shuttles state/grads in-out (the deferred
-    host<->device round-trip), samples minibatch indices, and prints. The Adam
-    moments `m`/`v` are held host-side as fp16 arrays, fed each step and read back.
-    `device_optimizer=False` (default) keeps the host fp32 optimizer path
-    byte-for-byte unchanged (the regression guard + the 98% baseline)."""
+    `device_optimizer=True` runs the optimizer step on the ANE (per-param UPDATE
+    programs); Adam moments held host-side as fp16, fed/read each step. Default
+    False keeps the host fp32 path byte-for-byte. See docs/developer/autograd.md."""
   def __init__(self, objective, params, lr: float, loss_scale: float = 1.0,
                data_inputs: dict | None = None, optimizer: str = "sgd",
                betas=(0.9, 0.999), eps: float = 1e-8, device_optimizer: bool = False,
                resident_state: bool = False):
     from . import _compile as _c
     self.params = list(params)
-    # A13/M1 conv weight-grad saturation guard: warn if loss_scale could push the
-    # width-offset im2col backward slices past the x16 crop-DMA threshold (no-op off A13
-    # or for non-conv graphs). Done before scale is consumed by the optimizer/seed.
+    # A13/M1 conv weight-grad saturation guard (before scale is consumed).
     loss_scale = _guard_a13_conv_loss_scale(self.params, objective, float(loss_scale))
     self.data = dict(data_inputs or {})       # {input Tensor: numpy value}
     self.scale = float(loss_scale)
@@ -948,8 +799,7 @@ class Trainer:
     self.b1, self.b2 = float(betas[0]), float(betas[1])
     self.eps = float(eps)
     self.optimizer = optimizer
-    # resident_state implies the optimizer runs on-device (it IS the on-device
-    # update, with state held resident); device_optimizer is forced on.
+    # resident_state forces device_optimizer on (it IS the on-device update).
     self.resident_state = bool(resident_state)
     self.device_optimizer = bool(device_optimizer) or self.resident_state
     self.opt = (Adam(self.params, lr, betas, eps=eps, loss_scale=loss_scale)
@@ -962,35 +812,21 @@ class Trainer:
       self.ce = None
       grads = backward(objective, self.params, loss_scale=loss_scale)
       fwd_out = objective                        # forward program -> loss scalar
-    # Backward: ONE e5rt program per parameter, each emitting that param's grad
-    # in its NATURAL shape. Concatenating all grads into a single wide row trips
-    # an ANECCompile wall when a large weight grad (e.g. 784x128) is reshaped to a
-    # 100k-wide row and concatenated with a differently-sized row (verified: the
-    # reshape-to-wide-row-into-concat is the trigger, not the matmul). Per-param
-    # programs stay inside the verified 2-D matmul envelope, and the optimizer
-    # consumes the grads in param shape anyway.
-    # aneforge's own training kernels (forward loss, per-param backward, optimizer
-    # update) contain structural subtracts - the loss pred-target, gradient axpys,
-    # the w-lr*g update - that trip the generic cancel_sub precision heuristic. These
-    # are vouched, accuracy-tested kernels (the MNIST baselines + the corpus), not
-    # user-data modeling choices, so they skip the user-facing precision check.
+    # ONE backward program per param, in natural shape: concatenating all grads
+    # into one wide row trips an ANECCompile wide-row wall. _check_precision is off
+    # because the training kernels' structural subtracts (loss/axpy/update) are
+    # vouched, not user-data choices. See docs/developer/autograd.md.
     self._fwd = _c.compile(fwd_out, _check_precision=False)
     if self.resident_state:
-      # The whole step (forward + backward + per-param update) is ONE fused
-      # multi-output program; state tensors stay resident on-device across
-      # steps (no host round-trip). _fwd is kept only for checkpoint accuracy.
-      self._build_resident(_c, grads)
+      self._build_resident(_c, grads)            # _fwd kept only for checkpoint accuracy
     else:
       self._bwd = [_c.compile(grads[p], _check_precision=False) for p in self.params]
       if self.device_optimizer: self._build_device_optimizer(_c)
 
   def _build_device_optimizer(self, _c):
-    """Compile a per-param UPDATE program so the optimizer arithmetic runs on
-        the ANE. SGD: `(w_p, g_p, lr_t) -> w_p'` (single output). Adam:
-        `(w_p, m_p, v_p, g_p, lr_t) -> stack(w_p', m_p', v_p')` via `_stack3` (the
-        single-output STACK path), split host-side. `g_p`/`m_p`/`v_p`/`lr_t` are
-        plain (non-trainable) leaves fed each step; `w_p` is the param leaf itself
-        (its master value is fed, the new value written back)."""
+    """Compile a per-param UPDATE program so optimizer arithmetic runs on the ANE.
+        SGD: (w, g, lr_t) -> w'. Adam: -> stack(w', m', v') via `_stack3`, split
+        host-side. g/m/v/lr_t are fed leaves; w is the param leaf itself."""
     self._upd, self._upd_g, self._upd_lr = [], [], []
     if self.optimizer == "adam":
       self._m = [np.zeros(p.shape, np.float16) for p in self.params]
@@ -1011,15 +847,12 @@ class Trainer:
       self._upd.append(_c.compile(out, _check_precision=False))
 
   def _build_resident(self, _c, grads):
-    """Assemble the whole training step as ONE fused multi-output program with
-        optimizer state RESIDENT on-device. Each param `p` (and, for Adam, its
-        moments `m_p`/`v_p`) is a graph input whose updated value is a program
-        OUTPUT aliased back onto that input port via `share_buffer` - so state
-        lives on the engine across steps and the host feeds only the minibatch
-        (x, target) + the scalar `lr_t`, reading state back at checkpoints. The
-        forward and the update share the same resident param buffer: within one
-        execute the stream's FIFO ordering has the forward read the pre-step param
-        and the update overwrite it last (the next step reads the advanced value)."""
+    """Assemble the whole step as ONE fused multi-output program with optimizer
+        state RESIDENT on-device: each updated-state output is aliased back onto its
+        input port via `share_buffer`, so state lives on the engine across steps and
+        the host feeds only the minibatch + lr_t. Within one execute, FIFO ordering
+        has the forward read the pre-step param and the update overwrite it last.
+        See docs/developer/autograd.md."""
     lr_in = graph.input((1, 1))
     self._res_lr = lr_in
     self._t = 0
@@ -1045,8 +878,7 @@ class Trainer:
     prog = mm.prog
     self._res_in_name = dict(mm.input_ports)
     self._res_out_name = dict(mm.output_ports)
-    # alias each updated-state output onto its own input port (resident), then
-    # seed the (now shared) buffers once - params to their masters, moments to 0.
+    # alias each updated-state output onto its input port, then seed once.
     for out_t, in_t in alias:
       prog.share_buffer(0, self._res_out_name[out_t], 0, self._res_in_name[in_t])
     for entry in self._res_state:
@@ -1066,9 +898,8 @@ class Trainer:
     self._res_dirty = False
 
   def _resident_step(self) -> None:
-    """One resident step: feed ONLY the minibatch + lr_t, execute. State ports
-        are never written (they live on-device); the host does no tensor math and
-        no state copy."""
+    """One resident step: feed ONLY the minibatch + lr_t, execute (state stays
+        on-device; no host tensor math or state copy)."""
     if getattr(self, "_ds", None) is not None:
       xin, X, tin, Y = self._ds
       idx = self._next_batch()
@@ -1086,8 +917,8 @@ class Trainer:
     self._res_dirty = True
 
   def _sync_params_from_device(self) -> None:
-    """Checkpoint read: copy the resident params off the device into the host
-        masters (for accuracy/loss via the forward program). Moments stay resident."""
+    """Checkpoint read: copy resident params off-device into the host masters (for
+        accuracy/loss via the forward program); moments stay resident."""
     prog = self._res.prog
     for i, entry in enumerate(self._res_state):
       w = prog.read_output(self._res_out_name[entry["w_out"]]).astype(np.float32)
@@ -1103,11 +934,9 @@ class Trainer:
     self._res_dirty = False
 
   def _feed(self, model, override: dict | None = None):
-    """Map each compiled input Tensor to a fp16 array: trainable -> current
-        master value; present in `override` -> override[t] (used by the device
-        optimizer to inject grads/lr); otherwise a baked value-input carrying
-        attrs['value'] (e.g. the gamma a norm VJP re-injects).
-        `model._input_tensors` is the ordered input list stored by compile."""
+    """Map each compiled input Tensor to a fp16 array: trainable -> master value;
+        in `override` -> override[t] (device optimizer grads/lr); else the baked
+        value-input attrs['value'] (e.g. a norm VJP's re-injected gamma)."""
     lk = self.data if override is None else override
     return [
       t.attrs["value"].astype(np.float16) if t.attrs.get("trainable")
@@ -1116,8 +945,7 @@ class Trainer:
     ]
 
   def _feed_update(self, net, p, extra):
-    """Feed a per-param update program; delegates to _feed with the `extra`
-        override dict (grad/lr inputs keyed by their Tensor leaves)."""
+    """Feed a per-param update program (delegates to _feed with `extra`)."""
     return self._feed(net, extra)
 
   def set_dataset(self, x_input, X_full, target_input, Y_onehot, seed: int = 0):
@@ -1152,9 +980,7 @@ class Trainer:
     if not self.device_optimizer:
       self.opt.step(grads)
       return
-    # On-ANE optimizer: the update arithmetic runs as graph ops. The host only
-    # computes the scalar lr_t (folding loss-scale + Adam bias correction) and
-    # shuttles state/grads in-out - no host tensor math.
+    # On-ANE optimizer: update arithmetic runs as graph ops; host only computes lr_t.
     if self.optimizer == "adam":
       self._device_adam_step(grads)
     else:
@@ -1171,13 +997,9 @@ class Trainer:
 
   def _device_adam_step(self, grads):
     self._t += 1
-    # Host scalar lr_t = lr * sqrt(1-b2^t)/(1-b1^t) (bias correction folded in).
-    # The loss-scale is not divided out here: Adam's update is the ratio
-    # m/sqrt(v), and with the scaled grad g'=scale*g the moments scale as
-    # m'=scale*m, v'=scale^2*v, so m'/sqrt(v') = m/sqrt(v) - the loss-scale
-    # cancels in the ratio. Dividing lr_t by scale (a naive SGD-style unscale)
-    # double-unscales and collapses the step. (eps is the only scale-sensitive
-    # term and is negligible vs scale*sqrt(v).)
+    # lr_t = lr * sqrt(1-b2^t)/(1-b1^t). Loss-scale is NOT divided out: it cancels
+    # in Adam's m/sqrt(v) ratio (m'=scale*m, v'=scale^2*v); unscaling would
+    # double-unscale and collapse the step. See docs/developer/autograd.md.
     lr_t = self.lr * math.sqrt(1.0 - self.b2 ** self._t) / (1.0 - self.b1 ** self._t)
     lr_arr = np.full((1, 1), lr_t, np.float16)
     for i, p in enumerate(self.params):
@@ -1237,40 +1059,12 @@ class Trainer:
     for net in getattr(self, "_upd", []): net.release()
 
 
-# --------------------------------------------------------------------------- #
-# UnrolledTrainer - K Adam steps as ONE fused program, fully on the ANE        #
-# --------------------------------------------------------------------------- #
-
 class UnrolledTrainer:
-  """Train with `K` Adam steps UNROLLED into ONE fused ANE program, so the whole
-    forward -> backward -> optimizer-update recurrence runs on the engine with NO
-    per-step host loop. Each `step()` runs K steps in a SINGLE dispatch: the host
-    feeds K minibatches plus the K per-step learning rates and shuttles the (params,
-    m, v) arrays in and out between K-step blocks. That shuttle is an array move, not
-    tensor math, and there's no per-step host<->device round-trip inside the block.
-
-    The bounded-K, fully-on-engine analogue of `Trainer` (whose `step()` dispatches
-    once per step). Enabled by the stop-gradient frontier in
-    `backward`/`backward_from`: threading one step's updated-weight tensors into the
-    next step's forward needs each step's gradient to treat the current weights as
-    leaves (plain SGD/Adam), not differentiate through the previous update.
-
-    Args:
-      params (list): trainable leaves (`af.parameter` / `af.conv_param`).
-      forward (callable): `forward(P, x) -> output` building the model from the
-        current-step weight tensors `P` (a list aligned with `params`) and a data
-        input tensor `x`. Used both per unrolled step and for `predict`.
-      kind (str): `"ce"` (output = logits, softmax-cross-entropy) or `"mse"`.
-      x_inputs (list): list of K data input placeholders (`af.input`), one per step.
-      t_inputs (list): list of K target input placeholders, one per step.
-      dataset (tuple): `(X, Y)` numpy arrays; `X` already shaped like `x_inputs[k]`
-        per sample (leading axis = sample), `Y` one-hot ([N, C]) for `"ce"`.
-      resident (bool): if True (default) the optimizer state (params, m, v) stays
-        RESIDENT on-device across dispatches - each updated-state output is aliased
-        (`share_buffer`) onto its own input port, seeded once. The host then feeds
-        ONLY the K minibatches + per-step lr and reads weights at checkpoints;
-        nothing is shuttled in/out between dispatches. The end-to-end fully-on-
-        engine path (no per-step loop AND no state move).
+  """Train with `K` Adam steps UNROLLED into ONE fused ANE program: each `step()`
+    runs K forward->backward->update steps in a single dispatch. Bounded-K
+    fully-on-engine analogue of `Trainer`, enabled by the stop-gradient frontier in
+    `backward` (each step treats current weights as leaves). `resident=True` keeps
+    optimizer state on-device across dispatches. See docs/developer/autograd.md.
     """
   def __init__(self, params, forward, kind, x_inputs, t_inputs, dataset, lr,
                loss_scale: float = 1.0, betas=(0.9, 0.999), eps: float = 1e-8,
@@ -1315,10 +1109,9 @@ class UnrolledTrainer:
       self._data_map[id(x_inputs[k])] = (k, "x")
       self._data_map[id(t_inputs[k])] = (k, "t")
 
-    # a separate single-batch forward program for checkpoint predict (on the ANE).
-    # It uses its OWN weight-input leaves (fed the masters), NOT the trainable
-    # params: compile mutates each Tensor's internal name, so sharing the param
-    # objects between the two programs would clobber the training program's ports.
+    # separate single-batch forward program for checkpoint predict, with its OWN
+    # weight leaves: compile mutates Tensor names, so sharing params would clobber
+    # the training program's ports.
     ev_w = [graph.input(p.shape) for p in self.params]
     for ew, p in zip(ev_w, self.params):
       if "conv_shape" in p.attrs: ew.attrs["conv_shape"] = p.attrs["conv_shape"]

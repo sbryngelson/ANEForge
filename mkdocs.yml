@@ -88,6 +88,16 @@ nav:
       - Training & autograd: api/training.md
       - Pretrained models: api/models.md
       - Applied math: api/math.md
+  - Internals (developer):
+      - Overview: developer/overview.md
+      - Compile pipeline: developer/compile-pipeline.md
+      - Optimizer & cost model: developer/optimizer-and-cost.md
+      - Numerics: developer/numerics.md
+      - Native bridges: developer/bridges.md
+      - Op quirks: developer/op-quirks.md
+      - Capabilities & targets: developer/capabilities-and-targets.md
+      - Autograd internals: developer/autograd.md
+      - Model loaders: developer/models.md
   - Contribute:
       - Development: development.md
       - Glossary: glossary.md

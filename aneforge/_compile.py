@@ -1,9 +1,6 @@
-"""Lower a graph into ONE fused e5rt program.
+"""Lower a graph into ONE fused e5rt program (one MIL op per node, weights in one BLOBFILE).
 
-`compile(out)` topologically orders the graph, emits a single MIL function (one op
-per graph node, weights packed into one BLOBFILE), and hands it to e5rt on the ANE.
-Each op's MIL is produced by a small handler registered with `@op(...)` - the
-registry doubles as the set of ops aneforge can reach on the device.
+See .superpowers/sdd/gold-core-heavy.md for the compile-pipeline design rationale.
 """
 from __future__ import annotations
 
@@ -29,8 +26,7 @@ _BUILD_INFO = (
 
 
 def _topo(out: Tensor) -> list[Tensor]:
-  # iterative post-order DFS (explicit stack) so deep unrolled graphs don't blow
-  # Python's recursion limit. Sources are appended before their consumers (valid topo).
+  # iterative post-order DFS so deep unrolled graphs don't hit the recursion limit.
   seen: set[int] = set()
   order: list[Tensor] = []
   stack: list = [(out, False)]
@@ -66,17 +62,14 @@ class _Emitter:
 
   def __init__(self, int8: bool, compress: str | None = None, compress_atol: float = 0.05,
         block_size: int = 32, family: int | None = None) -> None:
-    # `compress` is the unified knob: None (fp16), "int8", "int4", "sparse",
-    # "blockwise", or "auto". `int8=True` is the back-compat alias for compress="int8".
+    # `compress`: None (fp16), "int8", "int4", "sparse", "blockwise", "auto"; int8=True aliases "int8".
     self.compress = compress if compress is not None else ("int8" if int8 else None)
     self.int8 = self.compress == "int8"
     self.compress_atol = compress_atol
     self.block_size = block_size       # inner-dim block for compress="blockwise"
-    # compress="auto" is family-aware: only encodings that stream natively on the
-    # target family are auto candidates - a folding encoding costs accuracy for zero
-    # bandwidth win, so fp16 dominates it (h13/M1 streams int4-LUT + sparse; A14+ stream
-    # all four). family=None keeps every branch enabled (historical behavior);
-    # explicit single-mode knobs are never filtered - the user's call.
+    # compress="auto" is family-aware: only encodings that stream natively on the target
+    # family are candidates (folding ones cost accuracy for no bandwidth win). family=None
+    # keeps every branch enabled; explicit single-mode knobs are never filtered.
     if self.compress == "auto" and family is not None:
       from . import _targets as TG
       self._auto_streams = TG.native_streams(family)
@@ -103,7 +96,7 @@ class _Emitter:
     idx = np.empty(raw.size * 2, dtype=np.uint8)
     idx[0::2], idx[1::2] = raw & 0x0F, (raw >> 4) & 0x0F
     recon = cb[idx][: W2.size].reshape(W2.shape)
-    W2 = W2.astype(np.float32)   # norm in fp32: W2.dot(W2) overflows fp16 for large weights
+    W2 = W2.astype(np.float32)   # norm in fp32: it overflows fp16 for large weights
     return float(np.linalg.norm(recon - W2) / (np.linalg.norm(W2) + 1e-12))
 
   @staticmethod
@@ -112,33 +105,17 @@ class _Emitter:
     q = np.frombuffer(data, dtype=np.int8).astype(np.float32).reshape(OUT, nblocks, IN // nblocks)
     sc = np.frombuffer(scale, dtype=np.float16).astype(np.float32).reshape(OUT, nblocks)
     recon = (q * sc[:, :, None]).reshape(OUT, IN)
-    W2 = W2.astype(np.float32)   # norm in fp32: W2.dot(W2) overflows fp16 for large weights
+    W2 = W2.astype(np.float32)   # norm in fp32: it overflows fp16 for large weights
     return float(np.linalg.norm(recon - W2) / (np.linalg.norm(W2) + 1e-12))
 
   def weight(self, name: str, W: np.ndarray, allow_int8: bool,
        int8: bool | None = None, allow_int4: bool = False,
        allow_sparse: bool = False) -> str:
-    """Declare a constant weight `name`. Encoding precedence: sparse (when
-        compress='sparse', allowed, >=50% zeros) -> int4-LUT (when compress='int4',
-        allowed, inner dim even, within the accuracy budget) -> per-channel int8
-        (compress='int8'/int8 override, allowed) -> fp16. The int4 fallback chain is
-        int4 -> int8 (per-channel, where allowed) -> fp16: when int4-LUT is rejected
-        (gate miss or odd inner dim), the weight falls to int8 if allow_int8 (denser
-        than fp16, and the user opted into compression), else fp16. int4 is gated
-        by per-tensor relative-L2 reconstruction error vs self.compress_atol, falling
-        back rather than emitting a too-lossy weight. compress=None/opt=0 stays
-        byte-identical (the fp16 branch). Under compress='auto' each compressed branch
-        is additionally gated on the encoding streaming natively on the target family
-        (self._auto_streams): on h13/M1 that is int4-LUT + sparse, so auto streams those
-        (sparse for >=50%-zero weights) but skips int8/blockwise (they fold), and a rejected
-        int4 falls to fp16, not int8."""
+    """Declare a constant weight `name`. Encoding precedence: sparse -> int4-LUT (accuracy-
+        gated) -> per-channel int8 -> fp16; compress=None/opt=0 stays byte-identical (fp16).
+        See .superpowers/sdd/gold-core-heavy.md for the full fallback chain + auto gating."""
     path = '@model_path/weights.bin'
     W2 = W.reshape(W.shape[0], -1)
-    # Branch order is the "auto" precedence: sparse -> int4 -> int8 -> fp16.
-    # Single-mode knobs ("sparse"/"int4"/"int8") enable exactly their one compressed
-    # branch; "auto" enables the branches that stream natively on the target family
-    # and takes the most-aggressive that stays correct (sparse lossless, int4
-    # accuracy-gated, int8 the dense fallback).
     _auto = self.compress == "auto"
     if (self.compress == "sparse" or (_auto and "sparse" in self._auto_streams)) and allow_sparse:
       mask, vals = sparsify(W2)
@@ -159,11 +136,8 @@ class _Emitter:
       packed, lut = palettize_lut4(W2)
       if self._lut4_rel_error(W2, packed, lut) <= self.compress_atol:
         oi, ol = self.blob.add(packed, UINT4), self.blob.add(lut, FP16)
-        # Indices always have the same shape as the weight (lut rank = W.ndim + 2).
-        # For 2-D weights this is [1,1,16,1] exactly as before (byte-identical).
-        # For ND weights (e.g. conv) the lut is [1]*N+[16,1]; Espresso accepts any
-        # rank as long as lut.rank == indices.rank + 2.  A reshape of a constexpr_
-        # output is not routable on the ANE backend, so we must use ND indices.
+        # ND indices (lut.rank == indices.rank + 2): a reshape of a constexpr_ output is
+        # not routable on the ANE backend. 2-D case is [1,1,16,1] (byte-identical).
         ishp = list(W.shape)
         lut_shp = [1] * W.ndim + [16, 1]
         lut_shp_str = "[" + ", ".join(str(d) for d in lut_shp) + "]"
@@ -180,14 +154,9 @@ class _Emitter:
       data, scale, nblocks = quantize_blockwise(W2, self.block_size)
       if self._blockwise_rel_error(W2, data, scale, nblocks) <= self.compress_atol:
         od, osc = self.blob.add(data, INT8), self.blob.add(scale, FP16)
-        # data has the weight's shape; scale is [OUT, nblocks]. On-device
-        # constexpr_blockwise_shift_scale reconstructs data.reshape(OUT,nblocks,bs)
-        # * scale[:,:,None] (zero offset). Verified multi-block on M5 (relerr ~3e-4).
-        # wall: the constexpr output is not routable as a matmul/conv weight operand
-        # (Espresso "Not implemented"); it only feeds elementwise consumers, so we
-        # bridge it through a +0 add to a dense fp16 result that can back a
-        # matmul/conv. Net: dequantized in-program, not streamed as int8 (disk ~2x
-        # smaller, no bandwidth win - unlike int4-LUT/sparse).
+        # The constexpr output is not routable as a matmul/conv weight operand (Espresso
+        # "Not implemented"), so bridge it through a +0 add to a dense fp16 result that can.
+        # Net: dequantized in-program (disk ~2x smaller, no bandwidth win - unlike int4/sparse).
         shp = list(W.shape)
         self.line(f'tensor<int8, {shp}> {name}_d = const()[name = string("{name}_d"), '
              f'val = tensor<int8, {shp}>(BLOBFILE(path = string("{path}"), offset = uint64({od})))];')
@@ -275,10 +244,8 @@ def _e_act_alpha_beta(em, t, n, s):
 
 @op("square")
 def _e_square(em, t, n, s):
-  # emit mul(x,x) instead of the `square` opcode: the native square opcode fused
-  # with a following nonlinearity fails ANECCompile when (Width % 128) > 64
-  # (mapped in the reverse-engineering corpus); mul(x,x) is identical math and
-  # compiles everywhere.
+  # mul(x,x) not the `square` opcode: square fused with a following nonlinearity fails
+  # ANECCompile when (Width % 128) > 64; mul(x,x) is identical math and compiles everywhere.
   em.line(f'{em.ty(t.shape)} {n} = mul(x = {s[0]}, y = {s[0]})[name = string("{n}")];')
 
 
@@ -320,10 +287,7 @@ def _e_muls(em, t, n, s):
 
 @op("adds")
 def _e_adds(em, t, n, s):
-  # scalar add (x + k), the additive sibling of muls. A const fp16 broadcast-added
-  # to x - the only fused way to inject a scalar offset (e.g. a normalization eps),
-  # since _binary requires two graph Tensors. Bit-faithful: the const is fp16-rounded
-  # exactly as muls rounds its scalar.
+  # scalar add (x + k): a fp16 const broadcast-added to x (the fused way to inject a scalar offset).
   k = float(np.float16(t.attrs["k"])).hex()
   em.line(f'fp16 {n}_k = const()[name = string("{n}_k"), val = fp16({k})];')
   em.line(f'{em.ty(t.shape)} {n} = add(x = {s[0]}, y = {n}_k)[name = string("{n}")];')
@@ -331,8 +295,7 @@ def _e_adds(em, t, n, s):
 
 @op("cast")
 def _e_cast(em, t, n, s):
-  # dtype conversion (dequantises a uint8 image input to fp16): the source port's
-  # declared dtype is uint8; cast lifts it to the fp16 compute type.
+  # dtype conversion (e.g. lift a uint8 image input port to the fp16 compute type).
   dt = t.attrs.get("dtype", "fp16")
   em.line(f'string {n}_d = const()[name = string("{n}_d"), val = string("{dt}")];')
   em.line(f'{em.ty_dt(t.shape, dt)} {n} = cast(dtype = {n}_d, x = {s[0]})[name = string("{n}")];')
@@ -340,8 +303,7 @@ def _e_cast(em, t, n, s):
 
 @op("const_array")
 def _e_const_array(em, t, n, s):
-  # a small baked fp16 const tensor (e.g. per-channel image scale/bias), streamed
-  # from the weights blob like any other const.
+  # a small baked fp16 const tensor (e.g. per-channel image scale/bias) from the weights blob.
   W = np.asarray(t.attrs["value"], dtype=np.float16)
   path = '@model_path/weights.bin'
   o = em.blob.add(fp16_bytes(W), FP16)
@@ -351,8 +313,7 @@ def _e_const_array(em, t, n, s):
 
 @op("matmul")
 def _e_matmul(em, t, n, s):
-  # per-node int8 override (set by the rewriter) takes precedence over the global
-  # self.int8; None defers to the global flag (keeps opt=0 byte-identical).
+  # per-node int8 override (set by the rewriter) wins over global self.int8; None defers.
   w = em.weight(f"{n}_w", t.attrs["wt"], allow_int8=True, int8=t.attrs.get("int8"), allow_int4=True, allow_sparse=True)  # wt is [N, K]
   em.line(f'{em.ty(t.shape)} {n} = matmul(transpose_x = bool(false), transpose_y = bool(true), '
       f'x = {s[0]}, y = {w})[name = string("{n}")];')
@@ -371,14 +332,8 @@ def _e_bmm(em, t, n, s):
 @op("conv")
 def _e_conv(em, t, n, s):
   a = t.attrs
-  # per-channel int8 is routable as a conv weight on the ANE: constexpr_affine_dequantize
-  # feeds the conv weight operand directly (no +0 bridge - unlike constexpr_blockwise_
-  # shift_scale). Measured on h13/M1: int8 conv compiles+runs at cos~1.0 vs fp16,
-  # relerr ~0.6% vs fp32 ref (the expected per-channel int8 error), and ~halves the
-  # DRAM weight bytes (dequant-in-program at the MAC port). int4-LUT/sparse stay as
-  # higher-precedence branches (int4 streams natively 2.37x on M1; int8 folds/dequants
-  # but still halves bytes). The per-node `int8` attr (set by the auto-rewriter) overrides
-  # the global flag, like matmul; None defers (keeps opt=0 byte-identical).
+  # per-channel int8 is routable as a conv weight (constexpr_affine_dequantize feeds the
+  # conv operand directly, no +0 bridge); per-node `int8` attr overrides the global flag.
   w = em.weight(f"{n}_w", a["weight"], allow_int8=True, int8=a.get("int8"), allow_int4=True, allow_sparse=True)
   p, st, dl, g = a["pad"], a["stride"], a["dilation"], a["groups"]
   em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
@@ -396,9 +351,8 @@ def _e_conv(em, t, n, s):
 
 @op("dynamic_conv")
 def _e_dynamic_conv(em, t, n, s):
-  # native conv with a dynamic weight: the kernel is the second src (s[1]), a graph value,
-  # not a baked BLOBFILE const. Lowers to the ANE dynamic-kernel path. Batch is guaranteed 1
-  # by the graph builder (batch>=2 dynamic-weight conv is unsupported).
+  # conv with a dynamic weight (kernel is s[1], a graph value not a const). Batch is 1
+  # by construction (batch>=2 dynamic-weight conv is unsupported).
   a = t.attrs
   p, st, dl, g = a["pad"], a["stride"], a["dilation"], a["groups"]
   em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
@@ -438,7 +392,7 @@ def _e_avg_pool(em, t, n, s):
 @op("conv_transpose")
 def _e_conv_transpose(em, t, n, s):
   a = t.attrs
-  w = em.weight(f"{n}_w", a["weight"], allow_int8=False)         # [Cin, Cout, kH, kW]; int4-LUT unverified for conv_transpose -> fp16/int8
+  w = em.weight(f"{n}_w", a["weight"], allow_int8=False)         # [Cin, Cout, kH, kW]; int4 unverified here -> fp16
   p, st, dl, g = a["pad"], a["stride"], a["dilation"], a["groups"]
   em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')
   em.line(f'tensor<int32, [2]> {n}_st = const()[name = string("{n}_st"), val = tensor<int32, [2]>([{st}, {st}])];')
@@ -504,9 +458,7 @@ def _e_softmax(em, t, n, s):
 
 @op("l2_norm")
 def _e_l2_norm(em, t, n, s):
-  # x / sqrt(sum(x^2, axis) + eps), built from reduce_l2_norm (verified on e5rt)
-  # over the requested axis. reduce_l2_norm computes sqrt(sum(x^2)); eps enters via
-  # a safe-divide guard (max with eps) to avoid div-by-zero.
+  # x / max(reduce_l2_norm(x), eps): reduce_l2_norm = sqrt(sum(x^2)); eps is a safe-divide floor.
   ax, eps = t.attrs["axis"], float(np.float16(t.attrs["eps"] ** 0.5)).hex()
   red_shape = tuple(1 if i == ax else d for i, d in enumerate(t.shape))
   em.line(f'tensor<int32,[1]> {n}_ax = const()[name=string("{n}_ax"), val=tensor<int32,[1]>([{ax}])];')
@@ -568,9 +520,7 @@ def _e_stack(em, t, n, s):
 
 @op("split")
 def _e_split(em, t, n, s):
-  # split emits N equal outputs once (keyed on which==0); later splits reuse the
-  # already-emitted multi-output statement by name (n0_<i>). Guard against re-emit
-  # via a per-source marker stored on the emitter.
+  # emit the N-output split statement once; later split nodes alias its ports by name.
   ns, ax, which = t.attrs["num_splits"], t.attrs["axis"], t.attrs["which"]
   src = s[0]
   key = f"_split_{src}_{ns}_{ax}"
@@ -689,16 +639,9 @@ def _e_affine(em, t, n, s):
 
 @op("rms_norm")
 def _e_rms_norm(em, t, n, s):
-  # RMS-norm via the fused `reduce_l2_norm` over the last axis - the same fast
-  # reduction `l2_norm` uses. The previous lowering reshaped to [M,D,1,1] and ran
-  # `reduce_sum` over the *channel* axis, which falls off the ANE's fast reduction
-  # tile past ~256 rows and ran ~48x slower than this path at [1024,1024]
-  # (e.g. 6882us -> 142us), and 16-27x slower than layer_norm despite RMS being
-  # structurally cheaper. Mathematically identical:
-  #     rms(x) = x / sqrt(mean(x^2)+eps) * g
-  #            = x * sqrt(D) / sqrt(sum(x^2)) * g        (reduce_l2_norm = sqrt(sum x^2))
-  # eps enters as a safe-divide floor on the norm (as in l2_norm); the sqrt(D)
-  # rescale is folded into the gamma weight so no extra op is emitted.
+  # RMS-norm via fused reduce_l2_norm over the last axis (the fast reduction l2_norm uses):
+  #   rms(x) = x*sqrt(D)/sqrt(sum(x^2))*g; the sqrt(D) rescale folds into gamma, eps is a
+  # safe-divide floor. The old channel-axis reduce_sum lowering ran ~48x slower at [1024,1024].
   D = t.shape[-1]
   ax = len(t.shape) - 1
   gw = (t.attrs["gamma"].reshape(1, D).astype(np.float32) * float(np.sqrt(D)))
@@ -740,9 +683,8 @@ def _e_layer_norm(em, t, n, s):
 
 @op("channel_layer_norm")
 def _e_channel_layer_norm(em, t, n, s):
-  # LayerNorm over the channel axis (axis 1) of a channels-first [N,C,1,S] tensor.
-  # Same reduction as layer_norm but with no reshape in/out: the ANE keeps the data in
-  # its native [N,C,1,S] layout, so the surrounding 1x1-conv projections stay efficient.
+  # LayerNorm over the channel axis of a channels-first [N,C,1,S] tensor, no reshape in/out
+  # (keeps the native layout so surrounding 1x1-conv projections stay efficient).
   N, C, _, S = t.shape
   ty = em.ty(t.shape)
   rty = f"tensor<fp16,[{N},1,1,{S}]>"
@@ -765,10 +707,8 @@ def _e_channel_layer_norm(em, t, n, s):
 
 @op("group_norm")
 def _e_group_norm(em, t, n, s):
-  # Rank-4 tiling: reshape to [1,G,C/G,H*W] and reduce over the trailing two axes
-  # (per-group, over C/G and H*W) rather than the flattened [1,G,(C/G)*H*W].
-  # Keeps every internal axis under the per-axis cap so big SD-1.5 maps (640@64,
-  # 512@128) compile, where the flat (C/G)*H*W extent overflowed.
+  # Rank-4 tiling: reshape to [1,G,C/G,H*W] and reduce the trailing two axes, keeping every
+  # internal axis under the per-axis cap (the flat [1,G,(C/G)*H*W] extent overflowed on big maps).
   _, C, H, W = t.shape
   G = t.attrs["groups"]; D = C // G; HW = H * W
   g4 = em.weight(f"{n}_g", t.attrs["gamma"].reshape(1, C, 1, 1), allow_int8=False)
@@ -780,7 +720,7 @@ def _e_group_norm(em, t, n, s):
   em.line(f'tensor<int32,[1]> {n}_a3 = const()[name=string("{n}_a3"), val=tensor<int32,[1]>([3])];')
   em.line(f'bool {n}_kd = const()[name=string("{n}_kd"), val=bool(true)];')
   em.line(f'tensor<fp16,[1,{G},{D},{HW}]> {n}_xg = reshape(shape={n}_gs, x={s[0]})[name=string("{n}_xg")];')
-  # mean = sum over both group axes * 1/(D*HW), via chained reduce_sum (D->1, then HW->1).
+  # mean = sum over both group axes * 1/(D*HW), via chained reduce_sum.
   em.line(f'tensor<fp16,[1,{G},{D},1]> {n}_s3 = reduce_sum(axes={n}_a3, keep_dims={n}_kd, x={n}_xg)[name=string("{n}_s3")];')
   em.line(f'tensor<fp16,[1,{G},1,1]> {n}_ss = reduce_sum(axes={n}_a2, keep_dims={n}_kd, x={n}_s3)[name=string("{n}_ss")];')
   em.line(f'fp16 {n}_id = const()[name=string("{n}_id"), val=fp16({invd})];')
@@ -804,16 +744,13 @@ def _e_group_norm(em, t, n, s):
 # --------------------------------------------------------------------------- #
 
 class Model:
-  """A compiled, fused ANE program. Call it with the input array(s), in the order
-    they were created with `af.input`."""
+  """A compiled, fused ANE program. Call it with the input array(s), in `af.input` order."""
 
   def __init__(self, prog, inputs: list[tuple[str, tuple]], out_name: str, out_shape, n_ops: int,
         input_tensors: list | None = None):
     self._prog = prog
     self._inputs = inputs
-    # The ordered input Tensor objects (same order as `inputs`); lets callers
-    # (e.g. autograd.Trainer) map each compiled input back to its source Tensor -
-    # trainable parameter vs provided data. Additive; no effect on inference.
+    # ordered input Tensor objects: lets autograd.Trainer map each input to its source Tensor.
     self._input_tensors = input_tensors if input_tensors is not None else []
     self._out_name, self._out_shape = out_name, out_shape
     self.n_ops = n_ops  # graph ops fused into this single program
@@ -834,23 +771,17 @@ class Model:
         feed[name] = a.astype(np.float16)
     return self._prog.eval(feed)[self._out_name].astype(np.float32)
 
-  # ---- zero-copy hot-loop API (skip the per-call host<->device memcpy) ----
-  # Pattern:  v = model.input_view(); ... write fp16 into v ...; model.execute();
-  #           out = model.output_view()   # fp16 view onto the result, no copy
-  # For tight inference/training loops; for one-off calls just use __call__.
+  # ---- zero-copy hot-loop API: input_view (write) / execute / output_view (read), no memcpy ----
   def input_view(self, name: str | None = None) -> np.ndarray:
-    """Writable fp16 view onto an input buffer (defaults to the sole input port).
-        See `Program.input_view`."""
+    """Writable fp16 view onto an input buffer (defaults to the sole input port)."""
     return self._prog.input_view(name or self._inputs[0][0])
 
   def output_view(self) -> np.ndarray:
-    """fp16 view onto the output buffer, valid after `execute()`. See
-        `Program.output_view`."""
+    """fp16 view onto the output buffer, valid after `execute()`."""
     return self._prog.output_view(self._out_name)
 
   def execute(self) -> None:
-    """Run once without binding inputs / reading outputs - pair with
-        `input_view`/`output_view` for a zero-copy loop."""
+    """Run once without binding inputs / reading outputs (pair with input_view/output_view)."""
     self._prog.execute()
 
   def release(self) -> None:
@@ -875,8 +806,7 @@ def _sig_ty(em, t: Tensor) -> str:
 
 
 def _emit_program_dir(em, inputs, out_var, out_shape, build_dir):
-  """Write one e5rt program (MIL + weights) for a set of input tensors to a dir; return
-    it. Shared by the device-compile path and the cross-target compile check."""
+  """Write one e5rt program (MIL + weights) to a dir; return it."""
   sig = ", ".join(f"{_sig_ty(em, t)} {t._name}" for t in inputs)
   mil = (f"program(1.3)\n{_BUILD_INFO}\n{{\n    func main<ios18>({sig}) {{\n"
      + "\n".join(em.lines) + f"\n    }} -> ({out_var});\n}}\n")
@@ -896,8 +826,7 @@ def _assemble_and_compile(em, inputs, out_var, out_shape, build_dir):
 
 
 def _lower_fused_to_dir(out: Tensor, build_dir=None, int8: bool = False):
-  """Lower a single-program fused graph to a MIL+weights dir WITHOUT compiling it.
-    Bridge/segmented graphs are out of scope for the cross-target check (raises)."""
+  """Lower a fused graph to a MIL+weights dir WITHOUT compiling it (bridge graphs raise)."""
   order = _topo(out)
   if any(t.op in NETPLIST_OPS for t in order):
     raise NotImplementedError("cross_compile_check: bridge/segmented graphs not supported")
@@ -912,30 +841,22 @@ def _lower_fused_to_dir(out: Tensor, build_dir=None, int8: bool = False):
 
 
 def cross_compile_check(out: Tensor, target, int8: bool = False) -> bool:
-  """Does the graph rooted at `out` compile for another ANE family, checked from this
-    host? `target` is a compiler arch string ('h13') or a family int. Returns True iff
-    the e5rt compiler produces a library for that TargetArchitecture - compile-level
-    validation only (it does not, and on a different-family host cannot, execute there).
-
-    The keystone of cross-chip CI: validate that the op corpus compiles for every chip
-    family on one box. Numeric correctness still needs the real silicon."""
+  """Does the graph compile for another ANE family, checked from this host? `target` is an
+    arch string ('h13') or family int. Compile-level validation only (cannot execute there).
+    The keystone of cross-chip CI; numeric correctness still needs the real silicon."""
   from . import _runtime
   from . import _targets as TG
   if isinstance(target, str):
     arch = target.strip().lower()
-    # The e5rt compiler silently falls back to the host target on an unrecognized
-    # TargetArchitecture string (measured: 'zzz' compiles fine), turning a typo into
-    # a false cross-target pass. Gate on the known-target table first.
+    # e5rt silently falls back to the host target on an unrecognized TargetArchitecture
+    # string (a typo -> a false pass), so gate on the known-target table first.
     if arch not in TG._ARCH_FAMILY:
       raise ValueError(f"unknown ANE target arch {target!r}; known: " f"{sorted(TG._ARCH_FAMILY)}")
   else:
     arch = TG.arch_for_family(int(target))
-  # Static pre-gate: a target's per-family caps (conv kernel width, max tensor dim, ops
-  # below their MinimumFamily floor) are HAL-data gated, and the host cross-compiler does
-  # not reliably enforce a different family's caps when emitting for its TargetArchitecture
-  # - so a cap violation would compile here and only fail on the real silicon, a false CI
-  # pass. preflight() answers the same question statically and family-aware (it is what
-  # compile(target=) gates on), so reject up front and skip the compiler entirely.
+  # Static pre-gate via preflight(): the host cross-compiler does not reliably enforce a
+  # different family's caps, so a cap violation would compile here and fail only on real
+  # silicon (a false CI pass). preflight() answers family-aware, so reject up front.
   fam = TG.family_of_arch(arch)
   rep = TG.preflight(out, fam)
   if not rep.ok:
@@ -947,8 +868,7 @@ def cross_compile_check(out: Tensor, target, int8: bool = False) -> bool:
       f"({arch}): {bad}. Rejected statically (preflight); the compiler was not run.",
       stacklevel=2)
     return False
-  # Annotate cross-chip fp16 divergence risk (Direction B) before compiling: warn-only,
-  # so a typo'd/unreachable graph still surfaces its compile error.
+  # Annotate cross-chip fp16 divergence risk (Direction B) before compiling: warn-only.
   try:
     _warn_fp16_cross_chip(out, TG.detect_family(), fam)
   except Exception as e:
@@ -963,20 +883,15 @@ def cross_compile_check(out: Tensor, target, int8: bool = False) -> bool:
 
 
 class MultiModel:
-  """A compiled fused program with N named outputs (e.g. a resident training
-    step: `(x, y, lr, w, m, v, ...) -> (w', m', v', ...)`). Unlike `Model` it
-    keeps the ordered input/output Tensors and exposes the raw `Program` so
-    callers (autograd.Trainer's resident path) can alias state outputs onto their
-    inputs via `share_buffer` and drive the resident loop. `__call__` evals
-    once and returns the outputs by name (for verification / non-resident use)."""
+  """A compiled fused program with N named outputs (e.g. a resident training step). Unlike
+    `Model` it keeps the ordered input/output Tensors and exposes the raw `Program` so the
+    resident path can alias state outputs onto inputs via `share_buffer`."""
 
   def __init__(self, prog, inputs: list, outputs: list):
     self.prog = prog
     self.input_tensors = list(inputs)
     self.output_tensors = list(outputs)
-    # Port names are snapshotted here (like Model): compile()/compile_multi()
-    # reassign t._name on shared Tensor objects, so a later compile of another
-    # graph sharing these tensors must not break this model's feed/read names.
+    # snapshot port names: a later compile of a graph sharing these Tensors reassigns t._name.
     self.input_ports = [(t, t._name) for t in inputs]
     self.output_ports = [(t, t._name) for t in outputs]
 
@@ -996,10 +911,8 @@ class MultiModel:
 
 
 def compile_multi(outs, build_dir=None) -> MultiModel:
-  """Lower a graph with multiple output Tensors into one fused ANE program with
-    N named output ports (the multi-output analogue of `compile`). Used for the
-    resident training step, where each state tensor needs its own output port to
-    alias back onto its input. fp16 only; no opt/compress/segmented path."""
+  """Lower a multi-output graph into one fused program with N named output ports (the
+    multi-output `compile`, for the resident training step). fp16 only; no opt/compress."""
   seen: set[int] = set()
   order: list[Tensor] = []
   stack: list = [(o, False) for o in reversed(outs)]    # iterative post-order (deep-graph safe)
@@ -1041,25 +954,16 @@ def compile_multi(outs, build_dir=None) -> MultiModel:
 
 
 class PrecisionWarning(UserWarning):
-  """Emitted by `compile` when a graph has fp16-cancellation-risk nodes whose
-    results may be inaccurate. Silence with
-    `warnings.filterwarnings('ignore', category=aneforge.PrecisionWarning)`."""
+  """Emitted by `compile` when a graph has fp16-cancellation-risk nodes (results may be inaccurate)."""
 
 
 class DispatchFloorWarning(UserWarning):
-  """Emitted by `compile` when a program is dispatch-floor-bound: its predicted ANE
-    time is dominated by the fixed per-call dispatch + firmware round-trip, so each call
-    costs about the same however small the work is. Dispatch is single-in-flight, so
-    threads/concurrency do not amortize it - only larger batches or more ops per program do.
-    Silence with `warnings.filterwarnings('ignore', category=aneforge.DispatchFloorWarning)`."""
+  """Emitted by `compile` when a program is dispatch-floor-bound (predicted time dominated by the
+    fixed per-call dispatch + firmware round-trip; threads/concurrency do not amortize it)."""
 
 
 def _dispatch_floor_signal(out: Tensor) -> None:
-  """Warn once if the program is dispatch-floor-bound, so a caller looping per-sample
-    isn't silently paying the full fixed per-call cost every time. The ANE per-call latency
-    is a fixed dispatch + firmware round-trip (~0.2 ms on M1-class parts) that batching and
-    op-chaining amortize but concurrency does not. Cheap: a structural estimate, no device
-    work; fires only when the predicted cost is dominated by the dispatch floor."""
+  """Warn once if the program is dispatch-floor-bound (predicted cost ~= the fixed per-call floor)."""
   try:
     from ._cost import estimate, _constants
     pred = float(estimate(out))
@@ -1084,10 +988,7 @@ def _dispatch_floor_signal(out: Tensor) -> None:
 
 
 def _precision_signal(out: Tensor, strict: bool) -> None:
-  """Run the structural fp16-precision-risk check and tell the user. Warns (or, with
-    `strict`/`validate=True`, raises) when the graph has cancellation / narrow-reduce
-    hotspots, so an unstable computation can never run silently. Cheap: a static pass
-    over the graph, no device work. See `precision_risk` for the (heuristic) model."""
+  """Warn (or, with strict, raise) on the graph's fp16 cancellation / narrow-reduce hotspots."""
   from ._cost import precision_risk
   risk = precision_risk(out)
   if not risk["hotspots"]: return
@@ -1106,23 +1007,9 @@ def _precision_signal(out: Tensor, strict: bool) -> None:
 
 
 def _warn_h13_slice_saturation(out: Tensor, family: int) -> None:
-  """Pre-A16 ANE quirk on nonzero-width (last-axis) `slice_by_size` offsets, which
-    lower through a Q.4 fixed-point crop-DMA (an implied x16 scale). Two distinct,
-    silicon-pinned failure modes:
-
-      (1) wrong elements when multiple width-offset slices are concatenated - confirmed
-          on A14 (the gather axis-1 bug) and A13, at any magnitude. A single width-offset
-          slice selects the correct elements (a 180-config bare-slice sweep is numpy-exact
-          on A14), so this mode is specific to the concat-of-width-slices pattern.
-      (2) saturation: a sliced element with |value| > 4094 (= 65504/16) clamps to +/-inf,
-          magnitude-driven, on a single width-offset slice. Silicon-confirmed on A13 (conv
-          weight-grad) and A14 (M2 probe: 4094 finite -> 4100 inf, bit-exact); A15 pending
-          M3 data.
-
-    A zero last-axis begin, or an offset on any non-last axis, avoids the path and is
-    exact; A16/M5 is unaffected. `gather` and the conv im2col backward already route off
-    the last axis, so this is a safety net for any remaining hand-written occurrence.
-    """
+  """Pre-A16 quirk: last-axis-offset slice_by_size lowers through a Q.4 crop-DMA (x16 scale).
+    Mode (1) concat of >=2 width-offset slices -> wrong elements; mode (2) |value|>4094 -> +/-inf.
+    See .superpowers/sdd/gold-core-heavy.md for the silicon evidence per family."""
   import warnings
 
   from . import _targets as TG
@@ -1130,8 +1017,7 @@ def _warn_h13_slice_saturation(out: Tensor, family: int) -> None:
     return
   sat_family = int(family) <= int(TG.Family.A14)   # saturation measured on A13 + A14
   for t in _topo(out):
-    # Mode (1): a concat of >= 2 nonzero-width-offset slices (the gather / im2col
-    # pattern) - wrong elements on any pre-A16 family.
+    # Mode (1): a concat of >= 2 nonzero-width-offset slices -> wrong elements (pre-A16).
     if t.op == "concat":
       n_w = sum(1 for s in t.srcs if s.op == "slice_by_size" and (s.attrs.get("begin") or [0])[-1] > 0)
       if n_w >= 2:
@@ -1152,16 +1038,12 @@ def _warn_h13_slice_saturation(out: Tensor, family: int) -> None:
 
 
 class CrossChipFP16Warning(UserWarning):
-  """Emitted by `cross_compile_check` when a graph compiles for a different-family
-    target but carries an op whose fp16 VALUE can diverge from the host's on that chip
-    (per the Direction B HAL-field predictor). The compile is still valid - this is a
-    numeric heads-up, not a rejection. Silence with
-    `warnings.filterwarnings('ignore', category=aneforge.CrossChipFP16Warning)`."""
+  """Emitted by `cross_compile_check` when a graph compiles for a different-family target but
+    carries an op whose fp16 value can diverge on that chip (Direction B). A heads-up, not a rejection."""
 
 
 def _node_max_abs(t: Tensor):
-  """Best-effort static bound on a node's value magnitude (for the slice saturation
-    gate): a baked const's actual max, else unknown (None = treat as possibly-large)."""
+  """Static bound on a node's value magnitude: a baked const's max, else None (possibly-large)."""
   v = t.attrs.get("value")
   if v is not None:
     try:
@@ -1173,14 +1055,11 @@ def _node_max_abs(t: Tensor):
 
 
 def _fp16_risk_kind(t: Tensor) -> str:
-  """Map a graph node to the predictor's op-kind string: 'slice', 'reduce_square'
-    (a reduce feeding a square/mul = variance/L2/RMS), 'reduce' (any reduction/softmax/
-    norm), or '' (no fp16-route axis)."""
+  """Predictor op-kind: 'slice', 'reduce_square' (reduce->square/mul), 'reduce', or ''."""
   op = t.op
   if op == "slice_by_size": return "slice"
   if op in ("square", "mul"):
-    # reduce -> square/mul: the 0x494 fuse axis. Flag only when a source is a reduction
-    # (variance/L2/RMSNorm shape), not every elementwise square.
+    # reduce -> square/mul (the 0x494 fuse axis): flag only when a source is a reduction.
     if any(s.op.startswith("reduce") or s.op in ("l2_norm", "rms_norm") for s in t.srcs): return "reduce_square"
     return ""
   if op.startswith("reduce") or op in ("softmax", "l2_norm", "rms_norm", "layer_norm", "group_norm", "instance_norm"):
@@ -1189,9 +1068,7 @@ def _fp16_risk_kind(t: Tensor) -> str:
 
 
 def _warn_fp16_cross_chip(out: Tensor, host_family: int, target_family: int) -> None:
-  """Annotate, as warnings, which ops in the graph carry a cross-chip fp16 divergence
-    risk when validating for a different-family target (Direction B predictor). Groups by
-    risk class so the message is one line per (op, class). Never rejects."""
+  """Warn which ops carry cross-chip fp16 divergence risk for a different-family target. Never rejects."""
   import warnings
 
   from . import _targets as TG
@@ -1229,11 +1106,9 @@ def _resolve_family(target) -> int:
 
 
 def _retarget_for(out: Tensor, target) -> Tensor:
-  """Gate the graph for a target ANE family before lowering. Raises a clear
-    compile-time error on the H13+ hard floor, on an unreachable op, or on a tensor
-    exceeding the family's limits; substitutes below-floor ops that have an in-graph
-    decomposition (sin/cos -> aneforge.special). Returns the (possibly rewritten) graph.
-    On the host family with an all-native graph this is a no-op fast path (returns out)."""
+  """Gate the graph for a target family before lowering: raises on the H13+ floor, an unreachable
+    op, or an oversized tensor; substitutes below-floor ops with an in-graph decomposition
+    (sin/cos -> aneforge.special). No-op fast path on the host family with an all-native graph."""
   from . import _targets as TG
   from . import special
   fam = _resolve_family(target)
@@ -1277,45 +1152,15 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt: "str | int | N
       compress: str | None = None, compress_atol: float = 0.05,
       block_size: int = 32, validate: bool = False, target=None,
       _check_precision: bool = True):
-  """Lower the graph rooted at `out` into ONE fused ANE program (or, if it
-    contains `af.sdpa` nodes, a segmented plan: e5rt programs split around each
-    native-SDPA sub-program).
+  """Lower `out` into ONE fused ANE program (or a segmented plan if it has `af.sdpa` nodes).
 
-    `opt` selects the graph optimizer (default `'routes'`):
-      - `opt='routes'` (default) : the lossless route pass - cost-model-driven, per
-                      shape, choosing for each route-bearing bridge node (sdpa,
-                      minmax_norm, flatten, lrn) between the native bridge (a graph
-                      cut) and the proven-equivalent fused decomposition (cut removed),
-                      without on-device measurement. The route registry is lossless
-                      (cos 1.0), so this never changes numerics; a cut-free graph
-                      compiles to exactly the `opt=0` program (no regression). For
-                      `sdpa` the cost model keeps native where it wins (long
-                      sequences), so the default never blindly removes a cut that
-                      helps.
-      - `opt=0`   : no optimization - the historical, byte-identical path
-                      (`int8` honored as given). Use this for byte-identity tests.
-      - `opt=1`   : cost-model pick over the full variant set (route swaps and the
-                      lossy whole-graph int8 variant), without measuring on-device.
-      - `opt=2` / `opt='max'` : autotune - measure the legal proven-safe variants
-                      on the ANE, validate each vs the opt=0 baseline, return the
-                      fastest correct one (cached; instant on a cache hit).
-
-    `compress` selects weight encoding: None (fp16, default, byte-identical at
-    `opt=0`), 'int8' (per-channel), 'int4' (LUT, accuracy-gated), 'sparse' (bitmask,
-    when the weight is >=50% zeros), 'blockwise' (per-inner-block int8 via
-    `constexpr_blockwise_shift_scale`, `block_size` columns per scale,
-    accuracy-gated -> int8 -> fp16), or 'auto' (per-weight: sparse if sparse, else int4
-    if accurate, else int8, else fp16 - the most aggressive encoding that stays
-    correct). 'auto' is family-aware: only encodings that stream natively on the
-    `target` family (host-detected when `target=None`) are candidates - on h13/M1
-    that is int4-LUT + sparse, so auto streams those (sparse for >=50%-zero weights) but
-    skips int8/blockwise (they fold to dense fp16: accuracy cost, no bandwidth win) and a
-    rejected int4 falls to fp16. Explicit single-mode knobs are never filtered.
-    `compress_atol` is the int4/blockwise fallback budget (relative L2);
-    `block_size` is the inner-dim block width for 'blockwise'. Compressed weights
-    stay on the byte-identical (opt=0) lowering: passing `compress` with an explicit
-    `opt>=1` is rejected, and the default route pass is skipped for compressed
-    compiles (they take the no-op path).
+    `opt`: 'routes' (default, lossless cost-model route pass), 0 (byte-identical, no opt),
+    1 (cost-model variant pick, no measurement), 2/'max' (autotune on-device).
+    `compress`: weight encoding - None (fp16), 'int8', 'int4', 'sparse', 'blockwise', or
+    family-aware 'auto'. `compress_atol` is the int4/blockwise fallback budget (relative L2);
+    `block_size` is the 'blockwise' inner-dim width. Compressed weights take the opt=0
+    lowering (compress with explicit opt>=1 is rejected).
+    See .superpowers/sdd/gold-core-heavy.md for the full opt/compress semantics.
     """
   if _check_precision:                 # once per user compile (internal re-entries pass False)
     _precision_signal(out, strict=validate)
@@ -1354,12 +1199,10 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt: "str | int | N
 
 
 def _compile_opt(out: Tensor, int8: bool, opt):
-  """opt=1/2/'max' dispatch (lazy-imported so aneforge stays importable without the
-    optimizer/cost-model present)."""
+  """opt=1/2/'max' dispatch (lazy-imported so aneforge imports without the optimizer)."""
   from . import _optimize
   if opt in (1,):
-    # cost-model pick: no measurement, just the cheaper-predicted variant (this
-    # now spans route swaps too, since _estimate_variant costs the rewritten DAG).
+    # cost-model pick: cheaper-predicted variant (spans route swaps), no measurement.
     cfgs = _optimize._variants(out)
     best = min(cfgs, key=lambda c: _optimize._estimate_variant(out, c))
     return _optimize.build_variant(out, best)
@@ -1371,9 +1214,7 @@ def _compile_opt(out: Tensor, int8: bool, opt):
 # segmented compile: native-SDPA graph cuts                                   #
 # --------------------------------------------------------------------------- #
 def _import_bridge(module: str, attr: str, op_name: str, filename: str):
-  """Lazily import `attr` from the in-package `aneforge._bridges.<module>` bridge
-    (keeps aneforge self-contained: the netplist-bridge closure lives inside the
-    package, with no runtime dependency on the reverse-engineering corpus)."""
+  """Lazily import `attr` from the in-package `aneforge._bridges.<module>` bridge."""
   import importlib
   try:
     mod = importlib.import_module(f"{__package__}._bridges.{module}")
@@ -1389,24 +1230,20 @@ def _sdpa_fused(*args, **kwargs):
 
 
 # --------------------------------------------------------------------------- #
-# netplist-bridge ops: graph nodes that run as a native-ANE Path-A sub-program #
-# (a graph cut), like af.sdpa. Each entry maps an op name to a runner that,     #
-# given the materialized fp16 inputs + the node attrs, returns the fp16 output. #
-# Adding an op here makes it a legal cut point in the segmented plan (see        #
-# _compile_segmented). The fused e5rt-MIL emitters above are always preferred;   #
-# these are for ops the ANE backend doesn't expose through MIL.                  #
+# netplist-bridge ops: graph nodes that run as a native-ANE Path-A sub-program  #
+# (a graph cut), for ops the ANE backend doesn't expose through MIL. Each entry  #
+# in NETPLIST_OPS is a legal cut point in the segmented plan (_compile_segmented)#
 # --------------------------------------------------------------------------- #
 
 def _run_sdpa(srcs, attrs):
   q, k, v = srcs[0], srcs[1], srcs[2]
   mask = None
   if attrs.get("causal"):
-    # additive causal mask [S_q, S_k]: 0 on/below the diagonal, -inf above (fed as the
-    # native SDPA layer's optional 5th "mask" bottom). q is [B, H, S, D].
+    # additive causal mask [S,S]: 0 on/below diagonal, -inf above (native SDPA's 5th input).
     S = q.shape[2]
     mask = np.triu(np.full((S, S), -1e4, np.float32), k=1)
   elif attrs.get("masked"):
-    # runtime attn_mask (4th src): a [1,1,Sq|1,Skv] additive bias -> [Sq, Skv] for the bridge.
+    # runtime attn_mask (4th src): [1,1,Sq|1,Skv] additive bias -> [Sq, Skv].
     mask = np.asarray(srcs[3], np.float32).reshape(q.shape[2], k.shape[2])
   return _sdpa_fused(q, k, v, scale=attrs["scale"], mask=mask).astype(np.float16)
 
@@ -1417,7 +1254,6 @@ def _run_argmax(srcs, attrs):
   # GlobalArgMinMax over Width (last axis) or Channel (axis 0); x is [C, W] fp16.
   dim = "Width" if attrs["axis"] == 1 else "Channel"
   out = np.asarray(fn(x, dimension=dim, largest=True), dtype=np.float16)
-  # bridge returns a vector (one index per surviving position); reshape to keepdims
   C, W = x.shape
   return out.reshape((C, 1) if attrs["axis"] == 1 else (1, W))
 
@@ -1426,9 +1262,8 @@ def _run_topk(srcs, attrs):
   fn = _import_bridge("ane_rank_fused", "topk", "topk", "ane_rank_fused.py")
   (x,) = srcs
   k, largest = attrs["k"], attrs["largest"]
-  # The native TopK sorts Width keyed by one channel lane and permutes all
-  # channels by that single order. For PyTorch's per-row top-k (each row
-  # ranked independently) we dispatch each row as its own 1-channel tile.
+  # native TopK ranks Width keyed by one channel lane; dispatch each row as a 1-channel
+  # tile for per-row-independent ranking.
   rows = [np.asarray(fn(x[c:c + 1], k, largest=largest), dtype=np.float16).reshape(k) for c in range(x.shape[0])]
   return np.stack(rows, axis=0)
 
@@ -1438,9 +1273,8 @@ def _run_sort(srcs, attrs):
   (x,) = srcs
   W = x.shape[1]
   desc, idx = attrs["descending"], attrs["return_indices"]
-  # Like TopK, the native Sort orders Width keyed by one channel lane and
-  # permutes all channels by that single order. For a per-row independent sort
-  # (numpy-like) we dispatch each row as its own 1-channel tile.
+  # like TopK: native Sort orders Width keyed by one channel lane; dispatch each row
+  # as a 1-channel tile for a per-row-independent (numpy-like) sort.
   rows = [np.asarray(fn(x[c:c + 1], descending=desc, return_indices=idx),
            dtype=np.float16).reshape(W)
       for c in range(x.shape[0])]
@@ -1497,9 +1331,7 @@ def _run_lrn(srcs, attrs):
 
 
 def _run_rearrange(layer_fn, *index_keys):
-  """Build a runner for an ane_rearrange_fused.py op. `layer_fn` is the bridge
-    function name; `index_keys` are the attr names whose values are passed
-    positionally after the input array (e.g. ('r',) or ('bh','bw'))."""
+  """Build a runner for an ane_rearrange_fused.py op (`index_keys` -> positional args after x)."""
   def run(srcs, attrs):
     fn = _import_bridge("ane_rearrange_fused", layer_fn, layer_fn, "ane_rearrange_fused.py")
     (x,) = srcs
@@ -1579,10 +1411,8 @@ def _subgraph(target, source_ids):
 
 
 class SegmentedModel:
-  """A compiled plan: e5rt program segments interleaved with native-ANE
-    sub-program calls (sdpa / argmax / topk - see NETPLIST_OPS). Tensors thread
-    between segments as host fp16 arrays (correctness-first; a persistent IOSurface
-    worker is the throughput follow-up)."""
+  """A compiled plan: e5rt program segments interleaved with native-ANE sub-program calls
+    (NETPLIST_OPS). Tensors thread between segments as host fp16 arrays (correctness-first)."""
 
   def __init__(self, stages, inputs, out_id, out_shape, n_ops, n_netplist):
     self._stages = stages
@@ -1591,10 +1421,8 @@ class SegmentedModel:
     self.n_ops = n_ops
     # count of native sub-programs; kept as `n_sdpa` for backward compat
     self.n_netplist = self.n_sdpa = n_netplist
-    # A2: persistent Path-A workers, one per netplist stage with a worker
-    # route. Built lazily on first call (keyed by the stage), reused for the
-    # rest of this model's lifetime, released in release(). Set
-    # ANEFORGE_NETPLIST_WORKER=0 to force the A1 (subprocess-per-call) path.
+    # A2: persistent Path-A workers, one per netplist stage with a worker route, built
+    # lazily and cached for this model's lifetime. ANEFORGE_NETPLIST_WORKER=0 forces A1.
     self._workers: dict[int, "_Worker"] = {}
     self._worker_runs: dict[int, Callable[..., Any]] = {}
     self._worker_warned: set[str] = set()
@@ -1617,15 +1445,12 @@ class SegmentedModel:
     return env[self._out_id].astype(np.float32)
 
   def _netplist_runner(self, st) -> Callable[..., Any]:
-    """Resolve the runner for a netplist stage. Prefer a persistent Path-A worker
-        (load-once-eval-many), built lazily on first use and cached for this model's
-        lifetime. Fall back to the subprocess-per-call bridge when no worker route
-        exists for the op or when the worker is disabled / fails to start."""
+    """Resolve a netplist stage's runner: prefer a persistent Path-A worker (load-once-
+        eval-many), fall back to the subprocess-per-call bridge when none exists / it fails."""
     import os
     if os.environ.get("ANEFORGE_NETPLIST_WORKER", "1") == "0": return NETPLIST_OPS[st["op"]][0]
-    # Causal SDPA needs the per-call additive-mask injection, which lives on the
-    # subprocess bridge path (_run_sdpa); the persistent Path-A worker pre-builds a
-    # mask-less netplist, so route masked SDPA to the bridge (correctness over the worker).
+    # masked/causal SDPA needs per-call mask injection (subprocess _run_sdpa); the worker
+    # pre-builds a mask-less netplist, so route it to the bridge (correctness over the worker).
     if st["op"] == "sdpa" and (st["attrs"].get("causal") or st["attrs"].get("masked")): return NETPLIST_OPS[st["op"]][0]
     sid = st["tid"]
     run = self._worker_runs.get(sid)
@@ -1633,8 +1458,7 @@ class SegmentedModel:
     try:
       from . import _netplist_worker as nw
       if not nw.has_worker(st["op"]):
-        # No worker route exists for this op - the subprocess bridge IS the
-        # normal path, not a degradation; stay silent.
+        # no worker route - the subprocess bridge is the normal path; stay silent.
         run = NETPLIST_OPS[st["op"]][0]
         self._worker_runs[sid] = run
         return run
@@ -1643,9 +1467,8 @@ class SegmentedModel:
       self._worker_runs[sid] = run
       return run
     except Exception as e:
-      # Genuine worker failure -> fall back to the verified subprocess-bridge path
-      # (correctness-preserving, slower per call) and remember it so we don't
-      # retry the worker every call. Signal once per op.
+      # worker failure -> fall back to the subprocess bridge (slower, correctness-preserving)
+      # and remember it so we don't retry the worker every call. Signal once per op.
       if st["op"] not in self._worker_warned:
         self._worker_warned.add(st["op"])
         import warnings

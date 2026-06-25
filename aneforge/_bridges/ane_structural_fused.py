@@ -1,16 +1,6 @@
-"""Native ANE structural layers via direct ANECIR netplist authoring.
-
-Three structural layer kinds (`flatten` / `dropout` are public functions;
-`Broadcast` via the model generator):
-
-    * `Flatten`    -- NCHW identity reshape to a 1-D vector.
-    * `Dropout`    -- inference-time identity (rate must be 0).
-    * `Broadcast`  -- replicate a length-1 axis to `Size` along `Dimension`.
-
-Run as a script to self-verify::
-
-    python3 -m aneforge._bridges.ane_structural_fused
-"""
+"""Native ANE structural layers (Flatten / Dropout / Broadcast) on Path A.
+Run `python3 -m aneforge._bridges.ane_structural_fused` to self-verify.
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 

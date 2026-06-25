@@ -1,9 +1,5 @@
 """Native ANE `InputView` (contiguous offset view) on Path A.
-
-:func:`input_view_fused` returns the ANE-computed view
-`x[offset : offset + size]` along a named axis, with no data movement beyond
-the view.
-"""
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 

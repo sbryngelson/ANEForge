@@ -1,13 +1,5 @@
-"""Native ANE CostVolume (stereo/optical-flow matching cost) via a netplist.
-
-Entry point `cost_volume_fused(aux, ref, disparity_range)`.  Given single-channel
-rows `aux` (width `Wa`) and `ref` (width `Wr`, with `Wr >= Wa + R`), it computes
-the L1 matching cost for each disparity `d in [0, R]` and position `x in [0, Wa)`:
-
-    `cost[d, x] = | aux[x] - ref[x + d] |`
-
-returning `(R+1)` disparity planes each of width `Wa`.
-"""
+"""Native ANE CostVolume (L1 stereo/optical-flow matching cost) on Path A.
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -24,15 +16,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 def cost_volume_fused(aux: np.ndarray, ref: np.ndarray,
                       disparity_range: int | np.integer[Any] = 1) -> np.ndarray:
-  """L1 cost volume of two single-channel rows.
-
-    Args:
-        aux:             `(Wa,)` fp16-castable row.
-        ref:             `(Wr,)` fp16-castable row, `Wr >= Wa + R`.
-        disparity_range: `R`; produces `R+1` disparity planes.
-    Returns:
-        `(R+1, Wa)` fp16 cost volume, `cost[d, x] = |aux[x] - ref[x+d]|`.
-    """
+  """L1 cost volume of two single-channel rows; returns `(R+1, Wa)` fp16,
+    `cost[d, x] = |aux[x] - ref[x+d]|`. `ref` must satisfy `Wr >= Wa + R`."""
   aux = np.asarray(aux, dtype=np.float16).reshape(-1)
   ref = np.asarray(ref, dtype=np.float16).reshape(-1)
   Wa, Wr = aux.size, ref.size

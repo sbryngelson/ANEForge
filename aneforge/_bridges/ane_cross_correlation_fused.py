@@ -1,10 +1,5 @@
 """Native ANE CrossCorrelation (template matching) on Path A.
-
-:func:`cross_correlation_fused` computes the valid (no-flip) cross-correlation
-of a single-channel `H x W` map `x` with a `Th x Tw` template on the ANE:
-`y[i, j] = sum_{u,v} x[i+u, j+v] * template[u, v]` over an
-`(H-Th+1) x (W-Tw+1)` output.
-"""
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -19,14 +14,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def cross_correlation_fused(x: np.ndarray, template: np.ndarray) -> np.ndarray:
-  """Valid cross-correlation of single-channel map `x` with `template`.
-
-    Args:
-        x:        `(H, W)` fp16-castable map.
-        template: `(Th, Tw)` fp16-castable template.
-    Returns:
-        `(H-Th+1, W-Tw+1)` fp16 correlation map.
-    """
+  """Valid (no-flip) cross-correlation of `(H,W)` map `x` with `(Th,Tw)`
+    `template`; returns the `(H-Th+1, W-Tw+1)` fp16 correlation map."""
   x = np.asarray(x, dtype=np.float16)
   template = np.asarray(template, dtype=np.float16)
   H, W = x.shape

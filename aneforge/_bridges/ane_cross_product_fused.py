@@ -1,8 +1,5 @@
 """Native ANE 3-vector cross product on Path A.
-
-:func:`cross_product_fused` computes `cross(x, z)` for two length-3 fp16 vectors
-on the ANE (matches `numpy.cross(x, z)`).
-"""
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -17,13 +14,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def cross_product_fused(x: np.ndarray, z: np.ndarray) -> np.ndarray:
-  """Return `cross(x, z)` for two 3-vectors, computed on the ANE.
-
-    Args:
-        x, z: length-3 fp16-castable arrays.
-    Returns:
-        length-3 fp16 array equal to `numpy.cross(x, z)`.
-    """
+  """Return `cross(x, z)` (length-3 fp16) for two 3-vectors, on the ANE."""
   x = np.asarray(x, dtype=np.float16).reshape(3)
   z = np.asarray(z, dtype=np.float16).reshape(3)
   from ._netplist import write_model, ensure_invoker

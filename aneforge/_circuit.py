@@ -1,13 +1,6 @@
-"""Compile-failure backoff rate-limiter.
-
-After a compile FAILURE, ANEForge paces the next compile by a short interval (~15 s),
-a backstop for the one path that compiles many programs in a burst (the autotuner's
-variant sweep) should a compile fail mid-sweep. A successful compile clears the
-back-off; no failure-count cap is needed, pacing consecutive failures apart suffices.
-
-It rate-limits *consecutive compile failures*: a clean op-rejection and a harder
-failure both surface as a null handle, so the plain "failures" rate limiter is
-enough. Tunable / disablable via env:
+"""Compile-failure backoff rate-limiter: after a compile failure, pace the next compile
+by ~15s - a backstop for the autotuner's burst variant sweep. A success clears the
+back-off. See docs/developer/compile-pipeline.md. Env:
 
     ANEFORGE_COMPILE_BACKOFF             seconds to pace (default 15.0; 0 disables pacing)
     ANEFORGE_DISABLE_COMPILE_BREAKER=1   turn the guard off entirely
@@ -33,8 +26,7 @@ _last_failure_ts: float | None = None   # monotonic time of the last compile fai
 
 
 class CompileBackoffError(RuntimeError):
-  """Raised (in strict mode) when a compile is attempted within the backoff window
-    after a recent compile failure."""
+  """Raised (strict mode) when a compile is attempted within the backoff window."""
 
 
 def reset() -> None:
@@ -50,9 +42,8 @@ def note_compile_result(ok: bool) -> None:
 
 
 def guard_before_compile() -> None:
-  """Call immediately before a compile. If a compile failed within the last
-    `_BACKOFF_S` seconds, pace this one to keep consecutive failures a short interval
-    apart (default: sleep the remainder; strict mode: raise)."""
+  """Call before a compile. If one failed within `_BACKOFF_S`, pace this one (default:
+    sleep the remainder; strict mode: raise)."""
   if _DISABLED or _BACKOFF_S <= 0.0: return
   with _lock:
     if _last_failure_ts is None: return

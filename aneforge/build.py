@@ -1,11 +1,8 @@
 """Build-on-demand for the e5rt dispatch dylib.
 
-The package ships the dispatch shim SOURCE (`aneforge/_lib/ane_e5rt_dispatch.mm`),
-not a binary: the dylib links Apple's private frameworks, so it is compiled
-per-machine. This module compiles it the first time aneforge dispatches to the ANE
-(or eagerly via `python -m aneforge.build`) and caches the result, so a plain
-`pip install aneforge` works on an Apple Silicon Mac with the Xcode command-line
-tools. Set ANEFORGE_NO_AUTOBUILD=1 to require an explicit build instead.
+The package ships the dispatch shim SOURCE (links Apple's private frameworks, so it is
+compiled per-machine), built on first ANE dispatch (or `python -m aneforge.build`) and
+cached. ANEFORGE_NO_AUTOBUILD=1 requires an explicit build. See docs/developer/compile-pipeline.md.
 """
 from __future__ import annotations
 

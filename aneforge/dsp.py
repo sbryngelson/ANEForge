@@ -1,41 +1,11 @@
-"""aneforge.dsp - a digital-signal-processing toolkit on the Apple Neural Engine.
+"""aneforge.dsp - a DSP toolkit on the Apple Neural Engine, composed from real
+CONVOLUTION (the conv layer) and the MATMUL-FFT from `aneforge.fft`.
 
-Built on the two things the ANE is genuinely good at: REAL CONVOLUTION (the conv
-layer) and the MATMUL-FFT from `aneforge.fft` (the DFT factored into matmul stages,
-complex carried as real/imag PAIRS). This submodule composes them into the everyday
-DSP kit:
-
-    from aneforge.dsp import (fir_filter, fft_convolve, freq_filter,
-                             stft, spectrogram, hann, hamming, blackman,
-                             correlate, autocorrelate)
-
-WHAT FITS THE ANE:
-  * FIR filtering  - a finite impulse response IS a convolution. Short kernels run
-    on the native conv layer (1xK, arch-capped at K<=15 on this M5, verified);
-    longer ones fall back to FFT convolution. Feed-forward, no recurrence: a clean fit.
-  * FFT-domain DSP - fft_convolve / freq_filter / stft / spectrogram are all
-    (windowed) FFTs + elementwise spectral ops + iFFT, every stage a matmul or an
-    elementwise map (real/imag pairs via aneforge.fft). A clean fit.
-  * Correlation   - cross/auto-correlation is convolution without the kernel flip,
-    exactly what the ANE conv and the native CrossCorrelation bridge already do.
-
-WHAT DOES NOT FIT (arch limit):
-  * IIR / recursive filters (Butterworth, biquads, any `y[n] = ... + a*y[n-1]`).
-    A direct-form IIR is a DATA-DEPENDENT RECURRENCE over samples - the scan/cumsum
-    wall the ANE lacks (no in-graph loop, no scalar feedback). No streaming IIR
-    here. `iir_filter` is ONLY a FIXED-LENGTH UNROLL: the recurrence becomes its
-    truncated FIR impulse response of a chosen length, run as an FIR. Exact only up
-    to the truncation, and the unroll is fixed at build time - it does NOT scale to
-    arbitrary-length streaming IIR. Exposed tagged, with the relerr-vs-untruncated
-    cost reported, rather than faking a recurrent filter.
-
-CONVENTIONS (inherited):
-  * The ANE conv is a CROSS-CORRELATION (no kernel flip), matching
-    `np.correlate(x, h, 'valid')`. True convolution (np.convolve / scipy lfilter)
-    flips the kernel - fir_filter handles the flip + causal zero-pad internally.
-  * Complex is (re, im) real-tensor pairs; spectra come back as separate real arrays.
-  * Everything is fp16 on-device; the matmul accumulator is wide (>=fp32), so the
-    error floor is fp16 INPUT/twiddle rounding (~few e-4), flat in length.
+FIR filtering, FFT convolution, frequency-domain filtering, STFT/spectrogram, and
+correlation all FIT the ANE (feed-forward, every stage a matmul/conv/elementwise map).
+IIR / recursive filters do NOT (data-dependent sample recurrence = the scan/cumsum
+wall); `iir_filter` is only a fixed-length FIR unroll of the truncated impulse response.
+The ANE conv is a CROSS-correlation (no kernel flip). See docs/developer/applied-math.md.
 
     PYTHONPATH=. python3 aneforge/dsp.py
 """
@@ -56,13 +26,7 @@ import aneforge as af  # noqa: E402
 from aneforge.fft import fft, ifft, fft_plan, ifft_plan  # noqa: E402
 
 
-# --------------------------------------------------------------------------- #
-# windows (host-side numpy: tiny, data-independent coefficient vectors)        #
-# --------------------------------------------------------------------------- #
-# Windows are short constant vectors multiplied into framed signals. Computed on
-# the host (numpy) - no gain from a length-W cosine table on the ANE - and applied
-# as fp16 elementwise multiplies on-device (in stft) or on the host (when the caller
-# just wants the coefficients).
+# windows: short constant vectors, computed host-side (numpy), applied as fp16 muls.
 
 def hann(M: int, sym: bool = False) -> np.ndarray:
   """Hann window (raised cosine). `sym=False` gives the periodic/DFT window
@@ -109,34 +73,17 @@ def get_window(window, M: int) -> np.ndarray:
   return w
 
 
-# --------------------------------------------------------------------------- #
-# FIR filtering - convolution (the ANE's home turf)                            #
-# --------------------------------------------------------------------------- #
-
-# The native 1xK conv backend is arch-capped at K<=15 on this M5 (verified: K=16
-# fails "Some ops are not supported on any of the specified backends"). Longer FIR
-# kernels are routed through fft_convolve instead (same linear-convolution result).
+# FIR filtering - convolution. The native 1xK conv backend is arch-capped at K<=15 on
+# this M5 (K=16 fails backend support); longer kernels route through fft_convolve.
 _MAX_CONV_TAPS = 15
 
 
 def fir_filter(x, taps, mode: str = "same"):
-  """FIR filter `y = x * taps` (true convolution), on the ANE.
-
-    A finite impulse response is a convolution. The ANE conv is a CROSS-correlation
-    (no kernel flip), so we flip the taps and zero-pad to realize a genuine
-    convolution / causal FIR:
-
-      * mode='full'  -> length L+K-1   (== np.convolve(x, taps))
-      * mode='same'  -> length L, centered (== np.convolve(..., 'same'))
-      * mode='valid' -> length L-K+1   (== np.convolve(..., 'valid'))
-      * mode='lfilter' -> length L, causal (== scipy.signal.lfilter(taps, [1.0], x))
-
-    Short kernels (K<=15) run on the native conv layer in ONE fused program; longer
-    kernels fall back to FFT convolution (aneforge.fft) automatically - same result.
-
-    cost: COMPUTE (a real conv) for short taps; FFT-domain for long taps.
-    fit:  GOOD - feed-forward, no recurrence.
-    """
+  """FIR filter `y = x * taps` (true convolution), on the ANE. The ANE conv is a
+    cross-correlation, so taps are flipped and zero-padded to realize a genuine
+    convolution / causal FIR. `mode` in full/same/valid/lfilter (matching np.convolve /
+    scipy.signal.lfilter). Short kernels (K<=15) use the native conv; longer ones fall
+    back to FFT convolution automatically."""
   x = np.asarray(x, np.float32).ravel()
   taps = np.asarray(taps, np.float32).ravel()
   L, K = x.shape[0], taps.shape[0]
@@ -190,18 +137,9 @@ def _next_fft_size(n: int) -> int:
 
 
 def fft_convolve(x, h, block: int | None = None):
-  """Linear convolution `y = x * h` via the FFT (aneforge.fft), length L+K-1.
-
-    Equivalent to `np.convolve(x, h)` but computed as FFT(x)*FFT(h) -> iFFT, so
-    every stage is a matmul or an elementwise spectral product (ANE-native). For a
-    short kernel against a long signal we use OVERLAP-ADD: split the signal into
-    blocks, multiply each block-FFT by the (cached) kernel spectrum, inverse-
-    transform, and sum the overlapping tails. A single block is used when the whole
-    thing fits one transform.
-
-    cost: COMPUTE/FUSION - staged matmul-FFTs + spectral multiply.
-    fit:  GOOD.
-    """
+  """Linear convolution `y = x * h` via the FFT (aneforge.fft), length L+K-1 (==
+    np.convolve) computed as FFT(x)*FFT(h) -> iFFT. A short kernel against a long signal
+    uses OVERLAP-ADD (block FFTs against the cached kernel spectrum); one block otherwise."""
   x = np.asarray(x, np.float32).ravel()
   h = np.asarray(h, np.float32).ravel()
   L, K = x.shape[0], h.shape[0]
@@ -233,14 +171,9 @@ def fft_convolve(x, h, block: int | None = None):
 
 
 def _ifft_real_scaled(Yr: np.ndarray, Yi: np.ndarray, N: int, iplan=None) -> np.ndarray:
-  """Inverse-FFT a spectrum to a real signal, guarding fp16 dynamic range.
-
-    aneforge's iFFT accumulates the length-N inverse-DFT sum BEFORE the 1/N scale, so
-    the on-device intermediate peaks at ~max_k sum_n |Y_n|. For convolution/correlation
-    spectra (products of two transforms) that peak can exceed fp16's 65504 ceiling and
-    SATURATE, corrupting the result (the FFT module's fp16 dynamic-range wall, not a
-    precision issue). We pre-scale `Y` so the unscaled sum stays well within range, run
-    the (linear) iFFT, then undo the scale on the host."""
+  """Inverse-FFT a spectrum to a real signal, guarding fp16 dynamic range: the iFFT sums
+    BEFORE the 1/N scale, so convolution/correlation spectra can overflow fp16 (65504) and
+    saturate. Pre-scale Y into range, run the linear iFFT, undo on the host. See numerics.md."""
   peak = float(np.sum(np.sqrt(Yr.astype(np.float64) ** 2 + Yi.astype(np.float64) ** 2)))
   s = 1.0
   if peak > 1.0:
@@ -266,17 +199,10 @@ def _fft_conv_block(x: np.ndarray, h: np.ndarray, N: int) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 
 def freq_filter(x, kind: str, cutoff, fs: float = 2.0):
-  """Frequency-domain filter: FFT the (real) signal, zero out the rejected bins,
-    inverse-FFT. A brick-wall ideal filter in the DFT domain.
-
-    `kind` in {'lowpass','highpass','bandpass','bandstop'}. `cutoff` is a scalar
-    (low/high) or a (lo, hi) pair (band). `fs` is the sample rate (default 2.0 so a
-    bare `cutoff` reads as a normalized frequency in [0,1] == fraction of
-    Nyquist). Returns the real filtered signal (length L), on the ANE.
-
-    The mask is applied to BOTH the bin and its conjugate mirror so the output stays
-    real. cost: COMPUTE/FUSION (FFT + elementwise mask + iFFT). fit: GOOD.
-    """
+  """Brick-wall frequency-domain filter: FFT, zero the rejected bins, inverse-FFT.
+    `kind` in lowpass/highpass/bandpass/bandstop; `cutoff` a scalar or (lo, hi) pair;
+    `fs` the sample rate (default 2.0 so a bare cutoff is a fraction of Nyquist). The
+    mask hits both the bin and its conjugate mirror, so the output stays real."""
   x = np.asarray(x, np.float32).ravel()
   L = x.shape[0]
   N = _next_fft_size(L)
@@ -316,17 +242,10 @@ def _frame(x: np.ndarray, win_len: int, hop: int) -> np.ndarray:
 
 
 def stft(x, win=256, hop=None, window: str = "hann"):
-  """Short-time Fourier transform: window each frame, FFT it (aneforge.fft), stack.
-
-    `win` is the frame length (int) or an explicit window-coefficient array; `hop`
-    the step between frames (default win//4 like scipy); `window` the named window
-    when `win` is an int. Returns (Zr, Zi), each [n_freq, n_frames] with
-    n_freq = win//2 + 1 (the non-redundant rfft half), matching scipy.signal.stft's
-    bin layout (NOT its 1/sum(win) scaling - see spectrogram for magnitudes).
-
-    Each frame is one matmul-FFT. The frames are independent (no recurrence), a
-    clean ANE fit; we batch them through the cached FFT plan. fit: GOOD.
-    """
+  """Short-time Fourier transform: window each frame, FFT it, stack. `win` is the frame
+    length (int) or a window array; `hop` defaults to win//4. Returns (Zr, Zi), each
+    [n_freq, n_frames] with n_freq = win//2 + 1, matching scipy.signal.stft's bin layout
+    (NOT its 1/sum(win) scaling). Each frame is one matmul-FFT through the cached plan."""
   x = np.asarray(x, np.float32).ravel()
   if isinstance(win, (int, np.integer)):
     win_len = int(win)
@@ -365,17 +284,10 @@ def spectrogram(x, win=256, hop=None, window: str = "hann", mode: str = "magnitu
 # --------------------------------------------------------------------------- #
 
 def correlate(a, b, mode: str = "valid"):
-  """Cross-correlation `r[k] = sum_n a[n+k] * b[n]` on the ANE.
-
-    For a short template (Lb<=15) uses the native CrossCorrelation bridge (a path
-    Apple's MIL frontend rejects): a length-La row and a smaller length-Lb template ->
-    'valid' correlation of length La-Lb+1, matching `np.correlate(a, b, 'valid')`.
-    A wider template (Lb>=16, the same 1xK conv-width arch wall as fir_filter) falls
-    back to FFT correlation (correlation = convolution with `b` reversed). Other
-    modes zero-pad the map before the valid correlation.
-
-    cost: MIXED (cut) for the bridge; COMPUTE/FFT for the fallback. fit: GOOD.
-    """
+  """Cross-correlation `r[k] = sum_n a[n+k] * b[n]` on the ANE. A short template (Lb<=15)
+    uses the native CrossCorrelation bridge; a wider one (Lb>=16, the 1xK conv-width wall)
+    falls back to FFT correlation (convolution with `b` reversed). `mode` in valid/full/same.
+    See docs/developer/applied-math.md."""
   a = np.asarray(a, np.float32).ravel()
   b = np.asarray(b, np.float32).ravel()
   La, Lb = a.shape[0], b.shape[0]
@@ -391,9 +303,7 @@ def correlate(a, b, mode: str = "valid"):
   else:
     raise ValueError(f"correlate: mode must be valid/full/same; got {mode!r}")
 
-  # wide template: the CrossCorrelation bridge lowers to a 1xLb conv, capped at
-  # Lb<=15 on this ANE (Lb>=16 fails ANECCompile). Fall back to FFT correlation:
-  # correlate(ap, b) 'valid' == full-convolve(ap, reverse(b)) sliced to valid lags.
+  # wide template -> FFT: correlate(ap,b) 'valid' == full-convolve(ap, reverse(b)) sliced.
   if Lb > _MAX_CONV_TAPS:
     full = fft_convolve(ap, b[::-1])                 # length len(ap)+Lb-1
     return full[Lb - 1:ap.shape[0]].astype(np.float32)
@@ -405,13 +315,9 @@ def correlate(a, b, mode: str = "valid"):
 
 
 def autocorrelate(x, max_lag: int | None = None):
-  """Autocorrelation `r[k] = sum_n x[n] x[n+k]` for lags k=0..max_lag, on the ANE.
-
-    Built as a correlation of the signal against its own leading `window` via the
-    CrossCorrelation bridge. `max_lag` defaults to len(x)//4 (the template length is
-    len(x)-max_lag, kept < len(x)). Returns r[0..max_lag] (the non-negative lags),
-    matching the tail of `np.correlate(x, x, 'full')`. fit: GOOD.
-    """
+  """Autocorrelation `r[k]` for lags k=0..max_lag, on the ANE: a correlation of the signal
+    against its own leading prefix. `max_lag` defaults to len(x)//4. Returns the
+    non-negative lags, matching the tail of np.correlate(x, x, 'full')."""
   x = np.asarray(x, np.float32).ravel()
   L = x.shape[0]
   if max_lag is None: max_lag = L // 4
@@ -428,23 +334,11 @@ def autocorrelate(x, max_lag: int | None = None):
 # --------------------------------------------------------------------------- #
 
 def iir_filter(x, b, a, n_taps: int = 256):
-  """ARCH-LIMITED IIR via a FIXED-LENGTH FIR unroll.
-
-    A direct-form IIR `a[0] y[n] = sum_i b[i] x[n-i] - sum_{j>=1} a[j] y[n-j]` is a
-    DATA-DEPENDENT RECURRENCE over samples - each output depends on previous OUTPUTS.
-    The ANE is feed-forward: no in-graph loop, no scalar feedback, no scan/cumsum.
-    There is NO streaming IIR on this hardware.
-
-    The ONLY realization is to TRUNCATE the IIR's infinite impulse response to
-    `n_taps` and run it as an FIR (via fir_filter / fft_convolve). Exact only up to
-    the truncation tail, with the tap count fixed at build time - it does NOT scale
-    to arbitrary streaming IIR. Use it for stable filters whose impulse response has
-    decayed within `n_taps` samples; the residual is the truncated tail energy.
-
-    Returns the FIR-approximated, causal (lfilter-style) output (length L), plus prints
-    nothing - the caller-facing tag is in the module docstring. fit: ARCH-LIMITED
-    (fixed unroll only).
-    """
+  """ARCH-LIMITED IIR via a FIXED-LENGTH FIR unroll. A direct-form IIR is a
+    data-dependent sample recurrence (each output depends on previous outputs) - the
+    scan/cumsum wall the ANE lacks. The only realization is to truncate the IIR's
+    impulse response to `n_taps` and run it as an FIR: exact up to the truncation tail,
+    tap count fixed at build time, does NOT scale to streaming IIR."""
   import scipy.signal as ss
   b = np.asarray(b, np.float64).ravel()
   a = np.asarray(a, np.float64).ravel()

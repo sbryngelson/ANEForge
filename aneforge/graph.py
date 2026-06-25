@@ -1,7 +1,6 @@
-"""The aneforge compute graph: a lazy `Tensor` whose methods/operators record
-structure (op + sources + attrs), plus the op constructors and the higher-level
-neural-net helpers (conv, multi-head / cross attention, GEGLU). Nothing here
-touches the device - `compile` (_compile.py) lowers the graph to one program.
+"""The aneforge compute graph: a lazy `Tensor` recording structure (op + sources +
+attrs), the op constructors, and nn helpers (conv, attention, GEGLU). Nothing here
+touches the device - `compile` (_compile.py) lowers the graph. See docs/developer/overview.md.
 """
 from __future__ import annotations
 
@@ -38,9 +37,7 @@ class Tensor:
   def __init__(self, shape: Sequence[int], op: str, srcs: Sequence["Tensor"] = (),
         attrs: dict | None = None) -> None:
     self.shape = tuple(int(d) for d in shape)
-    # The ANE dimension model is rank <= 5 ("Rank ... must be between 0 and 5");
-    # a rank-6+ tensor (reshape/stack/expand_dims past 5D) fails ANECCompile.
-    # Guard at construction with a clear error, not a cryptic compile crash.
+    # ANE dimension model is rank <= 5; rank-6+ fails ANECCompile. Guard early.
     if len(self.shape) > 5:
       raise ValueError(
         f"aneforge: tensor rank {len(self.shape)} exceeds the ANE maximum of 5 "
@@ -263,11 +260,8 @@ class Tensor:
   def amin(self, axes) -> "Tensor": return self._reduce("reduce_min", axes)
 
   def cumsum(self, axis: int = -1) -> "Tensor":
-    """Cumulative sum along `axis` (last axis only). The ANE has no native
-        cumsum, but a last-axis cumsum is exactly `x @ triu_ones` -- a matmul with
-        a baked upper-triangular-ones weight, made exact by the wide accumulator.
-        A composition, not a native op (native cumsum is arch-gated). For other
-        axes, transpose the target axis to last first."""
+    """Cumulative sum along `axis` (last axis only): `x @ triu_ones` (no native
+        cumsum). For other axes, transpose the target axis to last first."""
     ax = axis % len(self.shape)
     if ax != len(self.shape) - 1:
       raise ValueError(f"cumsum: only the last axis is supported (got axis={axis}, "
@@ -289,20 +283,14 @@ class Tensor:
     return Tensor(self.shape, "softmax", [self], {"axis": axis % len(self.shape)})
 
   def l2_norm(self, axis: int = -1, eps: float = 1e-12) -> "Tensor":
-    """L2-normalize over `axis`: `x / sqrt(sum(x**2, axis) + eps)`.
-
-        Runs as fused e5rt MIL (`reduce_l2_norm` over the axis, then `real_div`)
-        - no graph cut. The MIL `l2_norm` op normalises over all non-batch dims,
-        so we build the per-axis form explicitly."""
+    """L2-normalize over `axis`: `x / sqrt(sum(x**2, axis) + eps)`. Fused e5rt MIL
+        (the MIL `l2_norm` op normalises over all non-batch dims, so we build per-axis)."""
     ax = axis % len(self.shape)
     return Tensor(self.shape, "l2_norm", [self], {"axis": ax, "eps": float(eps)})
 
   def argmax(self, axis: int = -1) -> "Tensor":
-    """Index of the maximum along `axis` (keepdims). Runs as a native-ANE
-        GlobalArgMinMax sub-program (netplist bridge, like af.sdpa) - a graph cut.
-
-        2D inputs [C, W] only, over the last axis (axis=-1/1, Width) or axis 0
-        (Channel); indices are returned fp16-encoded (exact for index<2048)."""
+    """Index of the maximum along `axis` (keepdims). Native-ANE GlobalArgMinMax
+        bridge - a graph cut. 2D inputs [C, W] only; indices fp16-encoded (exact for index<2048)."""
     if len(self.shape) != 2:
       raise ValueError(f"argmax: only 2D [C,W] inputs are supported; got {self.shape}")
     ax = axis % 2
@@ -310,10 +298,8 @@ class Tensor:
     return Tensor(out, "argmax", [self], {"axis": ax})
 
   def rms_norm(self, gamma, eps: float = 1e-5) -> "Tensor":
-    """RMSNorm over the last dim. `gamma`: a [D] array for a fixed (baked)
-        scale, or a broadcastable parameter `Tensor` ([1, D]) for a TRAINABLE
-        scale (normalized with a unit-scale op, then scaled by the Tensor so its
-        gradient flows via the mul VJP)."""
+    """RMSNorm over the last dim. `gamma`: a [D] array (fixed/baked scale) or a
+        broadcastable parameter `Tensor` ([1, D]) for a TRAINABLE scale."""
     if isinstance(gamma, Tensor):
       xn = self.rms_norm(np.ones(self.shape[-1], np.float32), eps)
       return xn * gamma
@@ -323,11 +309,9 @@ class Tensor:
     return Tensor(self.shape, "rms_norm", [self], {"gamma": gamma, "eps": float(eps)})
 
   def layer_norm(self, gamma, beta, eps: float = 1e-5) -> "Tensor":
-    """LayerNorm over the last dim (2D inputs [M, D]). `gamma`/`beta`: [D]
-        arrays for a fixed (baked) affine, or broadcastable parameter `Tensor`s
-        ([1, D]) for a TRAINABLE affine (normalized with a unit affine, then scaled
-        and shifted by the Tensors so their gradients flow via the mul/add VJPs).
-        Pass both as Tensors for the trainable form."""
+    """LayerNorm over the last dim (2D inputs [M, D]). `gamma`/`beta`: [D] arrays
+        (fixed/baked affine) or broadcastable parameter `Tensor`s ([1, D]) for a
+        TRAINABLE affine (pass both as Tensors)."""
     if isinstance(gamma, Tensor) or isinstance(beta, Tensor):
       if not (isinstance(gamma, Tensor) and isinstance(beta, Tensor)):
         raise TypeError("layer_norm: a trainable affine needs both gamma and beta as Tensors")
@@ -341,11 +325,9 @@ class Tensor:
     return Tensor(self.shape, "layer_norm", [self], {"gamma": gamma, "beta": beta, "eps": float(eps)})
 
   def channel_layer_norm(self, gamma, beta, eps: float = 1e-5) -> "Tensor":
-    """LayerNorm over the CHANNEL axis of a channels-first [N, C, 1, S] tensor -
-        the ANE-native transformer layout. Each [N, :, 1, s] vector is normalized over
-        C; `gamma`/`beta` are [C]. Same result as `layer_norm` on the [N*S, C] view, but
-        with no transpose into and out of [seq, d], which is what makes the attention/MLP
-        stack cheap on the ANE (projections stay 1x1 convs over [N, C, 1, S])."""
+    """LayerNorm over the CHANNEL axis of channels-first [N, C, 1, S] - the ANE-native
+        transformer layout. Same result as `layer_norm` on the [N*S, C] view but with no
+        transpose, keeping the attention/MLP stack as 1x1 convs. `gamma`/`beta` are [C]."""
     gamma = np.asarray(gamma); beta = np.asarray(beta)
     _check_dtype(gamma, "channel_layer_norm gamma"); _check_dtype(beta, "channel_layer_norm beta")
     if (len(self.shape) != 4 or self.shape[2] != 1
@@ -355,10 +337,9 @@ class Tensor:
     return Tensor(self.shape, "channel_layer_norm", [self], {"gamma": gamma, "beta": beta, "eps": float(eps)})
 
   def group_norm(self, gamma, beta, num_groups: int, eps: float = 1e-5) -> "Tensor":
-    """GroupNorm over [1,C,H,W]. `gamma`/`beta`: [C] arrays for a fixed
-        (baked) affine, or broadcastable parameter `Tensor`s ([1, C, 1, 1]) for a
-        TRAINABLE affine (normalized with a unit affine, then scaled and shifted by
-        the Tensors). Pass both as Tensors for the trainable form."""
+    """GroupNorm over [1,C,H,W]. `gamma`/`beta`: [C] arrays (fixed/baked affine) or
+        broadcastable parameter `Tensor`s ([1, C, 1, 1]) for a TRAINABLE affine
+        (pass both as Tensors)."""
     if isinstance(gamma, Tensor) or isinstance(beta, Tensor):
       if not (isinstance(gamma, Tensor) and isinstance(beta, Tensor)):
         raise TypeError("group_norm: a trainable affine needs both gamma and beta as Tensors")
@@ -369,10 +350,8 @@ class Tensor:
     _check_dtype(gamma, "group_norm gamma"); _check_dtype(beta, "group_norm beta")
     if len(self.shape) != 4 or self.shape[0] != 1 or self.shape[1] % num_groups:
       raise ValueError(f"group_norm expects [1,C,H,W] with C%groups==0; got {self.shape}, G={num_groups}")
-    # The rank-4 tiled lowering reshapes to [1,G,C/groups,H*W] and reduces the
-    # trailing two axes, so the bound is the largest single axis, max(C/groups, H*W),
-    # against the ANE's hard per-axis cap of 65536 - not the flattened (C/groups)*H*W
-    # product (which overflowed for SD-UNet's 512ch@128 and 640ch@64; finding_sd15).
+    # The tiled lowering reduces over the largest single axis, max(C/groups, H*W),
+    # against the ANE per-axis cap of 65536 (not the flattened product; finding_sd15).
     _, C, H, W = self.shape
     axis = max(C // num_groups, H * W)
     if axis > 65536:
@@ -431,18 +410,12 @@ def input(shape: Sequence[int], dtype: str = "fp16") -> Tensor:
 
 
 def image_input(shape: Sequence[int], scale: float = 1.0 / 255.0, bias=0.0) -> Tensor:
-  """A uint8 image input that is dequantised to fp16 ON the engine.
+  """A uint8 image input dequantised to fp16 ON the engine: feed raw 8-bit pixels
+    (camera / decoded-video bytes) straight in, the host skips the float-convert + repack.
 
-    Feed raw 8-bit pixels (camera / decoded-video bytes) straight to the compiled
-    model - the uint8->fp16 conversion and the `scale*x + bias` normalisation run
-    as in-graph ANE ops, so the host skips the float-convert + repack. Returns a
-    normal fp16 Tensor for the rest of the graph.
-
-    `scale`/`bias` are scalars by default (the usual `x/255` ImageNet-style
-    normalisation is `scale=1/255`). For per-channel normalisation on an NCHW image
-    pass length-C sequences; they broadcast as `[1,C,1,1]` constants. The dequant is
-    `cast(uint8->fp16) -> mul(scale) -> add(bias)`; identity add/mul are dropped, so
-    the common `scale=1/255, bias=0` case is a cast + one mul."""
+    `scale`/`bias` are scalar (default `scale=1/255`) or length-C for per-channel NCHW
+    normalisation (broadcast as `[1,C,1,1]`). The dequant is `cast -> mul(scale) -> add(bias)`;
+    identity mul/add are dropped."""
   shape = tuple(int(d) for d in shape)
   x = input(shape, dtype="uint8")
   y = Tensor(shape, "cast", [x], {"dtype": "fp16"})
@@ -484,8 +457,7 @@ def conv(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
     raise ValueError(f"conv expects 4D input [N,Cin,H,W], got {x.shape}")
   N, Cin, H, W = x.shape
   Cout, _, kH, kW = weight.shape
-  # The ANE conv tiles along the kernel WIDTH: kW>=16 is unsupported by ANECCompile (kH
-  # unconstrained; verified 16x3 compiles, 3x16 does not). Guard with a clear error.
+  # ANE conv tiles along kernel WIDTH: kW>=16 fails ANECCompile (kH unconstrained).
   if kW > 15:
     raise ValueError(
       f"conv: kernel width kW={kW} exceeds the ANE limit (kW must be <=15); "
@@ -501,18 +473,11 @@ def conv(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
 
 def dynamic_conv(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0,
         dilation: int = 1, groups: int = 1) -> Tensor:
-  """2D conv with a DYNAMIC (runtime-tensor) weight - the kernel is a graph value, not a
-    baked constant. Lowers to the ANE's native dynamic-kernel path (`CreateDynamicKernel` /
-    DynamicGOC), so the weight can be produced at runtime by an earlier op or fed as an input.
-    Enables hypernetworks / per-sample (per-image) kernels - a capability no other ANE frontend
-    exposes, since Apple's MIL/CoreML conv bakes the weight.
+  """2D conv with a DYNAMIC (runtime-tensor) weight via the ANE's native dynamic-kernel
+    path - enables hypernetworks / per-sample kernels (Apple's MIL/CoreML conv bakes the weight).
 
-    `x`: [1, Cin, H, W]; `weight`: a Tensor [Cout, Cin/groups, kH, kW]. Returns
-    [1, Cout, Hout, Wout].
-
-    BATCH MUST BE 1. The ANE dynamic-kernel path does not support a dynamic-weight conv
-    with batch >= 2, so it is rejected at build time. For batched convolution use `af.conv`
-    (constant weight) or the im2col-based trainable `conv2d`."""
+    `x`: [1, Cin, H, W]; `weight`: a Tensor [Cout, Cin/groups, kH, kW]. BATCH MUST BE 1
+    (batch>=2 is unsupported on the dynamic-kernel path; use `af.conv` / `conv2d` instead)."""
   if not isinstance(weight, Tensor):
     raise TypeError("dynamic_conv: weight must be a Tensor (a graph value); for a constant "
             "weight use af.conv")
@@ -546,8 +511,7 @@ def conv_transpose(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: i
     raise ValueError(f"conv_transpose expects 4D [N,Cin,H,W], got {x.shape}")
   N, Cin, H, W = x.shape
   _, Cout, kH, kW = weight.shape
-  # Same kernel-WIDTH tiling limit as conv: kW>=16 fails ANECCompile (kH
-  # unconstrained). Guard with a clear error.
+  # Same kernel-WIDTH limit as conv: kW>=16 fails ANECCompile (kH unconstrained).
   if kW > 15:
     raise ValueError(
       f"conv_transpose: kernel width kW={kW} exceeds the ANE limit (kW must be <=15); "
@@ -593,19 +557,13 @@ def concat(tensors: Sequence[Tensor], axis: int = 1) -> Tensor:
 
 
 def gather(x: Tensor, indices, axis: int = 0) -> Tensor:
-  """Gather slices along `axis` by STATIC (build-time) integer `indices`. The
-    ANE has no native gather, but for constant indices a gather is exact via
-    `slice_by_size` + `concat` (a composition, not a native op -- native gather
-    is arch-gated). Dynamic (data-dependent) indices are not reachable on the ANE."""
+  """Gather slices along `axis` by STATIC integer `indices` via `slice_by_size` + `concat`
+    (no native gather; dynamic indices are unreachable on the ANE)."""
   idx = [int(i) for i in indices]
   rank = len(x.shape)
   ax = axis % rank
-  # A last-axis (width) gather lowers to slice_by_size with a nonzero WIDTH begin-offset,
-  # which routes through the A13/A14 x16 fixed-point crop-DMA path and returns the wrong
-  # elements there (correct on A16+). Gather a NON-last axis instead: for rank>=2 transpose
-  # the gathered axis off the last position and transpose back; for rank 1 gather a [N,1]
-  # view. Both are identity-preserving and correct on every family (the same width-axis-slice
-  # avoidance the conv im2col backward uses).
+  # A last-axis (width) gather hits the A13/A14 x16 crop-DMA path and returns wrong elements
+  # (correct on A16+). Gather a NON-last axis instead by transposing the axis off last.
   if ax == rank - 1:
     if rank == 1:
       return gather(x.reshape(x.shape[0], 1), idx, axis=0).reshape(len(idx))
@@ -671,10 +629,9 @@ def instance_norm(x: Tensor, gamma, beta, eps: float = 1e-5) -> Tensor:
 
 def local_response_norm(x: Tensor, size: int = 5, alpha: float = 1e-4,
             beta: float = 0.75, k: float = 1.0) -> Tensor:
-  """Cross-channel LRN over [N,C,H,W] via the native MIL `local_response_norm` op
-    (fused, no graph cut - distinct from the netplist `af.lrn` bridge): each output
-    is `x / (k + alpha/size * sum_{window} x**2) ** beta` over a window of `size`
-    neighbouring channels. `gamma`-free; `alpha`/`beta`/`k` in natural units."""
+  """Cross-channel LRN over [N,C,H,W] via the native MIL `local_response_norm` op (fused,
+    no cut - distinct from the netplist `af.lrn` bridge): `x / (k + alpha/size *
+    sum_{window} x**2) ** beta` over `size` neighbouring channels."""
   if len(x.shape) != 4:
     raise ValueError(f"local_response_norm expects [N,C,H,W]; got {x.shape}")
   return Tensor(x.shape, "local_response_norm", [x],
@@ -682,11 +639,10 @@ def local_response_norm(x: Tensor, size: int = 5, alpha: float = 1e-4,
 
 
 def einsum_native(equation: str, a: Tensor, b) -> Tensor:
-  """Restricted batched contraction via the native MIL `einsum` op (distinct from
-    the general `af.einsum` decomposer: this is the single hardware `einsum` layer).
-    The only on-ANE-verified equation is `'nchw,nwhu->nchu'` (a batched matmul over
-    the W/U dims sharing N,H): `a`=[N,C,H,W], `b`=[N,W,H,U] (streamed weight) ->
-    [N,C,H,U]. `b` is a weight array (streamed), not a graph Tensor."""
+  """Restricted batched contraction via the native MIL `einsum` op (the single hardware
+    `einsum` layer; distinct from the general `af.einsum` decomposer). Only the verified
+    equation `'nchw,nwhu->nchu'` is reachable: `a`=[N,C,H,W], `b`=[N,W,H,U] streamed weight
+    -> [N,C,H,U]."""
   if equation.replace(" ", "") != "nchw,nwhu->nchu":
     raise NotImplementedError(
       f"einsum: only 'nchw,nwhu->nchu' is verified reachable on the ANE; got {equation!r}")
@@ -775,10 +731,9 @@ def upsample_bilinear(x: Tensor, scale: int = 2, align_corners: bool = False) ->
 
 def affine(x: Tensor, transform, output_h: int, output_w: int,
      align_corners: bool = False) -> Tensor:
-  """2-D affine warp of [N,C,H,W] to `(output_h, output_w)` via the native MIL
-    `affine` op (`AffineTransform` hardware layer). `transform` is the [N,6]
-    (or [1,6], broadcast) affine matrix `[a0,a1,a2, b0,b1,b2]` in
-    normalized [-1,1] coordinates; bilinear sampling with zero padding. Fused MIL."""
+  """2-D affine warp of [N,C,H,W] to `(output_h, output_w)` via native MIL `affine`.
+    `transform` is [N,6] (or [1,6]) `[a0,a1,a2, b0,b1,b2]` in normalized [-1,1] coords;
+    bilinear sampling, zero padding. Fused MIL (no cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"affine expects 4D [N,C,H,W], got {x.shape}")
   T = np.asarray(transform); _check_dtype(T, "affine transform")
@@ -841,14 +796,10 @@ def channel_to_space(x: Tensor, r: int) -> Tensor:
 
 
 def space_to_batch(x: Tensor, bh: int, bw: int) -> Tensor:
-  """Move spatial blocks into the batch dim on the ANE's native `SpaceToBatch`
-    layer: `[N,C,H,W] -> [N*bh*bw, C, H/bh, W/bw]`. Output batch slice
-    `(n*bh+i)*bw+j` == `x[n, :, i::bh, j::bw]`. Graph cut.
-
-    The batch dim grows, so this can only be a leaf/output of the segmented plan
-    or feed another netplist cut (segment outputs are threaded as host arrays);
-    feeding it into a fused e5rt region changes the batch the region expects,
-    which is fine since each region is compiled from its own input shapes."""
+  """Move spatial blocks into the batch dim on the native `SpaceToBatch` layer:
+    `[N,C,H,W] -> [N*bh*bw, C, H/bh, W/bw]`; batch slice `(n*bh+i)*bw+j` ==
+    `x[n, :, i::bh, j::bw]`. Graph cut (the batch dim grows, so it must be a leaf/output
+    or feed another netplist cut)."""
   if len(x.shape) != 4:
     raise ValueError(f"space_to_batch expects 4D [N,C,H,W], got {x.shape}")
   N, C, H, W = x.shape
@@ -859,13 +810,9 @@ def space_to_batch(x: Tensor, bh: int, bw: int) -> Tensor:
 
 
 def batch_to_space(x: Tensor, bh: int, bw: int) -> Tensor:
-  """Move batch blocks back into space on the ANE's native `BatchToSpace` layer
-    (inverse of `space_to_batch`): `[N*bh*bw, C, H, W] -> [N, C, H*bh, W*bw]`.
-    Graph cut.
-
-    ARCH-GATED: the validator requires the input batch divisible by `bh*bw`
-    (string: "Input batch n is not divisible by factor x * factor y"); a
-    non-divisible batch fails compilation, so it is rejected here."""
+  """Move batch blocks back into space on the native `BatchToSpace` layer (inverse of
+    `space_to_batch`): `[N*bh*bw, C, H, W] -> [N, C, H*bh, W*bw]`. Graph cut.
+    ARCH-GATED: input batch must be divisible by `bh*bw` (else fails compilation)."""
   if len(x.shape) != 4:
     raise ValueError(f"batch_to_space expects 4D [N,C,H,W], got {x.shape}")
   B, C, H, W = x.shape
@@ -896,13 +843,9 @@ def input_view(x: Tensor, offset: int, size: int) -> Tensor:
 
 
 def dynamic_slice(x: Tensor, start: int, size: int = 2) -> Tensor:
-  """Runtime-parametric slice `x[start:start+size]` on the ANE's native
-    `DynamicSlice` layer (start bound through a netplist constant). Graph cut.
-
-    ARCH-NOTE: the only verified/accepted netplist variant of this layer on this
-    host fixes Width=4 and SliceSize=2, so this op requires a length-4 input and
-    `size==2`. The static-start API is general in spirit; only the hardware variant
-    is verified."""
+  """Runtime-parametric slice `x[start:start+size]` on the native `DynamicSlice` layer.
+    Graph cut. ARCH-NOTE: the only verified variant fixes Width=4, SliceSize=2, so this
+    requires a length-4 input and `size==2`."""
   W = int(np.prod(x.shape))
   if W != 4 or size != 2:
     raise ValueError("dynamic_slice: the verified ANE variant requires a length-4 "
@@ -913,13 +856,9 @@ def dynamic_slice(x: Tensor, start: int, size: int = 2) -> Tensor:
 
 
 def scaled_elementwise(x: Tensor, z: Tensor, op: str = "Add", scale: float = 1.0) -> Tensor:
-  """`scale * (x OP z)` on the ANE's native `ScaledElementWise` layer (a fused
-    binary-op + scalar-scale). `op` in {Add, Mult, Min, Max}; inputs are flattened
-    to equal-length 1-D Width vectors. Graph cut.
-
-    Two arch quirks of the native layer are guarded here (found by tests/gen_random):
-    `Sub` is rejected by ANECCompile, and `Mult` ignores `scale` on-silicon - reject
-    those configs rather than emit a wrong/uncompilable program."""
+  """`scale * (x OP z)` on the native `ScaledElementWise` layer. `op` in {Add, Mult, Min,
+    Max}; inputs flattened to equal-length 1-D Width vectors. Graph cut. Arch quirks guarded:
+    `Sub` is rejected by ANECCompile, and `Mult` ignores `scale` on-silicon."""
   ops = ("Add", "Mult", "Min", "Max")
   if op not in ops:
     raise ValueError(f"scaled_elementwise: op must be one of {ops}; got {op!r} "
@@ -934,11 +873,8 @@ def scaled_elementwise(x: Tensor, z: Tensor, op: str = "Add", scale: float = 1.0
 
 
 def topk(x: Tensor, k: int, largest: bool = True) -> Tensor:
-  """Top-`k` values along the last axis of a 2D input [C, W], keyed per row.
-    Runs as a native-ANE TopK sub-program (netplist bridge, like af.sdpa) - a cut.
-
-    `k` in {3, 4} is ARCH-GATED on this hardware (ANECCompile fails) and rejected
-    here; the rest of `k` in [1, W] is supported."""
+  """Top-`k` values along the last axis of a 2D input [C, W], keyed per row. Native-ANE
+    TopK bridge - a cut. `k` in {3, 4} is ARCH-GATED (ANECCompile fails) and rejected."""
   if len(x.shape) != 2:
     raise ValueError(f"topk: only 2D [C,W] inputs are supported; got {x.shape}")
   C, W = x.shape
@@ -950,15 +886,10 @@ def topk(x: Tensor, k: int, largest: bool = True) -> Tensor:
 
 
 def sort(x: Tensor, descending: bool = False, return_indices: bool = False) -> Tensor:
-  """Sort each row of a 2D input [C, W] along the last axis (Width).
-    Runs as a native-ANE Sort sub-program (netplist bridge, like af.sdpa) - a cut.
-
-    With `return_indices=True` the argsort indices are returned instead of the
-    sorted values (fp16-encoded, exact for index < 2048). Output shape is [C, W].
-
-    Like the native TopK, the hardware Sort keys the order on one channel lane and
-    permutes all channels by it; for a numpy-like per-row independent sort the
-    bridge dispatches each row as its own 1-channel tile."""
+  """Sort each row of a 2D input [C, W] along the last axis (Width). Native-ANE Sort
+    bridge - a cut. `return_indices=True` returns argsort indices (fp16-encoded, exact for
+    index < 2048). The hardware Sort keys on one channel lane and permutes all channels by
+    it, so the bridge dispatches each row as its own 1-channel tile for a per-row sort."""
   if len(x.shape) != 2:
     raise ValueError(f"sort: only 2D [C,W] inputs are supported; got {x.shape}")
   return Tensor(x.shape, "sort", [x],
@@ -1044,29 +975,13 @@ def minmax_norm(x: Tensor, dimension: str = "Width", eps: float = 1e-4) -> Tenso
 
 
 def lrn(x: Tensor, alpha: float = 1.0, beta: float = 0.75, k: float = 1.0) -> Tensor:
-  """Cross-channel local response normalization (classic AlexNet LRN) on the ANE's
-    native LocalResponseNormalization layer (Channel mode). `x` is [1, C, H, W];
-    graph cut.
-
-    Per-channel, per-pixel:
+  """Cross-channel LRN (classic AlexNet) on the native LocalResponseNormalization layer
+    (Channel mode). `x` is [1, C, H, W]; graph cut. Per-channel, per-pixel:
         `y[c] = x[c] / (k + alpha * sum_{j in window(c)} x[j]^2) ** beta`
-
-    The window is a LOCAL channel window of size N = C (the bridge fixes the layer's
-    `KernelChannel` to the channel count), asymmetric-centered on c and CLIPPED at
-    the channel boundaries:
-        `window(c) = [max(0, c-(N-1)//2) : min(C, c + N//2 + 1)]`.
-    So only the center channel sees all C channels; edge channels see a partial sum.
-    This is NOT a full-channel sum (the old docstring's `sum_j x[j]^2` over all j
-    was wrong - see the corrected reference in tests/test_numerical.py and the RE in
-    the reverse-engineering corpus).
-
-    `alpha`/`beta`/`k` are the standard LRN coefficients in their natural units;
-    `alpha` is the TRUE effective alpha. The bridge encodes `alpha` as an fp16
-    bit-pattern and pre-multiplies by KernelChannel to cancel the layer's internal
-    divide-by-KernelChannel; callers do not see that.
-
-    ARCH-GATED: the layer compiles only for C <= 15 (KernelChannel = C; C >= 16 fails
-    ANECCompile on this hardware), so larger channel counts are rejected here."""
+    The window is a LOCAL channel window of size N=C, asymmetric-centered on c and CLIPPED
+    at the boundaries: `window(c) = [max(0, c-(N-1)//2) : min(C, c + N//2 + 1)]` (NOT a
+    full-channel sum). `alpha`/`beta`/`k` are the standard LRN coefficients (`alpha` is the
+    TRUE effective alpha). ARCH-GATED: compiles only for C <= 15 (C >= 16 fails ANECCompile)."""
   if len(x.shape) != 4 or x.shape[0] != 1:
     raise ValueError(f"lrn: expects [1,C,H,W]; got {x.shape}")
   C = x.shape[1]
@@ -1091,10 +1006,8 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
   qh, kh, vh = _heads(q, n_heads, dh), _heads(k, n_heads, dh), _heads(v, n_heads, dh)
   kt = kh.transpose([0, 2, 1])
   scale = 1.0 / dh ** 0.5
-  # Query-tiling: compute [tile, S] score tiles per head instead of the full [H, S, S]
-  # score matrix. Exact (each tile attends to all keys) and ~3x faster on the ANE at
-  # large S, which pipelines the smaller tiles better (same fission as af.sdpa). The
-  # count is the S-based heuristic unless a tuned value is cached (af.tune_attention).
+  # Query-tiling: [tile, S] score tiles per head instead of the full [H, S, S] matrix.
+  # Exact and ~3x faster at large S (same fission as af.sdpa). Count from af.tune_attention.
   from . import _optimize as _opt
   n_tiles = _opt.attention_tiles(S, n_heads, dh)
   if n_tiles == 1:
@@ -1120,10 +1033,8 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
   kt = kh.transpose([0, 2, 1])                                            # [H,dh,T]
   scale = 1.0 / dh ** 0.5
   # Query-tiling: when query and context are both long the [H, S, T] score matrix hits
-  # the ANE's materialization wall (~2.4x slower past it). Tiling the query into
-  # [tile, T] score blocks avoids it, exact, the same fission as af.sdpa/af.mha. Gated
-  # on score area so small-T cross-attention (SD text conditioning, T=77) stays
-  # single-shot, where it is byte-identical and already fastest.
+  # the ANE materialization wall (~2.4x slower). Tile the query into [tile, T] blocks
+  # (exact). Gated on score area so small-T cross-attention (SD T=77) stays single-shot.
   from . import _optimize as _opt
   n_tiles = _opt.attention_tiles(S, n_heads, dh, T=T) if (S >= 768 and T >= 512) else 1
   if n_tiles == 1:
@@ -1136,39 +1047,25 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
   return o.linear(Wo, bo)
 
 
-# The native fused-attention layer is numerically reliable only up to this sequence
-# length. Measured 2026-06-02 (the reverse-engineering corpus): native vs an fp32
-# reference is ~3e-3 at S<=2048 but ~1.0 (garbage) at S=4096, while the decomposed
-# matmul/softmax/matmul stays ~5e-3 (the wide matmul accumulator holds). So above
-# this S, af.sdpa emits the accurate decomposition instead of the native node.
+# Native fused-attention is numerically reliable only up to this seq length (garbage at
+# S=4096); above it af.sdpa emits the accurate decomposition (the wide matmul accumulator holds).
 SDPA_NATIVE_MAX_SEQ = 2048
-# The native fused-attention layer returns garbage once BOTH the query and key sequence axes
-# are large: reliable only while min(q_seq, k_seq) < this bound (measured 2026-06-09: a hard
-# 512x512 score-tile cliff - cos collapses to ~0.67 at 512x512, while the KV-cache decode
-# shape min=1 stays correct to large k_seq). Outside it we decompose (non-causal) or refuse
-# (causal - the decomposition can't build the additive mask here).
+# Native fused-attention returns garbage once BOTH q and k seq axes are large: reliable only
+# while min(q_seq, k_seq) < this (hard 512x512 cliff; KV-cache decode min=1 stays correct).
 SDPA_NATIVE_MIN_BOTH = 512
 
 
 def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
     is_causal: bool = False, attn_mask: "Tensor | None" = None) -> Tensor:
-  """Scaled-dot-product attention. Uses the ANE's *native* fused-attention hardware
-    layer (ANECSDPALayerDesc) - a path Apple's user-space MIL compiler never emits
-    (it always decomposes SDPA) - for sequence lengths where it is numerically
-    reliable (S <= SDPA_NATIVE_MAX_SEQ); above that it emits the accurate fused
-    decomposition instead (the native layer returns garbage at large S). q/k/v:
-    [1, heads, seq, d_head], fp16. Returns the same shape. `scale` defaults to
-    1/sqrt(d_head).
+  """Scaled-dot-product attention via the ANE's *native* fused-attention layer
+    (ANECSDPALayerDesc) - a path Apple's MIL compiler never emits - inside the reliable
+    regime, else the accurate fused decomposition. q/k/v: [1, heads, seq, d_head], fp16;
+    `scale` defaults to 1/sqrt(d_head).
 
-    Where the native layer is used this is a graph-cut boundary: the surrounding graph
-    runs as e5rt program(s) and this node runs as a separate native-SDPA ANE
-    sub-program (see _compile.compile). `is_causal=True` is NATIVE: the causal additive
-    mask rides the SDPA layer's optional 5th bottom (kept on the native bridge route -
-    the route optimizer does not decompose it, since the decomposition is unmasked).
-    Validated on M1: cos 1.0 vs softmax(QK^T*scale + causal)*V, single + multi-head.
-    Requires S <= SDPA_NATIVE_MAX_SEQ (above that the op decomposes, which has no mask)."""
-  # K and V share shape (the cached sequence); Q's SEQUENCE may differ from K/V's - the
-  # KV-cache DECODE shape (q seq_q attends to cached k/v of length seq_kv). Q,K share H+D.
+    Native use is a graph-cut boundary (a separate native-SDPA sub-program). `is_causal=True`
+    is NATIVE: the causal additive mask rides the SDPA layer's optional 5th bottom, and
+    requires S <= SDPA_NATIVE_MAX_SEQ (the decomposition has no mask)."""
+  # K,V share shape (cached seq); Q's seq may differ (KV-cache decode). Q,K share H+D.
   if not (len(q.shape) == 4 == len(k.shape) == len(v.shape)):
     raise ValueError(f"af.sdpa expects 4D q,k,v of [1,H,S,D]; got {q.shape}, {k.shape}, {v.shape}")
   if k.shape != v.shape:
@@ -1184,13 +1081,10 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
   if attn_mask is not None:
     if is_causal:
       raise ValueError("af.sdpa: pass either is_causal or an explicit attn_mask, not both")
-    # attn_mask is a RUNTIME additive bias broadcastable with the [.,.,Sq,Skv] scores
-    # (rides the native SDPA layer's 5th bottom). The native layer applies ONE additive-mask
-    # plane shared across all heads, over the FULL query axis: shape must be [1,1,Sq,Skv].
-    # A per-head mask ([1,H,Sq,Skv], H>1) is silently mis-applied (one plane used for all
-    # heads -> wrong), and a query-broadcast mask ([1,1,1,Skv] with q_seq>1) underflows the
-    # bridge -- reject both rather than return garbage. (For KV-cache decode q_seq==1, so
-    # [1,1,1,Skv] is a full-query plane and is accepted.)
+    # attn_mask is a RUNTIME additive bias on the native layer's 5th bottom: ONE plane
+    # shared across all heads over the full query axis, so shape must be [1,1,Sq,Skv].
+    # Per-head ([1,H,..], H>1) is silently mis-applied and query-broadcast ([1,1,1,Skv]
+    # with q_seq>1) underflows the bridge -- reject both. (KV-cache decode q_seq==1 is ok.)
     if (len(attn_mask.shape) != 4 or attn_mask.shape[0] != 1 or attn_mask.shape[1] != 1
         or attn_mask.shape[2] != q.shape[2] or attn_mask.shape[3] != k.shape[2]):
       raise ValueError(
@@ -1200,28 +1094,20 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
         f"(Sq-axis=1 while q_seq>1) are not supported by the native layer.")
   _scale: float = scale if scale is not None else 1.0 / q.shape[-1] ** 0.5
   seq = max(q.shape[2], k.shape[2])               # attention spans the K/V (cached) length
-  both = min(q.shape[2], k.shape[2])              # the native layer breaks when BOTH axes are large
-  # Native fused-attention is reliable only inside this envelope; outside it returns garbage.
+  both = min(q.shape[2], k.shape[2])              # native layer breaks when BOTH axes are large
   native_ok = both < SDPA_NATIVE_MIN_BOTH and seq <= SDPA_NATIVE_MAX_SEQ
   if not native_ok:
     if is_causal:
-      # The accurate decomposition would need a causal additive mask, but there's no
-      # host-constant add on the graph here, and the native layer is unreliable at this
-      # size -- refuse rather than return a wrong answer. Chunk the query into tiles whose
-      # min(q,k) seq stays < SDPA_NATIVE_MIN_BOTH.
+      # The decomposition has no causal mask and the native layer is unreliable here --
+      # refuse. Chunk the query so each tile's min(q,k) seq stays < SDPA_NATIVE_MIN_BOTH.
       raise NotImplementedError(
         f"af.sdpa: causal attention at min(q,k)seq={both} (>= {SDPA_NATIVE_MIN_BOTH}) "
         f"or seq={seq} (> {SDPA_NATIVE_MAX_SEQ}) is outside the reliable native regime "
         f"and the causal decomposition is not wired; chunk the query so each tile's "
         f"min(seq) < {SDPA_NATIVE_MIN_BOTH}.")
-    # non-causal (optionally with a runtime Tensor mask): the accurate fused decomposition
-    # (handles the decode shape too - Q[.,.,Sq,.] @ K^T -> [.,.,Sq,Skv].softmax @ V).
-    #
-    # Query-tiling: for a large query axis, compute the attention in [tile, Skv] score
-    # tiles instead of materializing the full [Sq, Skv] score matrix. This is exact (each
-    # tile attends to all keys) and is markedly faster on the ANE, which pipelines the
-    # smaller score tiles far better than one big matmul+softmax (~3x at Sq=1500, H=16).
-    # Tiles target ~512 query rows; a small query (e.g. KV-cache decode) takes one shot.
+    # non-causal: the accurate fused decomposition (handles the decode shape too).
+    # Query-tiling: for a large query axis, compute [tile, Skv] score tiles instead of the
+    # full [Sq, Skv] matrix - exact and ~3x faster (small queries take one shot).
     kt = k.transpose([0, 1, 3, 2])
     from . import _optimize as _opt
     n_tiles = _opt.attention_tiles(q.shape[2], q.shape[1], q.shape[3], T=k.shape[2])

@@ -1,20 +1,5 @@
-"""Native ANE `RadiusSearch` via a hand-authored ANECIR netplist (Path A).
-
-RadiusSearch is point-cloud neighbor search: for each query centroid, find the
-input points within a given `Radius` (an L2 ball query).  Entry point
-`radius_search_fused(points, centroids, radius)` returns an
-`(N_points, N_centroids)` uint8 membership matrix (entry `[i, j]` is 1 iff
-`points[i]` is within L2 `radius` of `centroids[j]`).
-
-Schema (accepted unit dictionary)::
-
-    {"Type": "RadiusSearch",
-     "Bottom": ["centroids", "points"],
-     "InputType": ["Float16", "Float16"],
-     "OutputChannels": 1,
-     "OutputType": "Float16",
-     "Params": {"Radius": r}}
-"""
+"""Native ANE `RadiusSearch` (point-cloud L2 ball query) on Path A.
+See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -28,11 +13,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def radius_search_fused(points: np.ndarray, centroids: np.ndarray, radius: float) -> np.ndarray:
-  """Return an `(N_points, N_centroids)` uint8 membership matrix from the ANE.
-
-    Entry `[i, j]` is 1 iff `points[i]` is within L2 `radius` of
-    `centroids[j]`.
-    """
+  """`(N_points, N_centroids)` uint8 membership: `[i,j]` is 1 iff `points[i]`
+    is within L2 `radius` of `centroids[j]`."""
   from . import _netplist as g
 
   points = np.asarray(points, dtype=np.float16)

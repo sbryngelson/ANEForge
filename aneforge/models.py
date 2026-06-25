@@ -1,12 +1,5 @@
-"""Pretrained-model loaders: `load` (BERT-family sentence encoders) and
-`load_resnet18` (torchvision ImageNet classifier). Each builds an aneforge graph
-from the real weights and compiles it to a fused ANE program. Heavy deps
-(transformers / torchvision) are imported lazily so the core stays light.
-
-Also ships the trainable-graph builders used with the on-ANE autograd:
-`group_norm_train` (any-batch GroupNorm with trainable affine), `conv_block`
-(conv -> GroupNorm -> ReLU -> optional max-pool), and `cifar_cnn` (a full
-CIFAR-10 CNN returning the input, logits, and trainable parameter list)."""
+"""Pretrained-model loaders (`load`, `load_resnet18`) and trainable-graph
+builders (`group_norm_train`, `conv_block`, `cifar_cnn`). See docs/developer/models.md."""
 from __future__ import annotations
 
 import numpy as np
@@ -19,8 +12,7 @@ _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
 
 
 def _l2_normalizer(D: int) -> Model | SegmentedModel:
-  """A tiny cached fused-ANE program that L2-normalizes a [1, D] vector over its
-    last axis (the verified reduce_l2_norm + real_div path)."""
+  """Cached fused-ANE program L2-normalizing a [1, D] vector over its last axis."""
   net = _NORM_CACHE.get(D)
   if net is None: net = _NORM_CACHE[D] = compile(input((1, D)).l2_norm(axis=-1))
   return net
@@ -29,33 +21,17 @@ def _l2_normalizer(D: int) -> Model | SegmentedModel:
 def load(name: str, int8: bool = False, pooling: str = "mean") -> "Encoder":
   """Load a BERT-family sentence encoder from HF weights as an ANE embedder.
 
-        embed = af.load("sentence-transformers/all-MiniLM-L6-v2")
-        vecs  = embed(["hello world", "the cat sat"])   # [2, D], L2-normalised
-
-    Tokenisation + embedding lookup run on the host (gather is not an ANE op); the
-    transformer layers run on the ANE as fused programs (cached per sequence
-    length); pooling + normalise run on the host / ANE.
-
-    `pooling` selects how the per-token states reduce to one vector: "mean" (the
-    default, MiniLM / E5), "cls" (the first token, BGE / GTE), or "max". A model's
-    correct mode is in its sentence-transformers config; `aneforge.sentence_transformers`
-    reads it for you.
+    `pooling` is one of "mean" (MiniLM/E5), "cls" (BGE/GTE), or "max". See
+    docs/developer/models.md.
     """
   return Encoder(name, int8=int8, pooling=pooling)
 
 
 def load_resnet18(int8: bool = False, compress: str | None = None,
                   compress_atol: float = 0.05, build_dir: str | None = None) -> "Vision":
-  """Load torchvision ResNet-18 (ImageNet) as a fused ANE classifier.
-
-        clf = af.load_resnet18()
-        logits = clf(image)        # [1,3,224,224] -> [1,1000]
-        clf = af.load_resnet18(compress="int4")   # 4-bit LUT weights
-
-    BatchNorm is folded into the preceding conv at load, so the ANE graph is pure
-    conv/relu/pool/add/fc. Conv is the ANE's strongest workload. `compress` picks
-    the weight encoding (see `af.compile`); `build_dir` keeps the packed program
-    on disk (its `weights.bin` is the packed-model size).
+  """Load torchvision ResNet-18 (ImageNet) as a fused ANE classifier ([1,3,224,224]
+    -> [1,1000]). BatchNorm is folded into the preceding conv at load. `compress`
+    picks the weight encoding (see `af.compile`). See docs/developer/models.md.
     """
   return Vision(int8=int8, compress=compress, compress_atol=compress_atol, build_dir=build_dir)
 
@@ -159,7 +135,7 @@ class Encoder:
     return compile(h, int8=self.int8)
 
   def _embed(self, ids: np.ndarray) -> np.ndarray:
-    """Host-side token + position + type embedding lookup, then LayerNorm."""
+    """Host-side token + position + type embedding lookup, then LayerNorm."""  # gather is not an ANE op
     e = self.word[ids] + self.pos[np.arange(len(ids))] + self.typ[0]
     m = e.mean(-1, keepdims=True)
     v = ((e - m) ** 2).mean(-1, keepdims=True)
@@ -172,63 +148,50 @@ class Encoder:
       ids = np.asarray(self.tok(t)["input_ids"], dtype=np.int64)
       net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
       states = net(self._embed(ids))               # [S, D] per-token states on the ANE
-      if self.pooling == "cls":                    # first token (BERT [CLS])
+      if self.pooling == "cls":
         v = states[0]
       elif self.pooling == "max":
         v = states.max(0)
       else:
-        v = states.mean(0)                       # mean over all (unpadded) tokens
+        v = states.mean(0)
       if normalize:
-        # final L2-normalize runs on the ANE (fused reduce_l2_norm + real_div)
         v = _l2_normalizer(self.D)(v.reshape(1, self.D))[0]
       vecs.append(v)
     return np.asarray(vecs, dtype=np.float32)
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):
-  """GroupNorm built from primitives so it works at ANY batch N (the stock
-    Tensor.group_norm op is batch-1 only) and so the affine `gamma`/`beta` are real
-    trainable parameters. `x` is [N, C, H, W]; `gamma`/`beta` are `[1, C, 1, 1]`
-    parameter Tensors. Normalizes per-(group, sample) over the C/groups*H*W elements,
-    then applies the affine. Every op here (reshape, mean, square, rsqrt, adds, mul,
-    add) has a VJP, so input/gamma/beta gradients all run on the ANE. Mirrors the
-    group_norm VJP math (aneforge/autograd.py:425)."""
+  """Any-batch GroupNorm with trainable affine, built from VJP-bearing primitives so
+    gradients run on the ANE (stock Tensor.group_norm is batch-1 only). `x` is
+    [N,C,H,W]; `gamma`/`beta` are [1,C,1,1]. See docs/developer/models.md."""
   N, C, H, W = x.shape
   if C % groups:
     raise ValueError(f"group_norm_train: channels {C} not divisible by groups {groups}")
   M = (C // groups) * H * W
   xg = x.reshape(N, groups, M)
-  xc = xg - xg.mean((2,))                       # per-(sample,group) center
-  var = xc.square().mean((2,))                  # per-(sample,group) variance
+  xc = xg - xg.mean((2,))
+  var = xc.square().mean((2,))
   xn = (xc * var.adds(float(eps)).rsqrt()).reshape(N, C, H, W)
   return xn * gamma + beta
 
 
 def conv_block(x, conv_w, gamma, beta, groups: int, pool: int = 0):
-  """conv2d(pad=1) -> GroupNorm(train) -> ReLU -> optional max_pool(pool).
-    `conv_w` is a conv_param; `gamma`/`beta` are [1,Cout,1,1] params; `pool=0`
-    means no pooling. Returns the block output Tensor."""
+  """conv2d(pad=1) -> GroupNorm(train) -> ReLU -> optional max_pool(pool); `pool=0` skips pooling."""
   h = conv2d(x, conv_w, pad=1)
   h = group_norm_train(h, gamma, beta, groups).relu()
   return h.max_pool(pool) if pool else h
 
 
 def _he(rng, shape):
-  """He/Kaiming-normal init. fan_in is layout-dependent: a conv weight
-    [Cout, Cin, kH, kW] has fan_in = Cin*kH*kW (prod of the trailing dims), while a
-    2-D fc weight [in, out] has fan_in = in (the leading dim)."""
+  """He/Kaiming-normal init; fan_in is layout-dependent (conv: prod of trailing dims,
+    2-D fc: leading dim). See docs/developer/models.md."""
   fan_in = shape[0] if len(shape) == 2 else int(np.prod(shape[1:]))
   return (rng.standard_normal(shape) * np.sqrt(2.0 / fan_in)).astype(np.float32)
 
 
 def cifar_cnn(batch: int, widths=(32, 64, 128), groups: int = 8, classes: int = 10, seed: int = 0):
-  """Build the CIFAR-10 CNN graph. Returns (x_input, logits, params) where params is
-    the trainable list in a fixed order. Architecture (per the design spec):
-      block1 conv 3->w0  GN ReLU maxpool2   (32x32 -> 16x16)
-      block2 conv w0->w1 GN ReLU maxpool2   (16x16 ->  8x8)
-      block3 conv w1->w2 GN ReLU            ( 8x8)
-      global-avg-pool over H,W -> fc(w2->classes)
-    """
+  """Build the CIFAR-10 CNN graph; returns (x_input, logits, params) with params in a
+    fixed trainable order. See docs/developer/models.md."""
   rng = np.random.default_rng(seed)
   w0, w1, w2 = widths
   x = input((batch, 3, 32, 32))

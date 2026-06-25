@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
-"""Generate small ANEF net.plist programs without CoreML or MLCompute.
-
-The generated directory contains:
-  - net.plist
-  - weights.0
-  - weights.1 for convolution programs
-
-It can be loaded by ane_network_description_probe.m through
-_ANEInMemoryModelDescriptor modelWithNetworkDescription:weights:optionsPlist:.
-"""
+"""Shared netplist author for the Path-A bridges: generate net.plist + weights.*
+programs (no CoreML / MLCompute) and dispatch them. See docs/developer/bridges.md."""
 
 from __future__ import annotations
 
@@ -23,20 +15,15 @@ _INVOKERS_DIR = Path(__file__).resolve().parents[1] / "_invokers"     # aneforge
 
 
 def bin_dir() -> Path:
-  """Per-machine compiled-invoker binary cache (sibling of the e5rt cache at
-    `~/.cache/aneforge/e5rt`), kept outside the package tree so the bridges work
-    when aneforge is installed into a read-only site-packages."""
+  """Per-machine compiled-invoker binary cache, outside the package tree so the
+    bridges work from a read-only site-packages install."""
   return Path.home() / ".cache" / "aneforge" / "bin"
 
 
 def ensure_invoker(name: str) -> Path:
-  """Compile `aneforge/_invokers/<name>.mm` -> `bin_dir()/<name>` on demand,
-    cached per machine (rebuilt when the source is newer). The invokers link only
-    system frameworks, so this works on any Apple Silicon Mac. Returns the binary path.
-
-    Several bridges share one invoker (e.g. `sdpa_invoker` is the generic netplist
-    invoker for the geometry / structural / rearrange ops), so the build is centralized
-    here, not duplicated per bridge."""
+  """Compile `_invokers/<name>.mm` -> `bin_dir()/<name>` on demand (rebuilt when
+    the source is newer); returns the binary path. `sdpa_invoker` is the generic
+    netplist invoker shared by the geometry/structural/rearrange ops."""
   src = _INVOKERS_DIR / f"{name}.mm"
   binp = bin_dir() / name
   if binp.exists() and src.exists() and binp.stat().st_mtime >= src.stat().st_mtime: return binp
@@ -50,16 +37,9 @@ def ensure_invoker(name: str) -> Path:
 
 
 def invoke_netplist(invoker, net_plist, *, weights=(), inputs=(), outputs=(), repeats=1, warmup=None, extra=()):
-  """Run a native-layer invoker over a netplist and return its parsed status.
-
-    Shared Path-A dispatch core for the netplist bridges: builds the invoker
-    command (`--net-plist` + per-weight `--weights` + per-input `--input name=path`
-    + per-output `--output name=path` + `--repeats` and optional `--warmup`), runs
-    it, and raises on a non-zero return code or a non-`ok` status. `inputs`/`outputs`
-    are `(name, path)` pairs; the caller writes the input files and reads the output
-    files (layouts differ per bridge). Returns the parsed last-line status dict (e.g.
-    timing info).
-    """
+  """Shared Path-A dispatch: build the invoker command and run it. `inputs`/
+    `outputs` are `(name, path)` pairs (caller writes inputs, reads outputs).
+    Raises on non-zero return or non-`ok` status; returns the status dict."""
   cmd = [str(invoker), "--net-plist", str(net_plist)]
   for w in weights: cmd += ["--weights", str(w)]
   for name, path in inputs: cmd += ["--input", f"{name}={path}"]
@@ -2386,43 +2366,18 @@ def build_sdpa(
 ) -> dict:
   """Build a single-op SDPA netplist mirroring the fused-hardware route.
 
-    The 4-input ANE fused-attention layer accepts Q, K, V, and Scale tensor
-    descriptors.  The validator (`_ANECValidateSDPALayer`) requires
-    `ANECTensorDesc.byte[0x39] bit 0` to be set on the Scale tensor (the
-    "Scale is expected to be constant" gate found by Agent #41).
-
-    The netplist spelling of that bit is undocumented; Apple's MIL->ANECIR
-    translator sets it implicitly via the `Constants` array.  This builder
-    supports several candidate spellings selected by `constant_flag_spelling`:
-
-      - "Constants_array"    : list Scale in the network's `Constants` array
-                               (the conventional Apple route - backed by
-                               weights.0).
-      - "IsConstant_unit"    : add `IsConstant: True` on the unit's input slot.
-      - "is_constant_unit"   : ditto, snake-case.
-      - "ConstantTensor_unit": `ConstantTensor: True` on the unit.
-      - "ScaleMutable_false" : analogue to other `*Mutable` Apple keys -
-                               `ScaleMutable: False` on the unit.
-      - "all"                : every variant simultaneously (probe mode).
-
-    The Scale value is folded into the constant weights blob; the
-    `scale` parameter defaults to `1/sqrt(dim)`.
-
-    `subtract_max` controls the `Params.SubtractMax` boolean.  Recovered from
-    ZinParseSDPAUnit + ANECDescToUnitInfo<ANECSDPALayerDesc>: the SDPA descriptor's
-    first field (`desc[0x00]`) is a CFBoolean the netplist parser sets from
-    `Params.SubtractMax`.  `ANECSDPALayerDescInitialize` defaults to `kCFBooleanFalse`
-    (no max-stabilization); numerically correct softmax requires `True`.  Apple's
-    MIL->ANECIR translator emits `SubtractMax=True` for
-    `scaled_dot_product_attention`.
+    The validator requires the Scale tensor be flagged constant; the netplist
+    spelling is undocumented, so `constant_flag_spelling` selects a candidate
+    ("Constants_array" is the Apple route and the only one that loads here;
+    "all" = probe mode). `subtract_max` -> `Params.SubtractMax` (default True;
+    the hardware default is no max-stabilization, which breaks softmax).
+    `scale` defaults to `1/sqrt(dim)`. See docs/developer/bridges.md.
     """
   if scale is None: scale = 1.0 / (float(dim) ** 0.5)
   unit_name = "sdpa-1"
   network_name = "network_sdpa-1"
 
-  # Inputs: Q, K, V are tensor inputs; Scale is a weight-backed constant.
-  # The Bottom array places Scale as the 4th input (index 3), matching
-  # Apple's __Z18ValidateLayer_Impl<ANECSDPALayerDesc, ...> 4-tensor layout.
+  # Q, K, V are tensor inputs; Scale is the 4th Bottom (weight-backed constant).
   params: dict[str, object] = {"SubtractMax": bool(subtract_max)}
   unit: dict[str, object] = {
     "Bottom": ["query", "key", "value", "scale"],
@@ -2430,17 +2385,11 @@ def build_sdpa(
     "Name": unit_name,
     "OutputChannels": channels,
     "OutputType": "Float16",
-    # `SubtractMax` is the only `Params` key the SDPA netplist parser
-    # (ZinParseSDPAUnit at 0x222ff4b1c) recognizes; it controls whether
-    # softmax subtracts the max before exp.  _ANECSDPALayerDescInitialize
-    # defaults desc[0x00]=kCFBooleanFalse (no stabilization) - the source of
-    # the original "Y depends on Q,K,V,scale but doesn't equal
-    # softmax(Q@K^T*s)@V" numerics gap.
+    # SubtractMax is the only Params key the SDPA parser reads (softmax max-sub).
     "Params": params,
     "Type": "SDPA",
   }
 
-  # Apply candidate constant-flag spellings on the unit dict.
   use_constants_array = constant_flag_spelling in {"Constants_array", "all"}
   if constant_flag_spelling in {"IsConstant_unit", "all"}: unit["IsConstant"] = [False, False, False, True]
   if constant_flag_spelling in {"is_constant_unit", "all"}: unit["is_constant"] = [False, False, False, True]
@@ -2462,17 +2411,14 @@ def build_sdpa(
   )
 
   if use_constants_array:
-    # Mark Scale as a 1-element fp16 weight-backed constant (the canonical
-    # Apple route for "tensor is constant" in netplist).
+    # Mark Scale a 1-element fp16 weight-backed constant (canonical Apple route).
     plist = attach_constant(
       plist,
       network_name,
       constant_entry("scale", "Float16", width=1, height=1, channels=1),
     )
   else:
-    # Even without the Constants array we need an "input" port for Scale;
-    # add a placeholder weight-backed constant if the spelling alone
-    # carries the flag, otherwise add Scale as a regular input.
+    # No Constants array: add Scale as a plain input port.
     plist["ProcedureList"][0]["InputList"].append(
       input_entry("scale", width=1, height=1, channels=1, entry_name=unit_name)
     )

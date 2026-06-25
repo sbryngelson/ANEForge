@@ -1,19 +1,10 @@
-"""Complete ANE operation catalog - every MIL op the ANECompiler exposes, with its
-category, per-device availability (M1..M5), MIL kernel class, and notes.
+"""Complete ANE op catalog - every MIL op the ANECompiler exposes, with category,
+per-device availability (M1..M5), MIL kernel class, and notes. The single source of truth
+for the native MIL vocabulary; aneforge's higher-level ops are composites that lower to it.
 
-Auto-generated from the ANEForge reverse-engineering (the 187-op x device matrix +
-the symbol-resolution op map), grounded in the HAL extraction and live M1 silicon probes.
-Device columns map to ANE capability families (verified SoC->arch ladder):
-    m1 = A13 (family 2)   m2 = A14 (family 3)   m3 = A15 (family 4)   m4_m5 = A16/A17 (family 5)
-Each device cell is one of: 'native' (runs on-engine), 'bridge' (needs a netplist-bridge
-or host/graph decomposition), 'walled' (no path - decompose on host).
-
-This is the NATIVE MIL op vocabulary the ANE emits. aneforge's higher-level ops
-(rms_norm, group_norm, channel_layer_norm, mha, sdpa, einsum, the fft/linalg/special
-submodules) are COMPOSITES that lower to these - query their constituent ops here.
-
-This dict is the single source of truth. The deeper per-op argument, shape, dtype,
-and per-chip capability write-ups live in the project's companion reference guide.
+Device keys -> capability families: m1=A13 (fam 2), m2=A14 (3), m3=A15 (4), m4_m5=A16/A17 (5).
+Each cell: 'native' (on-engine), 'bridge' (netplist/host decomposition), 'walled' (host only).
+See docs/developer/capabilities-and-targets.md.
 """
 from __future__ import annotations
 

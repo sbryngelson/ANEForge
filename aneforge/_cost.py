@@ -1,28 +1,8 @@
-"""Op-agnostic structural cost model for aneforge graphs - the optimizer's PRUNER.
+"""Op-agnostic structural cost model - the optimizer's PRUNER (orders variants; does not select).
 
-`estimate(out) -> microseconds` gives a fast, structural roofline estimate of a
-compiled program's latency WITHOUT touching the device. It is deliberately simple
-and op-agnostic: every node's cost is a roofline of `max(floor, bytes/BW,
-flops/COMPUTE)`, where
-
-  - `bytes` is derived GENERICALLY from shapes - (sum of input elems + output
-    elems + weight elems) * 2 (fp16). No per-op byte table; this works for ANY op.
-  - `flops` is only known for the few ops with a closed-form (matmul/linear/bmm/
-    conv/conv_transpose); every other op contributes 0 flops (it is then bytes- or
-    floor-bound, which matches the calibration: the cheap fused ops all sit at the
-    dispatch floor).
-
-Composition mirrors `_compile`'s segmentation exactly: the graph is one fused
-program unless it contains a netplist-bridge op (NETPLIST_OPS), in which case it is
-cut into fused regions interleaved with native sub-programs. A fused region costs
-`floor + sum(max(0, node_cost - floor))` (the fusion discount: one dispatch floor
-for the whole region, plus only the above-floor work of each node). Each cut adds a
-`cut_penalty` and the bridge node's own roofline.
-
-A PRUNER, not ground truth. Its job is to ORDER variants so the autotuner can skip
-measuring ones predicted far worse than the current best. Real selection is always
-by on-device measurement (see _optimize.measure). Calibrated constants load from the
-bundled aneforge/ane_cost_model.json when present; else the documented defaults below.
+`estimate(out) -> microseconds` is a structural roofline (max(floor, bytes/BW, flops/COMPUTE)
+per node, fusion-discounted per region) that never touches the device. Real selection is by
+on-device measurement (_optimize.measure). See .superpowers/sdd/gold-core-heavy.md for the model.
 """
 from __future__ import annotations
 
@@ -35,16 +15,10 @@ import numpy as np
 from ._compile import NETPLIST_OPS, _topo
 
 # --------------------------------------------------------------------------- #
-# calibrated constants (load from the cost-model JSON; else documented defaults) #
+# calibrated constants (load from the cost-model JSON; else defaults below)      #
 # --------------------------------------------------------------------------- #
-# Defaults are read off ane_cost_model.json's calibration:
-#   - FLOOR_US  ~ the per-call dispatch floor (smallest fused-op min latency).
-#   - CUT_US    ~ the per-cut penalty (a native sub-program + host round-trip; the
-#                 composition probe measured ~150-300us; 200 is the documented mid).
-#   - BW_BPUS   ~ effective fp16 streaming bandwidth, bytes/us. From the matmul
-#                 sweep: K=4096 streams 32 MiB in ~293us -> ~114 GB/s ~ 1.1e5 B/us.
-#   - FLOPS_PUS ~ effective fp16 compute, flops/us. From conv C=512: 4.83 GFLOP in
-#                 ~334us -> ~14.5 TFLOP/s ~ 1.45e7 flop/us.
+# Defaults from ane_cost_model.json's calibration (floor/cut/BW/FLOPS); see
+# .superpowers/sdd/gold-core-heavy.md for how each was measured.
 _DEFAULTS = {
   "floor_us": 70.0,
   "cut_us": 200.0,
@@ -63,17 +37,14 @@ def _constants() -> dict:
       model = j.get("model", {})
       floor = model.get("dispatch_floor_us")
       if floor: c["floor_us"] = float(floor)
-      # derive BW / COMPUTE from the matmul + conv scaling fits when present
+      # derive BW / COMPUTE from the matmul + conv scaling fits when present (us/flop -> flop/us)
       mm = model.get("matmul", {})
       if mm.get("slope_us_per_unit"):
-        # us per flop -> flop per us. (matmul has bytes==flops here, but the
-        # fit captures the compute-or-stream slope either way.)
         c["flops_per_us"] = 1.0 / float(mm["slope_us_per_unit"])
       cv = model.get("conv_channels", {})
       if cv.get("slope_us_per_unit"):
         c["flops_per_us"] = max(c["flops_per_us"], 1.0 / float(cv["slope_us_per_unit"]))
-      # cut penalty: a native bridge sub-program's floor sits ~90-110us above
-      # nothing; use the smallest bridge min as the marginal cut cost when present.
+      # cut penalty: the smallest measured bridge min as the marginal cut cost.
       bridge = model.get("bridge_ops", {})
       mins = [float(v["min_us"]) for v in bridge.values()
               if isinstance(v, dict) and v.get("min_us") and v["min_us"] < 1000]
@@ -95,37 +66,17 @@ def _cost_model_path():
 # --------------------------------------------------------------------------- #
 # the measurement-free ANALYTIC per-chip cost model (Direction A)              #
 # --------------------------------------------------------------------------- #
-# The compiler carries its own analytic cycles->roofline->wall-time model
-# (ZinNEPerf, non-SIP). It was decompiled and the per-chip HAL perf fields +
-# freq/efficiency curves walked live for all 28 targets -> the bundled
-# costmodel_curves.json (ANEForge reverse-engineering). The model is
-#   t = overhead + max( flops/peak , bytes/bw )          [per fused program]
-# anchored to silicon-measured chips (_ANCHORS: M1/h13 + M5/h17s) and scaled to any
-# other chip from its family's anchor by {cores (BW), clock (floor), cores*eff (peak)}.
-# The M1 anchors, both from measurement:
-#   * latency-roofline FIT (reproduces the 5 measured M1 convs within +/-17%):
-#       peak 3.25 TFLOP/s, BW 9.0 GB/s, dispatch overhead 0.22 ms.
-#   * headline fp16 PEAK (measured): 1.8 TFLOP/s -> project_peak().
-# The M5 anchor is the 2026-06-05 loop-closure re-fit (BW 57 GB/s, floor 110 us,
-# peak 8.9 TFLOP/s) - see _ANCHORS below for why BW is core-scaled, not clock-scaled.
-# Cross-chip throughput scales by cores*eff_freq(0.8*fmax) relative to M1 (the
-# eff_freq is the second column of eff_map_0x7a8: the engine's effective frequency,
-# already derated for the high-clock MAC-rate falloff on A14+).
+# Decompiled from the compiler's own ZinNEPerf model; per-chip HAL fields + freq/eff
+# curves -> bundled costmodel_curves.json. Model: t = overhead + max(flops/peak, bytes/bw)
+# per fused program, anchored to measured chips (_ANCHORS) and scaled by {cores (BW),
+# clock (floor), cores*eff (peak)}. See .superpowers/sdd/gold-core-heavy.md for the anchors.
 _M1_FIT_PEAK_FLOPS = 3.25e12        # latency roofline compute ceiling (fit on M1 convs)
-_M1_FIT_BW_BYTES = 9.0e9            # effective streaming BW (dispatch-bound; ~= measured 10 GB/s).
-#   (2026-06-09): a broad estimate-vs-measured sweep found this over-predicts EXTREME
-#   bandwidth-bound shapes ~4-5x (m1 1x4096x4096: pred ~3700us vs measured ~800us -> ~42 GB/s
-#   effective). But it is jointly calibrated with peak/overhead into the +/-17% 5-conv fit
-#   (test_cost_model_analytic pins it), so it can't be bumped alone without regressing that
-#   fit -- a proper re-anchor needs a joint roofline re-fit over a broader measured set.
+_M1_FIT_BW_BYTES = 9.0e9            # effective streaming BW (jointly fit; over-predicts extreme BW-bound shapes ~4-5x)
 _M1_FIT_OVERHEAD_US = 220.0         # additive per-program dispatch overhead (0.22 ms)
 _M1_MEASURED_PEAK_TFLOPS = 1.8      # headline fp16 peak (the project_peak absolute anchor)
 _CLOCK_FRACTION = 0.8              # operating clock ~= 0.8 * fmax (DAT_2241e37f8)
 
-# arch string (aneforge lowercase, e.g. 'h13'/'h17s') -> a per-family fallback curve
-# key for chips without their own entry in costmodel_curves.json. The curves cover the
-# distinct cost profiles; an arch missing one (h14g, h16c, h17a, h18, ...) folds to its
-# family's representative die (matching _targets._ARCH_FAMILY tiers).
+# arch -> per-family fallback curve key for chips without their own costmodel_curves.json entry.
 _FAMILY_CURVE = {2: "H13", 3: "H14", 4: "H15", 5: "H16s"}
 
 
@@ -176,9 +127,8 @@ def _interp(x: float, xs, ys) -> float:
 
 
 def _eff_freq_at_op(curve: dict) -> tuple[float, float]:
-  """(operating_freq, effective_freq) at the operating clock f = 0.8*fmax for a chip.
-    effective_freq is eff_map_0x7a8's second column interpolated at f - the engine's
-    derated throughput frequency (M1=1.0*f; A14+ derates ~0.84)."""
+  """(operating_freq, effective_freq) at f = 0.8*fmax. effective_freq = eff_map_0x7a8 col 2
+    interpolated at f (the engine's derated throughput freq; M1=1.0*f, A14+ ~0.84)."""
   freqs = curve["freq_0x760"]
   f = _CLOCK_FRACTION * max(freqs)
   em = curve["eff_map_0x7a8"]                    # [[freq, eff_freq], ...]
@@ -187,8 +137,7 @@ def _eff_freq_at_op(curve: dict) -> tuple[float, float]:
 
 
 def _compute_scale(arch: str) -> float:
-  """Compute-throughput multiplier of `arch` relative to M1 (H13): the ratio of
-    cores * effective_freq(0.8*fmax). This is the cross-chip peak-throughput scaler."""
+  """Compute-throughput multiplier of `arch` vs M1 (H13): ratio of cores*effective_freq."""
   c = _curve_for_arch(arch)
   _, ce = _eff_freq_at_op(c)
   m1 = _curve_for_arch("h13")
@@ -197,9 +146,8 @@ def _compute_scale(arch: str) -> float:
 
 
 def project_peak(arch: str) -> dict:
-  """Measurement-free fp16 peak-throughput projection for any ANE target, anchored to
-    the measured M1 point (1.8 TFLOP/s). Returns {tflops, rel_m1, cores, ghz} - the
-    generational-scaling table (M5 ~5.5x, H17d ~22x, M11 ~0.1x) needs no silicon beyond M1."""
+  """Measurement-free fp16 peak projection for any ANE target, anchored to measured M1
+    (1.8 TFLOP/s). Returns {tflops, rel_m1, cores, ghz}; needs no silicon beyond M1."""
   scale = _compute_scale(arch)
   c = _curve_for_arch(arch)
   return {
@@ -210,30 +158,20 @@ def project_peak(arch: str) -> dict:
   }
 
 
-# Silicon-measured roofline anchors, one per measured chip. h13 is the M1 latency fit
-# (the +/-17% 5-conv validation); h17s is the M5 LOOP-CLOSURE re-fit (m5_bw_floor.py /
-# m5_weight_stream.py): BW 57 GB/s measured, dispatch floor ~110 us, peak 8.9 TFLOP/s
-# (= project_peak('h17s'), validated by the re-fit landing the quoted convs within ~13%).
-# The earlier single-anchor model scaled M1's BW by CLOCK and over-predicted M5 ~2x
-# (mean |err| 99%): effective BW tracks CORE COUNT (16/4 -> 5.5x), not clock (x1.66) -
-# a faster clock does not widen the DMA path, more cores do.
+# Silicon-measured roofline anchors, one per measured chip (h13=M1, h14=M2 Pro, h17s=M5).
+# Effective BW tracks CORE COUNT, not clock (clock-scaling over-predicted M5 ~2x); `util` is
+# h14's mid-utilization compute ramp. See .superpowers/sdd/gold-core-heavy.md for the fits.
 _ANCHORS = {
   "h13": {"bw": _M1_FIT_BW_BYTES, "floor_us": _M1_FIT_OVERHEAD_US, "peak": _M1_FIT_PEAK_FLOPS},
-  # M2 Pro silicon (A14), measured. `util` = a mid-utilization compute ramp fit to the 25-point
-  # h14 grid (papers H14_CALIBRATION_GRID.md): effective compute throughput is far below peak for
-  # mid-size ops (a 768^3 GEMM sustains ~1.5 of the 7.24 TFLOP/s), ramping with per-op FLOPs.
-  # eff_peak = peak * min(1, (flops/F)^q): a CAPPED power law that returns to full peak for large
-  # ops (the cap matters - a 2048^3 GEMM already hits peak and must not be slowed). Fit (F=1.8e10
-  # FLOP, q=0.38) cuts the grid's mean error 1.61x -> 1.16x with the peak points recovered.
+  # eff_peak = peak * min(1, (flops/F)^q): a CAPPED power law (large ops return to full peak).
   "h14": {"bw": 48.0e9, "floor_us": 100.0, "peak": 7.3e12, "util": (1.80e10, 0.38)},
   "h17s": {"bw": 57.0e9, "floor_us": 110.0, "peak": 8.9e12},
 }
 
 
 def _anchor_for_arch(arch: str) -> str:
-  """The measured anchor chip for `arch`: its own entry when silicon-measured, else the
-    nearest measured generation. Three measured anchors now: A13/h13 (M1), A14/h14 (M2 Pro),
-    A16/h17s (M5). A15 (no M3 silicon yet) uses the A14 anchor as the nearest below it."""
+  """The measured anchor for `arch`: its own when silicon-measured, else the nearest
+    measured generation (anchors: A13/h13, A14/h14, A16/h17s; A15 -> A14)."""
   key = arch.strip().lower()
   if key in _ANCHORS: return key
   from . import _targets as _TG
@@ -245,18 +183,8 @@ def _anchor_for_arch(arch: str) -> str:
 
 def estimate_provenance(target: str) -> dict:
   """Is `estimate(out, target=...)` silicon-anchored or extrapolated for `target`?
-
-    Three chips were measured and fit a roofline anchor (`_ANCHORS`): A13/h13 (M1),
-    A14/h14 (M2 Pro), A16/h17s (M5). A target whose capability family OWNS one of those
-    anchors is silicon-measured (the A16 tier folds H16/H17* into the h17s point); every
-    other target is extrapolated from the nearest measured anchor by its {cores, clock,
-    efficiency} curve. Surfaces that distinction so a caller knows whether a per-chip
-    estimate rests on measured silicon or a generational projection.
-
-    Returns `{'target', 'anchor', 'measured': bool, 'basis': str}` where `anchor` is
-    the silicon point the estimate is built on, `measured` is True iff `target`'s family
-    has its own anchor, and `basis` is `'silicon'` or `'extrapolated-from-<anchor>'`.
-    Raises `ValueError` on an unknown arch (mirrors `cross_compile_check`)."""
+    Returns {target, anchor, measured: bool, basis} (basis = 'silicon' or
+    'extrapolated-from-<anchor>'). Raises ValueError on an unknown arch."""
   from . import _targets as _TG
   key = target.strip().lower()
   if key not in _TG._ARCH_FAMILY:
@@ -274,13 +202,9 @@ def estimate_provenance(target: str) -> dict:
 
 
 def _analytic_constants(arch: str) -> dict:
-  """The {floor_us, cut_us, bw_bytes_per_us, flops_per_us} for `arch`'s ANALYTIC
-    roofline, taken from the nearest silicon-measured anchor (_ANCHORS) and scaled:
-    effective streaming BW by CORE-COUNT ratio (the verified M5 loop-closure mechanism,
-    NOT clock), the dispatch floor by operating-clock ratio (setup runs at engine clock),
-    and the compute peak by the relative cores*eff_freq scale. A measured chip gets its
-    anchor exactly. cut_us (a host round-trip for a netplist bridge) is host-side, so
-    chip-independent."""
+  """The {floor_us, cut_us, bw_bytes_per_us, flops_per_us} for `arch`'s analytic roofline,
+    scaled from the nearest anchor: BW by cores, floor by clock, peak by cores*eff_freq;
+    cut_us is host-side (chip-independent)."""
   a_key = _anchor_for_arch(arch)
   a = _ANCHORS[a_key]
   c, ac = _curve_for_arch(arch), _curve_for_arch(a_key)
@@ -303,31 +227,14 @@ def _analytic_constants(arch: str) -> dict:
 # --------------------------------------------------------------------------- #
 # measured per-bridge-op cost model                                            #
 # --------------------------------------------------------------------------- #
-# The 19 NETPLIST bridge ops (sdpa, argmax, topk, sort, ...) have no closed-form
-# flops, so node_cost() would cost them at the generic dispatch floor. But
-# ane_cost_model.json's `model.bridge_ops` holds measured per-config min latencies
-# (keyed by a size string like "sdpa H=8 S=128 D=64", tagged with a `family`).
-# _bridge_model() parses these into per-family points so bridge_cost() uses the
-# measured value, not the floor.
-#
-# Key format -> size params (parsed by family):
-#   bridge_sdpa    "sdpa H=<H> S=<S> D=<D>"   -> (H, S, D)
-#   bridge_argmax  "argmax [<C>,<W>]"         -> (C, W)
-#   bridge_topk    "topk k=<k> [<C>,<W>]"     -> (C, W)   (k fixed 5 in the sweep)
-#   bridge_sort    "sort [<C>,<W>]"           -> (C, W)
-#
-# Interpolation (approximate): the grid is sparse (2-6 points/family). Per family
-# we pick a work scalar w(size) (see _BRIDGE_WORK), anchor to the nearest measured
-# point by it, and scale min_us by the work ratio, clamped to the dispatch floor.
-# Captures the right magnitude and ordering (all the pruner needs), not a per-shape
-# fit. Families with no data fall back to the roofline node_cost().
+# Bridge ops have no closed-form flops; ane_cost_model.json's `model.bridge_ops` holds
+# measured per-config min latencies (keyed by a size string + a `family`). bridge_cost()
+# nearest-neighbour anchors by a per-family work scalar (_BRIDGE_WORK) and scales by the
+# work ratio, clamped to the floor. Approximate ordering, not a per-shape fit; families with
+# no data fall back to the roofline. See .superpowers/sdd/gold-core-heavy.md for key formats.
 import re
 
-# op name -> bridge family in the JSON. All 19 NETPLIST bridge ops are measured by
-# the cost sweeps (sdpa/argmax/topk/sort by ane_cost_model_sweep.py's `bridge`
-# group; the remaining 15 by bridge_cost_sweep.py), so every bridge node maps to a
-# measured family here. (An op missing from this table, or whose family has no rows
-# in the JSON, still falls back to the roofline in bridge_cost().)
+# op name -> bridge family in the JSON (all 19 bridge ops are measured by the cost sweeps).
 _OP_TO_FAMILY = {
   "sdpa": "bridge_sdpa",
   "argmax": "bridge_argmax",
@@ -350,18 +257,10 @@ _OP_TO_FAMILY = {
   "scaled_elementwise": "bridge_scaled_elementwise",
 }
 
-# per-family "work scalar": a monotone proxy for the op's per-call cost, used as the
-# nearest-neighbour key + the proportional-scaling ratio. Defensible choices:
-#   sdpa  ~ attention MACs = H * S^2 * D  (QK^T + AV both scale this way)
-#   argmax/topk/sort ~ elements scanned = C * W  (a full pass over the row-major map)
-#
-# The 15 native-bridge ops below run via the A1 subprocess-per-call path (no A2
-# persistent worker exists for them - see _netplist_worker._WORKER_BUILDERS), so
-# their measured per-call cost is DISPATCH-FLOOR DOMINATED (~30-60ms subprocess
-# spawn + ANECCompile load), nearly flat in size. The work scalar is still the
-# right element/MAC proxy so the nearest-neighbour anchor + ordering is sensible;
-# the proportional scaling barely moves since the measured points are ~flat.
-# fps is the exception - it scales ~N*k (seconds/call).
+# per-family "work scalar": a monotone proxy for per-call cost (nearest-neighbour key +
+# scaling ratio). e.g. sdpa ~ H*S^2*D (attention MACs); argmax/topk/sort ~ C*W (scan).
+# The 15 subprocess-per-call ops are dispatch-floor-dominated (~flat in size); the scalar
+# still gives sensible ordering. fps is the exception (scales ~N*k).
 _BRIDGE_WORK = {
   "bridge_sdpa":   lambda p: float(p[0]) * float(p[1]) ** 2 * float(p[2]),  # H*S^2*D
   "bridge_argmax": lambda p: float(p[0]) * float(p[1]),                     # C*W
@@ -503,17 +402,10 @@ def _node_size(fam: str, t):
 
 
 def bridge_cost(t):
-  """Measured per-call cost (microseconds) for a NETPLIST bridge node, or None if
-    the node's family has no measured data (caller falls back to roofline node_cost).
-
-    Maps the node's op -> family, extracts its size parameters from the graph node
-    (sdpa: srcs[0]=[1,H,S,D]; argmax/topk/sort: srcs[0]=[C,W]), then nearest-neighbour
-    anchors to the measured point with the closest work scalar and scales by the work
-    ratio (see the module note above for the interpolation's approximate scope)."""
+  """Measured per-call cost (us) for a bridge node, or None if its family has no data
+    (caller falls back to roofline node_cost). Nearest-neighbour by work scalar, scaled."""
   fam = _OP_TO_FAMILY.get(t.op)
   if fam is None: return None
-  # extract this node's size parameters from its shape/srcs/attrs, in the same
-  # tuple convention _parse_bridge_key produces for this family.
   size = _node_size(fam, t)
   if size is None: return None
   work_fn = _BRIDGE_WORK[fam]
@@ -521,10 +413,7 @@ def bridge_cost(t):
   floor = _constants()["floor_us"]
   pts = _bridge_model().get(fam)
   if not pts:
-    # No measured points for this family in the shipped cost model (e.g. sdpa is not in the
-    # bridge sweep, so af.estimate used to return None for attention). Fall back to an
-    # analytic roofline on the family's work scalar (~2 flops per MAC), clamped at the
-    # dispatch floor - an order-of-magnitude estimate beats none.
+    # no measured points (e.g. sdpa): analytic roofline on the work scalar (~2 flops/MAC).
     return max(floor, 2.0 * q / _constants()["flops_per_us"])
   # nearest measured point by work scalar (in log space so ratios are symmetric)
   log_q = np.log(max(q, 1e-9))
@@ -623,19 +512,11 @@ def _estimate_analytic(out, arch: str, int8: bool) -> float:
 # composition: replicate _compile's fused-region vs netplist-cut segmentation   #
 # --------------------------------------------------------------------------- #
 def estimate(out, int8: bool = False, target: str | None = None) -> float:
-  """Estimate the compiled latency (microseconds) of the graph rooted at `out`.
+  """Estimate the compiled latency (us) of the graph rooted at `out`.
 
-    int8 scales streamed weight bytes by ~0.5 (per-channel int8 streams half the
-    bytes; activations stay fp16). This is the only dtype lever the model needs to
-    rank int8 vs fp16; everything else is structural.
-
-    `target` (an ANE arch string, e.g. 'h13'/'h17s') switches to the measurement-free
-    ANALYTIC per-chip model (Direction A) - a roofline taken from the nearest
-    silicon-measured anchor (M1/h13 or M5/h17s) and scaled to that chip's {cores, clock,
-    efficiency} curve, valid for all 28 chips with no on-device measurement (+/-17% on
-    the measured M1 convs; the M5 anchor lands the loop-closure convs within ~15% on the
-    quoted set). `target=None` (the default) uses the precise M5-measured heuristic below,
-    unchanged.
+    int8 scales streamed weight bytes by ~0.5 (the only dtype lever; everything else is
+    structural). `target` (an arch string) switches to the analytic per-chip model
+    (Direction A); `target=None` uses the M5-measured heuristic below.
     """
   if target is not None: return _estimate_analytic(out, target, int8)
   c = _constants()
@@ -656,12 +537,8 @@ def estimate(out, int8: bool = False, target: str | None = None) -> float:
       return max(floor, bytes_moved / c["bw_bytes_per_us"], flops / c["flops_per_us"])
     return node_cost(t)
 
-  # int8 tie-breaker: even when a graph is floor-bound (so the roofline ties int8
-  # and fp16 at the dispatch floor), int8 always streams <= fp16 bytes, never more.
-  # Encode that as a tiny weight-byte-proportional discount so the model is DECISIVE
-  # and directionally correct (int8 predicted <= fp16) instead of an arbitrary tie.
-  # Scaled well below a floor's worth so it never reorders variants with a real cost
-  # difference.
+  # int8 tie-breaker: a tiny weight-byte-proportional discount so a floor-bound graph
+  # predicts int8 <= fp16 (decisive, not an arbitrary tie); kept below a floor's worth.
   int8_discount = 0.0
   if int8:
     saved_bytes = sum(_weight_elems(t) for t in region_nodes if t.op == "matmul")
@@ -672,11 +549,8 @@ def estimate(out, int8: bool = False, target: str | None = None) -> float:
     region = sum(max(0.0, _ncost(t) - floor) for t in region_nodes)
     return floor + region - int8_discount
 
-  # segmented: fused regions (each pays one floor) interleaved with cuts.
-  # Mirror _compile_segmented: a region is built per cut-source and for the final
-  # output. Approximate region count as the number of distinct fused-program segments
-  # - at most (n_cuts + 1) - and charge each a floor; the cheap nodes spread across
-  # them, so keep the global above-floor sum and add (n_regions) floors plus the cuts.
+  # segmented: fused regions (each pays one floor) interleaved with cuts. Approximate
+  # region count as (n_cuts + 1); keep the global above-floor sum, add the floors + cuts.
   n_cuts = len(cut_nodes)
   n_regions = (n_cuts + 1) if region_nodes else 0
   region_work = sum(max(0.0, _ncost(t) - floor) for t in region_nodes)
@@ -692,32 +566,21 @@ def estimate(out, int8: bool = False, target: str | None = None) -> float:
 # --------------------------------------------------------------------------- #
 # precision / fp16-cancellation risk MODEL  (the optimizer's numerics pruner)  #
 # --------------------------------------------------------------------------- #
-# Companion to estimate(): a cheap structural pattern-matcher (not an error bound)
-# over the three characterized fp16 failure modes (fp16_envelope.py):
-#   (a) reduce_sum over signed terms, long contraction -> the narrow fp16 reduce
-#       accumulator re-injects per-add rounding the wide matmul avoids. Fixable by
-#       the reduce_sum->matmul rewrite (>= accuracy).
-#   (b) subtract of two large, structurally-small-result quantities -> CFG-style
-#       cancellation. Not detectable structurally (data-dependent), so every
-#       elementwise sub/add-of-negation is flagged as a *candidate*. Fixable only
-#       if operands carry sub-ulp bits (paired-fp16, regime B).
-#   (c) group_norm / large-feature-map compile cliffs ((W%128)>64 squared, large
-#       group_norm map): avoid/flag, not a rewrite target.
-# Each flagged node gets an order-of-magnitude error proxy in [0,1]; the per-graph
-# signal is the max over nodes. (b) is a candidate flag only; the tuner's vs-fp32
-# gate confirms the real gain.
+# Cheap structural pattern-matcher (not an error bound) over three fp16 failure modes:
+# (a) signed long-contraction reduce_sum (narrow accumulator; fix reduce_sum->matmul),
+# (b) sub of two live tensors (candidate CFG cancellation; fix paired-fp16),
+# (c) group_norm per-axis cliff (avoid/flag). Per-graph signal = max node error proxy.
+# See .superpowers/sdd/gold-core-heavy.md for the full failure-mode notes.
 
-# fp16 has ~3-4 decimal digits; a clean fused op sits at ~1e-3 relerr (the corpus
-# median). These are order-of-magnitude error proxies, deliberately coarse.
+# order-of-magnitude error proxies, deliberately coarse (clean fp16 op ~1e-3 relerr).
 _FP16_CLEAN = 1e-3            # a clean fp16 op's relative error (corpus-calibrated)
 _NARROW_SUM_FLOOR = 256      # contraction length above which a signed reduce_sum
                              # starts to lose digits to the narrow accumulator
 
 
 def _is_signed_producer(t) -> bool:
-  """True if `t` can produce signed values (so a sum over it can cancel). A
-    square/abs/relu/sigmoid/exp/softplus output is non-negative -> a sum over it does
-    NOT cancel; everything else is conservatively treated as possibly-signed."""
+  """True if `t` can produce signed values (a sum over it can cancel); non-negative
+    outputs (square/abs/relu/sigmoid/exp/softplus) are excluded, else conservatively signed."""
   return t.op not in ("square", "abs", "relu", "relu6", "sigmoid", "exp",
                       "softplus", "softmax")
 
@@ -754,8 +617,7 @@ def precision_risk(out, verbose: bool = False) -> dict:
       K = _reduce_len(t)
       signed = (not t.srcs) or _is_signed_producer(t.srcs[0])
       if signed and K >= _NARROW_SUM_FLOOR:
-        # error grows ~ sqrt(K) * fp16_eps under the narrow accumulator;
-        # cap at 1.0. This is an order-of-magnitude proxy, not a bound.
+        # error grows ~ sqrt(K) under the narrow accumulator (proxy, not a bound), cap 1.0.
         est = min(1.0, _FP16_CLEAN * (K ** 0.5))
         nodes.append({"idx": i, "op": t.op, "kind": "narrow_sum",
                       "est_error": est, "fixable": "reduce_sum->matmul",
@@ -773,10 +635,7 @@ def precision_risk(out, verbose: bool = False) -> dict:
                       "reason": "subtract of two live tensors (CANDIDATE catastrophic "
                                 "cancellation - confirm with data; fix is upstream paired-fp16)"})
       continue
-    # (c) group_norm at the per-axis wall. The rank-4 tiled lowering reduces over
-    #     [1,G,C/groups,H*W], so the cliff is max(C/groups, H*W) > 65536 (aligned to
-    #     af.group_norm's construction guard) - NOT the flattened (C/groups)*H*W,
-    #     which the tiling now keeps under the cap (640@64, 512@128 run fine in fp16).
+    # (c) group_norm per-axis wall: the rank-4 tiling makes the cliff max(C/groups, H*W) > 65536.
     if t.op == "group_norm" and len(t.shape) == 4:
       _, C, H, W = t.shape
       groups = int(t.attrs.get("groups", 1)) or 1
@@ -787,13 +646,9 @@ def precision_risk(out, verbose: bool = False) -> dict:
                                 "AVOID - exceeds the ANE per-axis bound"})
       continue
 
-  # Default hotspots = only the RELIABLE, structurally-determinable signals: a narrow
-  # reduce_sum whose estimated error exceeds the fp16-clean floor, and the group_norm
-  # per-axis wall. cancel_sub is SPECULATIVE - a subtract of two live tensors is a
-  # *candidate* for cancellation, but most (residuals, losses, differences) are benign
-  # and unconfirmable without data. Flagging every such subtract trained users to ignore
-  # the warning, so cancel_sub is now informational-only: it stays in `nodes` (surfaced
-  # by precision_risk(verbose=True)) but does not raise the default warning.
+  # Default hotspots = only the reliable structural signals (narrow reduce_sum over the
+  # floor + the group_norm wall). cancel_sub is speculative/unconfirmable -> informational
+  # only (in `nodes` for verbose, not a default warning).
   hotspots = [n["idx"] for n in nodes if n["est_error"] > _FP16_CLEAN
               or n["kind"] == "groupnorm_cliff"]
   graph_error = max([_FP16_CLEAN] + [n["est_error"] for n in nodes])

@@ -1,48 +1,14 @@
-"""aneforge.einsum - a general `einsum(equation, *operands) -> Tensor` that
-decomposes a numpy-style subscript equation into a sequence of aneforge graph ops
-(transpose / reshape / matmul-bmm / broadcast-mul / reduce-sum) so the whole
-contraction runs as ONE fused e5rt program on the Apple Neural Engine.
+"""aneforge.einsum - `einsum(equation, *operands) -> Tensor`, decomposing a numpy-style
+subscript equation into aneforge graph ops (transpose / reshape / matmul-bmm /
+broadcast-mul / reduce-sum) so the whole contraction runs as ONE fused ANE program.
 
-    import aneforge as af
-
-    a = af.input((32, 64)); b = af.input((64, 16))
     c = af.einsum("ij,jk->ik", a, b)     # a plain matmul, on the ANE
-    net = af.compile(c); out = net(A, B)
 
-`af.einsum` IS this function (the package rebinds the name to it), so it is
-callable directly; `from aneforge.einsum import einsum` works identically.
+`af.einsum` IS this function. The decomposition partitions a two-operand contraction
+into batch/contract/keep-A/keep-B index classes and routes it through a batched matmul;
+diagonal/trace (repeated index in one operand) is a gather and is rejected, never
+miscomputed. See docs/developer/applied-math.md.
 
-WHY THIS IS POSSIBLE (and where it stops)
------------------------------------------
-A two-operand einsum `A,B->C` partitions its indices into four classes:
-  * BATCH  (B): appear in A, B and C        -> kept as outer/batch dims
-  * CONTRACT (K): appear in A and B, not C  -> summed over (the dot dimension)
-  * KEEP-A (M): appear in A and C, not B    -> rows of the output
-  * KEEP-B (N): appear in B and C, not A    -> cols of the output
-Align each operand to `[B..., M..., K...]` / `[B..., K..., N...]` by
-transpose, collapse each group to a single axis by reshape, then a batched
-matmul `[B,M,K] @ [B,K,N] -> [B,M,N]` does the contract-and-sum in ONE op
-(the ANE matmul accumulator is wide, >=fp32, so the K-sum is clean). Reshape the
-result back to the named output dims, then transpose to the requested order.
-
-Indices in ONE operand but NOT in the output are summed FIRST with a reduce
-(`af.sum`); output-only indices absent from the inputs are unsupported (einsum
-cannot invent a dimension). For >2 operands we left-fold: contract the running
-result with the next operand pairwise.
-
-REDUCTION-ONLY and OUTER products are handled directly:
-  * `ij->i` / `ij->` : pure reduce (sum over the dropped axes).
-  * `i,j->ij`          : broadcast-mul (no contraction), an outer product.
-
-WHAT IS *NOT* SUPPORTED (rejected with a clear error, never wrong results)
--------------------------------------------------------------------------
-Any equation with a REPEATED index inside a single operand - diagonal / trace
-extraction (`ii->i`, `ii->`, `...ii->...`). Reading a tensor's diagonal is a
-GATHER, unsupported on the ANE (per the op-conformance finding), with no
-matmul/reduce decomposition. These raise `EinsumUnsupported`. Ellipsis (`...`)
-is also not implemented (v1).
-
-Run the self-test (validates a battery vs `numpy.einsum` on the ANE):
     PYTHONPATH=. python3 aneforge/einsum.py
 """
 from __future__ import annotations
@@ -58,8 +24,8 @@ from aneforge.graph import Tensor
 
 
 class EinsumUnsupported(NotImplementedError):
-  """Raised for einsum equations that cannot be lowered to ANE matmul/reduce ops
-    (diagonal/trace via repeated indices, ellipsis, invented output dims)."""
+  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal/trace via
+    repeated indices, ellipsis, invented output dims)."""
 
 
 # --------------------------------------------------------------------------- #
