@@ -2,6 +2,7 @@
 docs. Public: load_onnx / onnx_to_tensor."""
 from __future__ import annotations
 from typing import Callable
+import numpy as np
 from .graph import Tensor, input as _input
 from . import _compile
 
@@ -65,3 +66,24 @@ def load_onnx(path, **compile_kwargs):
 
 @onnx_op("Relu")
 def _relu(node, ins, attrs, inits): return ins[0].relu()
+@onnx_op("Sigmoid")
+def _sig(node, ins, a, i): return ins[0].sigmoid()
+@onnx_op("Tanh")
+def _tanh(node, ins, a, i): return ins[0].tanh()
+@onnx_op("Add")
+def _add(node, ins, a, i): return ins[0] + ins[1]
+@onnx_op("Sub")
+def _sub(node, ins, a, i): return ins[0] - ins[1]
+@onnx_op("Mul")
+def _mul(node, ins, a, i): return ins[0] * ins[1]
+@onnx_op("Div")
+def _div(node, ins, a, i): return ins[0] / ins[1]
+@onnx_op("Clip")
+def _clip(node, ins, a, i):
+  """Clip; opset<11 reads min/max attrs, opset>=11 reads inputs 2/3. (0,6)->relu6, (0,inf)->relu."""
+  lo = a.get("min", -3.4e38); hi = a.get("max", 3.4e38)
+  if len(ins) >= 2 and ins[1] is not None: lo = float(np.asarray(ins[1]))
+  if len(ins) >= 3 and ins[2] is not None: hi = float(np.asarray(ins[2]))
+  if lo == 0.0 and hi == 6.0: return ins[0].relu6()
+  if lo == 0.0 and hi >= 3.4e38: return ins[0].relu()
+  return ins[0].clip(float(lo), float(hi))
