@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Does the encoder's fidelity gap change the transcript? Feed the ANE encoder output
-into the HF Whisper decoder on real speech and compare against the reference encoder's
-transcript. A word-error-rate proxy that skips the whisper.cpp C++ wiring: same
-decoder weights either way, only the encoder differs.
-
-On the canonical jfk.wav clip the encoder reaches cosine ~0.9998 (real speech is
-easier than the synthetic signal in validate_real.py) and the two transcripts are
-identical, so the feature error costs no accuracy here. This is one clip, not a full
-dataset WER; it answers "does the gap matter" for a real sample, not "what is the WER
-over LibriSpeech".
-
-Downloads openai/whisper-tiny and jfk.wav (needs network). Run from repo root:
-    PYTHONPATH=. python3 bench/whisper_encoder_ane/wer_proxy.py [--audio path.wav]
-"""
+"""WER proxy: does the encoder fidelity gap change the transcript? ANE vs reference encoder through the HF Whisper decoder. Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/wer_proxy.py"""
 from __future__ import annotations
 
 import argparse

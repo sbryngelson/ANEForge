@@ -1,36 +1,5 @@
 #!/usr/bin/env python3
-"""Capstone roofline analysis - unify the compute-ceiling and bandwidth-ceiling sweeps
-into a per-device roofline that mechanistically EXPLAINS the device map.
-
-Two measured ceilings already exist (we do NOT re-run them):
-  * COMPUTE roof  - peak GFLOP/s per device, from device_saturation_sweep_results.json
-                    ("peaks": GEMM/conv). GPU ~30.9/31.8 TFLOP/s; ANE ~10.2/18.8;
-                    CPU ~1.9 (fp32 AMX).
-  * BANDWIDTH roof - peak GB/s per device, from device_bandwidth_roofline_results.json
-                    (streaming archetype). GPU ~230, CPU ~130, ANE ~24 (the STANDALONE
-                    single-program path ceiling, flat from small - NOT silicon DMA).
-
-This script:
-  1. Computes arithmetic intensity (AI = FLOPs / bytes-moved) for each op archetype from
-     real FLOP and byte counts, showing the formula. fp16 = 2 B/elem; CPU fp32 = 4 B.
-  2. Pulls the two ceilings from the JSONs and computes each device's ridge point
-     (ridge = peak_compute / peak_bw, in FLOP/byte).
-  3. Places every archetype on EACH device's roofline:
-        applicable_roof(AI) = min(compute_roof, bw_roof * AI)
-        %roof = achieved / applicable_roof
-     where achieved is: the saturation sweep for compute-bound ops; AI x achieved_GB/s
-     (DERIVED) for bandwidth-bound ops; and a fresh MEASUREMENT for attention, a real
-     fused block, and a GEMV/decode point (the gaps not covered by the two sweeps).
-  4. Emits roofline_analysis_results.json + prints per-device tables and ASCII rooflines.
-
-Only the GAPS are measured here (attention achieved GFLOP/s per device, a real fused
-conv block achieved GFLOP/s on the ANE, a GEMV decode point). GEMM/conv/bandwidth peaks
-are READ from the existing JSONs.
-
-Run from repo root:
-    PYTHONPATH=. python3 bench/roofline_analysis.py
-    # --no-measure  : skip the gap measurements (uses analytic AIxBW placeholders, labeled)
-"""
+"""Per-device roofline analysis unifying compute and bandwidth ceilings. Run: PYTHONPATH=. python3 bench/roofline_analysis.py"""
 from __future__ import annotations
 
 import argparse
@@ -57,14 +26,13 @@ BW_JSON = TOOLS / "device_bandwidth_roofline_results.json"
 FP16 = 2  # bytes/elem
 FP32 = 4
 
-# Part 0 - pull the measured ceilings from the two JSONs
+# Part 0 - pull measured ceilings from the two JSONs
 def load_ceilings():
     sat = json.loads(SAT_JSON.read_text())
     bw = json.loads(BW_JSON.read_text())
 
     peaks = sat["peaks"]
-    # Compute roof (GFLOP/s). GEMM (square) and conv are reported separately; the ANE in
-    # particular has DIFFERENT compute roofs per op (conv >> square-matmul). Keep both.
+    # Compute roof (GFLOP/s): GEMM and conv kept separate (ANE conv >> square-matmul).
     compute = {}
     for dev in ("CPU", "GPU", "ANE"):
         compute[dev] = {
@@ -74,13 +42,11 @@ def load_ceilings():
             "conv_peak_at_C": peaks["conv"][dev]["peak_gflops_size"],
         }
 
-    # Bandwidth roof (GB/s) - use the STREAMING archetype peak (relu / x*2, byte_factor=2),
-    # the cleanest pure read+write traffic op. This is the standalone-op bandwidth ceiling.
+    # Bandwidth roof (GB/s): streaming archetype peak (pure read+write traffic).
     stream = bw["results"]["roofline"]["streaming (relu / x*2)"]["peak"]
     bandwidth = {dev.upper(): stream[dev.lower()]["gbps"] for dev in ("CPU", "GPU", "ANE")}
 
-    # achieved GB/s per device per archetype (the saturated tail of each curve) - used to
-    # DERIVE achieved GFLOP/s for the bandwidth-bound ops.
+    # achieved GB/s per device per archetype -> derive achieved GFLOP/s for bw-bound ops.
     arche_bw = {}
     for name, blk in bw["results"]["roofline"].items():
         arche_bw[name] = {dev.upper(): blk["peak"][dev.lower()]["gbps"]
@@ -97,10 +63,7 @@ def ai_matmul(M, K, N, bpe):
 
 
 def ai_conv3x3(B, Cin, Cout, H, W, bpe):
-    """3x3 same-pad conv. flops = 2*B*Cout*Cin*9*H*W.
-    bytes moved = input(B*Cin*H*W) + weights(Cout*Cin*9) + output(B*Cout*H*W), *bpe.
-    The reuse factor (why conv has decent AI): each input element participates in
-    ~9*Cout MACs, each weight in B*H*W MACs - so flops/bytes climbs with channels."""
+    """3x3 same-pad conv. flops=2*B*Cout*Cin*9*H*W; bytes=(in+weights+out)*bpe."""
     k = 3
     flops = 2.0 * B * Cout * Cin * k * k * H * W
     in_el = B * Cin * H * W
@@ -118,12 +81,10 @@ def ai_elementwise(reads, writes, flops_per_elem, n, bpe):
 
 
 def build_archetype_ai():
-    """Return a list of archetype dicts with AI computed from real counts + the formula
-    string, for fp16 (GPU/ANE) traffic. AI is dtype-dependent only through bytes-per-
-    element: CPU fp32 doubles the bytes/elem, halving AI; handled per device in placement."""
+    """Archetype dicts with fp16 AI from real counts + formula string (CPU fp32 halves AI in placement)."""
     rows = []
 
-    # ---- matmul: square N (compute archetype) + GEMV/decode (the key low-AI case) ----
+    # matmul: square N (compute) + GEMV/decode (low-AI case)
     for N in (512, 2048, 8192):
         f, b, ai = ai_matmul(N, N, N, FP16)
         rows.append({
@@ -133,7 +94,7 @@ def build_archetype_ai():
             "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
             "represents": ["matmul(large)", "bmm", "linear"],
         })
-    # GEMV / M=1 decode matmul, K=4096, N=4096 (a transformer projection at decode)
+    # GEMV / M=1 decode matmul (transformer projection at decode)
     M, K, N = 1, 4096, 4096
     f, b, ai = ai_matmul(M, K, N, FP16)
     rows.append({
@@ -147,7 +108,7 @@ def build_archetype_ai():
         "represents": ["GEMV", "LLM decode matmul", "M=1 projection"],
     })
 
-    # ---- conv 3x3, the saturating config from the sweep (C=512,B=4,64x64) ----
+    # conv 3x3, saturating config from the sweep (C=512,B=4,64x64)
     f, b, ai = ai_conv3x3(B=4, Cin=512, Cout=512, H=64, W=64, bpe=FP16)
     rows.append({
         "archetype": "conv 3x3 (C=512,B=4,64x64)", "class": "compute",
@@ -156,7 +117,7 @@ def build_archetype_ai():
         "note": "reuse: each input elem in ~9*Cout MACs -> high AI, clears every ridge.",
         "represents": ["conv", "conv_transpose"],
     })
-    # a small conv too (C=64,B=16) to show AI is config-dependent but still high
+    # small conv (C=64,B=16): AI config-dependent but still high
     f, b, ai = ai_conv3x3(B=16, Cin=64, Cout=64, H=64, W=64, bpe=FP16)
     rows.append({
         "archetype": "conv 3x3 (C=64,B=16,64x64)", "class": "compute",
@@ -166,26 +127,26 @@ def build_archetype_ai():
         "represents": ["conv (small-channel)"],
     })
 
-    # ---- bandwidth-bound elementwise archetypes (AI from real op counts) ----
-    # relu/copy: 1 read + 1 write, ~1 flop (compare/max). ~0.2 FLOP/byte
+    # bandwidth-bound elementwise archetypes (AI from real op counts)
+    # relu/copy: 1R+1W, ~1 flop -> ~0.2 FLOP/byte
     f, b, ai = ai_elementwise(reads=1, writes=1, flops_per_elem=1, n=16_777_216, bpe=FP16)
     rows.append({"archetype": "relu / copy (1R+1W, ~1 flop)", "class": "memory",
                  "formula": "1 flop / (2 elem * 2B) = 0.25; counting copy as ~0 flop -> ~0.2",
                  "flops": f, "bytes_fp16": b, "ai_fp16": ai, "bw_archetype": "streaming (relu / x*2)",
                  "represents": ["relu", "abs", "copy", "reshape", "transpose", "add", "sub", "mul"]})
-    # gelu/silu: ~10 flops/elem (erf/tanh approx), 1R+1W -> ~2.5 FLOP/byte
+    # gelu/silu: ~10 flop/elem, 1R+1W -> ~2.5 FLOP/byte
     f, b, ai = ai_elementwise(reads=1, writes=1, flops_per_elem=10, n=16_777_216, bpe=FP16)
     rows.append({"archetype": "gelu / silu (~10 flop, 1R+1W)", "class": "memory",
                  "formula": "~10 flop / (2 elem * 2B) = 2.5 FLOP/byte",
                  "flops": f, "bytes_fp16": b, "ai_fp16": ai, "bw_archetype": "gelu (light compute)",
                  "represents": ["gelu", "silu", "erf", "tanh", "sigmoid", "exp"]})
-    # softmax: ~5 flops/elem (max,sub,exp,sum,div), 1R+1W effective -> ~1.2 FLOP/byte
+    # softmax: ~5 flop/elem, 1R+1W -> ~1.2 FLOP/byte
     f, b, ai = ai_elementwise(reads=1, writes=1, flops_per_elem=5, n=16_777_216, bpe=FP16)
     rows.append({"archetype": "softmax (~5 flop, 1R+1W)", "class": "memory",
                  "formula": "~5 flop / (2 elem * 2B) = 1.25 FLOP/byte",
                  "flops": f, "bytes_fp16": b, "ai_fp16": ai, "bw_archetype": "softmax",
                  "represents": ["softmax"]})
-    # layer_norm: ~10 flops/elem (mean,var,normalize,scale,shift), 1R+1W -> ~2.5 FLOP/byte
+    # layer_norm: ~10 flop/elem, 1R+1W -> ~2.5 FLOP/byte
     f, b, ai = ai_elementwise(reads=1, writes=1, flops_per_elem=10, n=16_777_216, bpe=FP16)
     rows.append({"archetype": "layer_norm (~10 flop, 1R+1W)", "class": "memory",
                  "formula": "~10 flop / (2 elem * 2B) = 2.5 FLOP/byte",
@@ -196,16 +157,13 @@ def build_archetype_ai():
 
 # Part 1b - attention block: blended AI (matmul-dominated)
 def attention_flops_bytes(S, D, H, bpe):
-    """One attention block QK^T + softmax + AV for [1,H,S,D] (per the af.sdpa shape).
-    QK^T: 2*H*S*S*D flops.  AV: 2*H*S*S*D flops.  softmax over H*S*S scores: ~5 flop each.
-    bytes moved (standalone, intermediates spill): Q,K,V in = 3*H*S*D; scores S^2*H
-    written+read for softmax = 2*H*S*S; out = H*S*D. *bpe."""
+    """QK^T + softmax + AV for [1,H,S,D]; standalone bytes (intermediates spill)."""
     qkt = 2.0 * H * S * S * D
     av = 2.0 * H * S * S * D
     sm = 5.0 * H * S * S
     flops = qkt + av + sm
     in_el = 3 * H * S * D
-    score_traffic = 2 * H * S * S  # write then read scores (standalone, not fused)
+    score_traffic = 2 * H * S * S  # write then read scores (standalone)
     out_el = H * S * D
     nbytes = (in_el + score_traffic + out_el) * bpe
     return flops, nbytes, flops / nbytes
@@ -243,8 +201,8 @@ def measure_gaps(no_measure):
         out["skipped"] = True
         return out
 
-    # ---------- ATTENTION block [1,H,S,D] ----------
-    S, D, H = 512, 64, 12   # S=512 seq, d_head=64, 12 heads (ViT-B-ish)
+    # ATTENTION block [1,H,S,D]
+    S, D, H = 512, 64, 12   # ViT-B-ish: 512 seq, d_head=64, 12 heads
     flops, _, _ = attention_flops_bytes(S, D, H, FP16)
     out["attention"]["config"] = {"S": S, "D": D, "H": H, "flops": flops}
     rng = np.random.default_rng(0)
@@ -296,9 +254,7 @@ def measure_gaps(no_measure):
     except Exception as e:
         out["attention"]["CPU"] = {"error": f"{type(e).__name__}: {e}"}
 
-    # ---------- REAL FUSED BLOCK on the ANE: a 3-conv stack fused into ONE program ----
-    # This is the fusion-lever evidence: 3 chained 3x3 convs, intermediates never leave
-    # the chip. Compare its achieved GFLOP/s to ONE standalone conv's (from the sweep).
+    # FUSED BLOCK on ANE: 3 chained 3x3 convs in one program (intermediates stay on-chip)
     if HAVE_ANE:
         try:
             import aneforge as af
@@ -318,13 +274,12 @@ def measure_gaps(no_measure):
             xf = rng.standard_normal((Bc, C, Hc, Wc)).astype(np.float16)
             net(xf)
             lat = _min_lat(lambda: net(xf))
-            # standalone bytes for ONE conv (input+wt+out) vs fused (read input once, write
-            # output once, 3x weights, intermediates stay on-chip): estimate effective AI.
+            # effective AI: fused (intermediates on-chip) vs 3 standalone dispatches
             f1, b_standalone_one, ai_one = ai_conv3x3(Bc, C, C, Hc, Wc, FP16)
             in_el = Bc * C * Hc * Wc; out_el = Bc * C * Hc * Wc
             w_el = 3 * C * C * k3 * k3
-            fused_bytes = (in_el + w_el + out_el) * FP16  # intermediates NOT counted (on-chip)
-            standalone_bytes_3 = 3 * b_standalone_one      # 3 separate dispatches spill each
+            fused_bytes = (in_el + w_el + out_el) * FP16  # intermediates not counted
+            standalone_bytes_3 = 3 * b_standalone_one      # each dispatch spills
             out["fused_block"]["ANE"] = {
                 "config": {"B": Bc, "C": C, "HxW": f"{Hc}x{Wc}", "n_conv": n_conv},
                 "dtype": "fp16", "lat_ms": lat * 1e3, "gflops": fused_flops / lat / 1e9,
@@ -338,11 +293,11 @@ def measure_gaps(no_measure):
         except Exception as e:
             out["fused_block"]["ANE"] = {"error": f"{type(e).__name__}: {e}"}
 
-    # ---------- GEMV / decode point (M=1) per device ----------
+    # GEMV / decode point (M=1) per device
     M, K, N = 1, 4096, 4096
     flops_gemv = 2.0 * M * K * N
     xg = (rng.standard_normal((M, K)) / np.sqrt(K)).astype(np.float16)
-    Wg = (rng.standard_normal((N, K)) / np.sqrt(K)).astype(np.float16)  # [out,in]
+    Wg = (rng.standard_normal((N, K)) / np.sqrt(K)).astype(np.float16)  # [out, in]
     if HAVE_ANE:
         try:
             import aneforge as af
@@ -378,8 +333,7 @@ def applicable_roof(ai, compute_roof, bw_roof):
 
 
 def _sat_achieved(sat, dev, archetype):
-    """Pull the size-specific achieved GFLOP/s straight from the saturation sweep JSON
-    for the exact size a compute archetype names (not the peak)."""
+    """Size-specific achieved GFLOP/s from the saturation sweep JSON (not the peak)."""
     if "square N=" in archetype:
         N = int(archetype.split("N=")[1].split()[0])
         for r in sat["gemm"]:
@@ -394,16 +348,16 @@ def _sat_achieved(sat, dev, archetype):
 
 
 def build_placement(arche, compute, bandwidth, arche_bw, gaps, sat):
-    """For each (op, device): AI (dtype-adjusted), applicable roof, achieved, %roof."""
+    """Per (op, device): AI (dtype-adjusted), applicable roof, achieved, %roof."""
     placement = {dev: [] for dev in ("CPU", "GPU", "ANE")}
     for dev in ("CPU", "GPU", "ANE"):
         bpe = FP32 if dev == "CPU" else FP16
         bw_roof = bandwidth[dev]
         for row in arche:
-            # AI for this device's dtype: recompute byte count with this bpe -> AI scales by 2/bpe
+            # AI scales by 2/bpe for this device's dtype
             ai = row["ai_fp16"] * (FP16 / bpe)
             cls = row["class"]
-            # pick compute roof: conv archetypes use conv peak, matmul archetypes use gemm peak
+            # conv archetypes use conv peak, matmul use gemm peak
             if "conv" in row["archetype"]:
                 comp_roof = compute[dev]["conv_peak_gflops"]
             else:
@@ -412,15 +366,15 @@ def build_placement(arche, compute, bandwidth, arche_bw, gaps, sat):
             achieved = None
             src = None
             if cls == "compute":
-                # size-SPECIFIC achieved from the saturation sweep (NOT the device peak)
+                # size-specific achieved from the saturation sweep (not the peak)
                 achieved = _sat_achieved(sat, dev, row["archetype"])
                 src = "saturation sweep (size-specific)"
             else:
-                # bandwidth-bound: achieved = AI * achieved_GB/s (DERIVED)
+                # bandwidth-bound: derived achieved = AI * achieved_GB/s
                 bwname = row.get("bw_archetype")
                 if bwname and bwname in arche_bw:
                     gbps = arche_bw[bwname][dev]
-                    achieved = ai * gbps  # GFLOP/s = (FLOP/byte) * (GB/s)
+                    achieved = ai * gbps  # GFLOP/s = FLOP/byte * GB/s
                     src = f"DERIVED: AI x achieved {gbps:.1f} GB/s ({bwname})"
             pct = (achieved / roof * 100.0) if (achieved and roof) else None
             placement[dev].append({
@@ -434,7 +388,7 @@ def build_placement(arche, compute, bandwidth, arche_bw, gaps, sat):
         D = gaps["attention"].get("config", {}).get("D", 64)
         Hh = gaps["attention"].get("config", {}).get("H", 12)
         _, _, ai_att = attention_flops_bytes(S, D, Hh, bpe)
-        comp_roof = compute[dev]["gemm_peak_gflops"]  # attention is matmul-dominated
+        comp_roof = compute[dev]["gemm_peak_gflops"]  # matmul-dominated
         roof = applicable_roof(ai_att, comp_roof, bw_roof)
         adev = gaps["attention"].get(dev, {})
         ach = adev.get("gflops")
@@ -459,8 +413,7 @@ def build_placement(arche, compute, bandwidth, arche_bw, gaps, sat):
 
 # ASCII roofline sketch
 def ascii_roofline(dev, compute, bandwidth, placement_rows, ridge):
-    """log-log ASCII: x=AI (FLOP/byte), y=GFLOP/s. Draw the roof (bw slope -> flat) and
-    plot each op as a point at its (AI, achieved)."""
+    """log-log ASCII roofline: x=AI (FLOP/byte), y=GFLOP/s, ops as points."""
     comp = compute[dev]["gemm_peak_gflops"]
     comp_conv = compute[dev]["conv_peak_gflops"]
     bw = bandwidth[dev]
@@ -478,7 +431,7 @@ def ascii_roofline(dev, compute, bandwidth, placement_rows, ridge):
         return int((y_hi - math.log10(g)) / (y_hi - y_lo) * (Hh - 1))
 
     grid = [[" "] * W for _ in range(Hh)]
-    # roof line: for AI from x_lo..x_hi, y = min(comp, bw*AI)
+    # roof line: y = min(comp, bw*AI)
     for c in range(W):
         ai = 10 ** (x_lo + c / (W - 1) * (x_hi - x_lo))
         y = min(comp, bw * ai)
@@ -527,7 +480,7 @@ def main():
     # ridge points
     ridges = {}
     for dev in ("CPU", "GPU", "ANE"):
-        # use the GEMM compute peak as the headline compute roof for the ridge
+        # GEMM compute peak as the headline roof for the ridge
         ridges[dev] = compute[dev]["gemm_peak_gflops"] / bandwidth[dev]
 
     print("=" * 88)

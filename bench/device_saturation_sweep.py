@@ -1,43 +1,5 @@
 #!/usr/bin/env python3
-"""Saturation (roofline) sweep - PEAK throughput + PEAK perf/watt per compute engine.
-
-The watt-complete device comparison (``device_compare_wattcomplete.py``) raced each
-device on *representative* workload shapes. But representative != saturating: a 512x512
-GEMM runs the GPU at ~4% of its fp16 peak, so "the GPU is X GFLOP/s" measured there
-UNDER-reports the silicon. The fair "how fast / how efficient is each device at its
-BEST" answer requires sizing the workload until the device's cores/units are FULLY
-UTILIZED. That is what this script does.
-
-We scale two primitives that actually saturate compute:
-
-  1. GEMM   - square NxN @ NxN, FLOPs = 2 N^3. Sweep N until each device plateaus.
-  2. conv   - 3x3 same-pad conv, channels C with batch sized to fill, FLOPs =
-              2 * B * Cout * Cin * 9 * H * W. The ANE's home turf - find its conv peak.
-
-For each (primitive, size, device in {CPU, GPU, ANE}):
-  * THROUGHPUT  = GFLOP/s from the MIN latency over reps (device forced to sync:
-                  mx.eval / the compiled aneforge net / numpy inline).
-  * RELERR      vs an fp64 (GEMM) / fp32 (conv) reference, reported next to every
-                throughput number - the ANE's fp16 error grows at large N and that is
-                part of the story (a 30 TFLOP/s GPU number at 4e-4 != an ANE number
-                at 3e-2).
-  * POWER       at the SATURATING sizes (the plateau region, where the loop is
-                naturally multi-second) - idle-subtracted ACTIVE package power
-                (median + CV) via the REUSED harness in device_compare_wattcomplete
-                (measure_energy / sample_idle). perf/watt = GFLOP/s / active_W.
-
-DTYPE ASYMMETRY IS REAL AND LABELED. CPU is fp32 (numpy/Accelerate-AMX cannot do a fast
-fp16 GEMM - it upcasts), GPU and ANE are fp16. So the CPU peak is an fp32 number; it is
-NOT the same product as the fp16 peaks and is labeled as such everywhere.
-
-Run from repo root (energy needs passwordless sudo for powermetrics):
-
-    PYTHONPATH=. python3 bench/device_saturation_sweep.py
-
-Writes bench/results/device_saturation_sweep_results.json alongside the printed
-tables. --quick trims the largest (multi-second) sizes and shortens the power window
-for a smoke test. --no-power skips the energy phase (throughput curves only).
-"""
+"""Saturation (roofline) sweep: PEAK throughput + PEAK perf/watt per compute engine, scaling GEMM and conv to full utilization - CPU vs GPU (MLX) vs ANE. Run: PYTHONPATH=. python3 bench/device_saturation_sweep.py"""
 from __future__ import annotations
 
 import argparse
@@ -57,8 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 
-# Reuse the watt-complete harness for power (idle-subtracted ACTIVE package, median+CV,
-# sampler-exit-driven loop) and device_compare for the latency/relerr helpers.
+# Reuse the watt-complete power harness + device_compare latency/relerr helpers.
 import device_compare as dc            # noqa: E402
 import device_compare_wattcomplete as wc  # noqa: E402
 
@@ -74,8 +35,7 @@ if HAVE_MLX:
 # sizes (overridable by --quick which trims the multi-second tail)
 GEMM_NS = [512, 1024, 2048, 4096, 6144, 8192]
 GEMM_NS_QUICK = [512, 1024, 2048, 4096]
-# conv: fixed-ish spatial 64x64, 3x3, batch chosen so total work tracks GEMM scale.
-# we scale channels C (=Cin=Cout) and pick batch B to keep the tensor fillable.
+# conv: fixed 64x64 spatial, 3x3; scale channels C, pick batch B to fill
 CONV_SPATIAL = 64
 CONV_CONFIGS = [  # (C, B)
     (64, 16), (128, 16), (256, 8), (512, 4),
@@ -84,8 +44,7 @@ CONV_CONFIGS_QUICK = [(64, 8), (128, 8), (256, 4), (512, 2)]
 
 REPS = 8           # reps for the min-latency probe (large GEMMs are seconds each)
 WARMUP = 3
-POWER_WINDOW = 8.0  # seconds for the sustained-power loop (>=16 samples @ 500ms -> clears
-                    # the watt-complete harness's <12-sample "short window" flag)
+POWER_WINDOW = 8.0  # sustained-power loop seconds (>=16 samples @ 500ms)
 
 RESULTS: dict = {"gemm": [], "conv": []}
 
@@ -106,8 +65,7 @@ def _min_lat(fn, reps=REPS, warmup=WARMUP):
 
 
 def _power_at(run_once, tag):
-    """Idle-subtracted ACTIVE package power (median W + CV%) over a sustained loop,
-    via the reused watt-complete harness. Returns the harness dict or None."""
+    """Idle-subtracted ACTIVE package power (median W + CV%) over a sustained loop."""
     if not HAVE_SUDO:
         return None
     return wc.measure_energy(run_once, tag=tag, window=POWER_WINDOW)
@@ -123,17 +81,14 @@ def sweep_gemm(ns, do_power):
         rng = np.random.default_rng(0)
         x32 = (rng.standard_normal((N, N)).astype(np.float32) / np.float32(np.sqrt(N)))
         W32 = (rng.standard_normal((N, N)).astype(np.float32) / np.float32(np.sqrt(N)))  # [out,in]
-        # fp64 reference (subsample rows for huge N to bound memory/time, relerr is a
-        # norm so a representative row-block is a faithful estimate)
+        # fp64 reference, subsampling rows for huge N (relerr is a norm)
         rblk = min(N, 256)
         ref_blk = x32[:rblk].astype(np.float64) @ W32.astype(np.float64).T
         row = {"N": N, "gflop": flops / 1e9, "devices": {}}
         print(f"\n N={N}  ({flops/1e9:.1f} GFLOP)")
 
         # --- CPU (fp32, numpy/Accelerate-AMX) ---
-        # IMPORTANT: feed CONTIGUOUS operands. A transposed view (W32.T) makes
-        # Accelerate fall off its fast fp32 GEMM path (~4x slower, ~fp64-rate) - the
-        # the AMX peak needs both operands C-contiguous.
+        # feed contiguous operands; a transposed view drops Accelerate off its fast GEMM path
         Wt = np.ascontiguousarray(W32.T)
         lat = _min_lat(lambda: x32 @ Wt)
         out = x32 @ Wt
@@ -178,8 +133,7 @@ def sweep_gemm(ns, do_power):
 
 
 def _power_phase_gemm(ns):
-    """Measure active package power for EVERY swept GEMM size (so the power-vs-size
-    curve shows the climb toward the plateau), per device."""
+    """Measure active package power for every swept GEMM size, per device."""
     print("\n" + "-" * 92)
     print(" GEMM power-vs-size (idle-subtracted active package W) - utilization evidence")
     print("-" * 92)
@@ -217,14 +171,14 @@ def sweep_conv(configs, do_power):
         x32 = rng.standard_normal((B, C, H, W)).astype(np.float32)
         w32 = (rng.standard_normal((C, C, k, k)).astype(np.float32)
                * np.sqrt(2.0 / (C * k * k)))
-        # fp32 numpy reference on a single batch element (relerr is a norm)
+        # fp32 numpy reference on one batch element (relerr is a norm)
         ref0 = dc._np_conv2d(x32[:1].astype(np.float32), w32, 1).astype(np.float64)
         row = {"C": C, "B": B, "HxW": f"{H}x{W}", "gflop": flops / 1e9, "devices": {}}
         print(f"\n C={C} B={B}  ({flops/1e9:.1f} GFLOP)")
 
         # --- CPU (fp32) ---
         lat = _min_lat(lambda: dc._np_conv2d(x32[:1].astype(np.float32), w32, 1), reps=max(3, REPS // 2))
-        # CPU only times one batch element to keep it bounded; scale to full-batch flops
+        # CPU times one batch element; scale to full-batch flops
         cpu_flops = flops / B
         out = dc._np_conv2d(x32[:1].astype(np.float32), w32, 1)
         err = relerr(out, ref0)
@@ -284,7 +238,7 @@ def _power_phase_conv(configs):
         w32 = (rng.standard_normal((C, C, k, k)).astype(np.float32)
                * np.sqrt(2.0 / (C * k * k)))
         print(f"\n C={C} B={B}")
-        # CPU power: drive full batch to make it a sustained load
+        # CPU power: drive full batch for a sustained load
         _attach_power(row["devices"]["CPU"],
                       lambda: dc._np_conv2d(x32.astype(np.float32), w32, 1),
                       f"sat_conv{C}_cpu", flops, "CPU")
@@ -321,7 +275,7 @@ def _attach_power(dev_row, run_once, tag, flops, device):
         thr = flops / (e["iter_ms"] / 1e3)  # FLOP/s at the sustained-loop rate
         rec["gflops_sustained"] = thr / 1e9
         rec["perf_per_W"] = (thr / 1e9) / apw  # GFLOP/s/W
-    # plausibility flag: ANE work that reads ~0 on the ANE rail is a sampling miss
+    # ANE work that reads ~0 on the ANE rail is a sampling miss
     if device == "ANE" and e.get("ane_active_mW", 0.0) < 5.0 and not rec["flags"]:
         rec["flags"].append("ANE rail ~0 mW during ANE work - likely a 100ms sampling miss")
     dev_row["power"] = rec

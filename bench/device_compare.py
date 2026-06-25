@@ -1,48 +1,5 @@
 #!/usr/bin/env python3
-"""Shared device-comparison harness - ANE (aneforge fp16) vs GPU (MLX) vs CPU (numpy).
-
-This module holds the timing, precision, energy, and device-runner helpers plus the
-workload builders that the other ``bench/`` scripts import; it is not run on its own.
-The single-stream device map is produced by ``device_compare_wattcomplete.py``.
-
-Each helper runs the SAME math on three devices and reports, per workload:
-
-    device | dtype | min-latency | (throughput) | relerr-vs-fp32
-
-across the workloads the project actually runs:
-
-    * GEMM at three regimes (K=256 floor, K=1024 bandwidth, K=4096 compute)
-    * conv (a small one + a ResNet-ish 3x3 stack)
-    * scientific kernels: DFT-as-matmul, a 2D 5-point stencil step, an N-body
-      pairwise-force step
-    * real models: ResNet-18 (af.load_resnet18), MiniLM encoder (af.load), a ViT
-      self-attention block (af.mha, the vit_demo shape)
-
-Devices
-    ANE  = aneforge fp16 (af.compile + call). Compute is fp16-only on the silicon;
-           the accumulator is >=fp32 (see ANE_MANUAL), so the precision cost shows
-           up only in cancellation-heavy reductions.
-    GPU  = MLX (Apple GPU / Metal), run at BOTH fp16 and fp32, so the GPU's own
-           fp16 precision cost is explicit and separable from the ANE's.
-    CPU  = numpy on Accelerate BLAS, fp32 (the precision reference) + fp16 where
-           it is a sensible comparison.
-
-Timing: warmup, then MIN over reps (the clean signal - min rejects scheduler
-noise). Each device's number includes its own host/dispatch overhead, which is
-called out: the ANE/MLX numbers are end-to-end Python-call latency
-(compile-once, run-many), NOT pure silicon time. At small shapes that overhead
-dominates and the comparison is a dispatch-cost comparison, not a FLOP one.
-
-Energy: powermetrics is sampled ONLY around the sustained compute-bound loops
-(the GEMM-K4096 and conv-stack workloads), where a multi-second loop gives a
-trustworthy rail average. Short per-call workloads do NOT get an energy number -
-a sub-millisecond op sampled at 100 Hz is an artifact, and we don't report it.
-Energy needs passwordless sudo; without it, latency/precision still run.
-
-Precision: every workload has an fp64/fp32 numpy reference. We report relative
-L2 error (||x - ref|| / ||ref||) for ANE-fp16, GPU-fp16 and GPU-fp32 against it,
-so "what does fp16 cost here" is answerable per workload, per device.
-"""
+"""Shared device-comparison harness (timing/precision/energy helpers + workload builders) imported by the other bench/ scripts - ANE vs GPU (MLX) vs CPU. Not run on its own."""
 from __future__ import annotations
 
 import os
@@ -61,7 +18,7 @@ if str(REPO) not in sys.path:
 
 import numpy as np
 
-# ---- optional backends; the script degrades gracefully ---------------------- #
+# optional backends; degrades gracefully
 HAVE_ANE = HAVE_MLX = HAVE_TORCH = HAVE_TV = HAVE_HF = False
 ANE_ERR = MLX_ERR = ""
 try:
@@ -223,13 +180,10 @@ def w_gemm(M, K, N, tag):
         lat, out = mlx_run(lambda: xg16 @ Wg16)
         add_row(wl, "GPU", "fp16", lat, gflops(flops, lat), relerr(out, ref))
 
-    # CPU fp32 (Accelerate BLAS - the reference-speed device).
+    # CPU fp32 (Accelerate BLAS - the reference-speed device)
     lat, out = cpu_run(lambda: x32 @ W32.T)
     add_row(wl, "CPU", "fp32", lat, gflops(flops, lat), relerr(out, ref))
-    # CPU fp16: numpy has NO BLAS fp16 GEMM kernel (it upcasts element-by-element),
-    # so this is pathologically slow and NOT a fair fp16 device - only run it at the
-    # FLOOR size to document that "CPU fp16" is not a real option, then skip the big
-    # ones (they take seconds for an uninteresting, GPU-fp16-identical relerr).
+    # numpy has no fp16 BLAS GEMM (upcasts, pathologically slow): only run it at the floor size
     if M * K * N <= 64 * 256 * 256:
         xh, Wh = x32.astype(np.float16), W32.T.astype(np.float16)
         lat, out = cpu_run(lambda: (xh @ Wh), reps=5)  # numpy upcasts internally
@@ -251,16 +205,12 @@ def w_conv(Cin, Cout, H, W, k, depth, tag, energy=False):
     rng = np.random.default_rng(1)
     pad = k // 2
     x32 = (rng.standard_normal((1, Cin, H, W)).astype(np.float32))
-    # He-style variance-preserving init (sqrt(2/fan_in)) so a deep ReLU stack keeps
-    # activations O(1) - a real ResNet does this via BatchNorm. Without it the
-    # activations decay geometrically below fp16's smallest normal and the fp16
-    # error becomes an underflow artifact rather than a real precision number.
+    # He init (sqrt(2/fan_in)) keeps a deep ReLU stack's activations O(1) (avoids fp16 underflow)
     Ws = [rng.standard_normal((Cout, (Cin if d == 0 else Cout), k, k)).astype(np.float32)
           * np.sqrt(2.0 / ((Cin if d == 0 else Cout) * k * k)) for d in range(depth)]
     flops = sum(2 * (Cin if d == 0 else Cout) * Cout * k * k * H * W for d in range(depth))
     note(wl, f"{flops/1e9:.3f} GFLOP, same-pad, He init (O(1) activations). ref = fp32 numpy.")
 
-    # fp32 numpy reference (naive, im2col-free via stride tricks would be heavy; use scipy-free loop)
     _ref = _np_conv_stack(x32, Ws, pad)
 
     if HAVE_ANE:

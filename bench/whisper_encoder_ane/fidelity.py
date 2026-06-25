@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Fidelity gate: the ANEForge whisper-tiny encoder vs the PyTorch reference, same
-weights. Prints cosine similarity and relative error of the encoder output computed
-on the Apple Neural Engine.
-
-Run from repo root:
-    PYTHONPATH=. python3 bench/whisper_encoder_ane/fidelity.py
-"""
+"""Fidelity gate: ANEForge whisper-tiny encoder vs PyTorch reference (cosine + relative error). Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/fidelity.py"""
 from __future__ import annotations
 
 import os

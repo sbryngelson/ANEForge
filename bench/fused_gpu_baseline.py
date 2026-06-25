@@ -1,32 +1,5 @@
 #!/usr/bin/env python3
-"""Fused-GPU (MLX) baseline (addresses the "own-tool vs MLX" confound).
-
-Peer-review blocker: the ANE is driven by our fused compiler (aneforge, one program)
-while the GPU baseline is *default* MLX, which runs some ops UNFUSED (e.g. layer_norm
-as several separate kernel passes). So the device map might reflect TOOLCHAIN
-(fused-vs-unfused) rather than SILICON. We fix it with measurement: re-run the
-fusion-sensitive workloads with the GPU ALSO fused via mx.compile (MLX graph
-capture/kernel fusion), and put default-MLX, fused-MLX, and the ANE side by side.
-
-Workloads (same shapes the paper uses, pulled from device_compare_wattcomplete.py):
-  * layer_norm  (197, 768)         - the canonical multi-pass op MLX runs unfused
-  * gelu        (197, 768)         - transcendental elementwise
-  * attention   (197, 768, 12)     - ViT self-attention block (qkv->softmax->out)
-  * conv stack  (64->256, 32x32, k3, depth 16)  - resnet-ish 3x3 stack
-
-For each: default-MLX vs mx.compile-fused-MLX vs ANE (aneforge), reporting
-latency (min over reps), idle-subtracted total-package active power + CV%, and
-GFLOP/s-or-items/s perf/W. Power harness imported from device_compare_wattcomplete.
-
-THE QUESTION: does fusing the GPU materially change any device-map verdict - does
-the GPU close the perf/watt gap, or flip any ANE win? We report it plainly either way.
-
-Run from repo root (energy needs passwordless sudo):
-
-    PYTHONPATH=. python3 bench/fused_gpu_baseline.py
-
-Writes bench/results/fused_gpu_baseline_results.json. --quick reduces the window.
-"""
+"""Fused-GPU (MLX) baseline: default-MLX vs mx.compile-fused-MLX vs ANE, to test whether fusing the GPU flips any device-map verdict. Run: PYTHONPATH=. python3 bench/fused_gpu_baseline.py"""
 from __future__ import annotations
 
 import argparse
@@ -123,7 +96,7 @@ def wl_layer_norm(shape=(197, 768), window=6.0):
             mu = mx.mean(xg, axis=-1, keepdims=True)
             var = mx.mean((xg - mu) ** 2, axis=-1, keepdims=True)
             return (xg - mu) * mx.rsqrt(var + 1e-5) * gg + bb
-        # default (unfused: each mx op a separate kernel launch)
+        # default (unfused)
         lat, out = _mlx_min_latency(lambda: ln(xg, gg, bb))
         e = wc.measure_energy(lambda: mx.eval(ln(xg, gg, bb)), tag="ln_gpu_default", window=window) if HAVE_SUDO else None
         _record(wl, "GPU default", lat_s=lat, out=out, ref=ref, items=items, energy=e)
@@ -270,10 +243,7 @@ def wl_conv_stack(Cin=64, Cout=256, H=32, W=32, k=3, depth=16, window=6.0):
         _record(wl, "ANE (aneforge)", lat_s=lat, out=np.asarray(out), ref=ref, flops=flops, energy=e)
 
 
-# 5-point stencil, 32 chained steps (256x256) - the largest perf/W gap (49x)   #
-# in the device map, and exactly the asymmetric-fusion case: default MLX runs   #
-# 32 separate conv kernels, the ANE fuses all 32 into one program. Re-test the  #
-# GPU with mx.compile fusing the whole 32-step chain so the comparison is fair. #
+# 5-point stencil, 32 chained steps - largest perf/W gap; asymmetric-fusion case
 def wl_stencil(H=256, W=256, steps=32, window=6.0):
     wl = f"stencil 5pt ({H}x{W}, steps={steps})"
     print(f"\n=== {wl} ===", flush=True)
@@ -283,7 +253,7 @@ def wl_stencil(H=256, W=256, steps=32, window=6.0):
     lap = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
     K = np.zeros((1, 1, 3, 3), dtype=np.float32)
     K[0, 0] = dt * lap
-    K[0, 0, 1, 1] += 1.0                      # identity + dt*Laplacian, one 3x3
+    K[0, 0, 1, 1] += 1.0                      # identity + dt*Laplacian
     flops = float(steps * 2 * 1 * 1 * 9 * H * W)
 
     def np_step(u):

@@ -1,58 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end encoder-block serving, cross-path: ANEForge (ANE) vs MLX (GPU).
-
-QUESTION
---------
-A single int4 matmul at batch is ~2x faster on the ANE than on the GPU's own
-4-bit path (cross_path_compress_bench.py). A sibling experiment
-(model_int4_bench.py) showed the per-matmul int4 LATENCY win dilutes to ~1.0x on
-whole models once norms / attention / residuals / the per-program dispatch floor
-are mixed in. This asks the cross-path version of that dilution question for one
-representative pre-LN transformer ENCODER block, swept over batch:
-
-  Does the ANE int4 advantage over the GPU int4 SURVIVE end-to-end on the full
-  block, or does the GPU win / tie once it is more than one matmul?
-  And does int4 help the ANE end-to-end here at all?
-
-BLOCK (Paper B Table 7 config)
-------------------------------
-Pre-LN transformer encoder block, D=768, H=12, Dff=3072, S=128, batch sweep
-B in {1,8,16,32,64}:
-    h1 = x  + MHSA(LayerNorm(x))            (q,k,v,out projections)
-    y  = h1 + FFN(LayerNorm(h1))            (up D->Dff, gelu, down Dff->D)
-The six linears (q,k,v,out,up,down) are the weight-bearing matmuls that int4
-compresses; norms / softmax / residuals / gelu are uncompressed.
-
-ATTENTION VARIANT
------------------
-We build attention as bmm + softmax (q@k^T, softmax, @v) in [B,H,S,dh], NOT the
-af.sdpa native-fused layer. af.sdpa is a graph CUT (host round-trip between e5rt
-sub-programs) and is batch-1 only; using it would (a) not batch and (b) make the
-comparison about the cut rather than about weight streaming. bmm+softmax keeps
-the whole block in ONE e5rt program so the timing isolates weight bandwidth +
-the single dispatch floor. (The MLX side uses the same bmm+softmax math.)
-
-VARIANTS TIMED (end-to-end block latency, median; throughput = B/latency)
-    ANE fp16            compress=None
-    ANE int4 (default)  compress="int4"  (atol 0.05 -> pessimistic on gaussian
-                        weights, usually falls back to int8/fp16)
-    ANE int4 (loose)    compress="int4", compress_atol=0.5  (forces the LUT)
-    ANE auto            compress="auto"
-    GPU fp16            mlx fp16
-    GPU int4            mlx 4-bit group-affine (group_size 64) on the six linears
-
-We tally constexpr_lut_to_dense nodes per ANE program so the reader knows whether
-int4 truly fired (default vs loose). Each int4 path is cosine-checked vs its own
-fp16 block so timing is on a correct computation. Random (untrained) weights are
-fine for LATENCY (op-mix / shape dependent); only the int4 accuracy gate is
-pessimistic on gaussian weights, which is exactly why we report the loose-gate
-row as the genuine int4-fired datapoint.
-
-Run (needs the 3.14 interp with BOTH aneforge + mlx):
-    PYTHONPATH=<repo> python3 \
-        bench/encoder_serving_crosspath.py
-Writes bench/results/encoder_serving_crosspath.json
-"""
+"""End-to-end encoder-block serving, cross-path (ANE vs MLX-GPU): does the ANE int4 win survive a full block? Run: PYTHONPATH=<repo> python3 bench/encoder_serving_crosspath.py"""
 from __future__ import annotations
 
 import json
@@ -67,7 +14,7 @@ import numpy as np
 import aneforge as af
 import mlx.core as mx
 
-# ---- config ---------------------------------------------------------------- #
+# config
 D, H, DFF, S = 768, 12, 3072, 128
 DH = D // H
 SCALE = 1.0 / (DH ** 0.5)
@@ -100,7 +47,7 @@ def median_ms(fn):
     return statistics.median(ts)
 
 
-# ---- shared weights (PyTorch [out,in] convention; identical for ANE & GPU) -- #
+# shared weights (PyTorch [out,in] convention; identical for ANE & GPU)
 def make_weights(rng):
     def lin(out, inp):
         return (rng.standard_normal((out, inp)) / np.sqrt(inp)).astype(np.float32)
@@ -117,10 +64,9 @@ def make_weights(rng):
     }
 
 
-# ---- ANE: pre-LN encoder block as one aneforge graph ----------------------- #
+# ANE: pre-LN encoder block as one aneforge graph
 def build_ane(w, B):
-    """Batched [B,S,D] pre-LN encoder block; attention in [B,H,S,dh] (bmm+softmax),
-    linears / LayerNorm on [B*S, D]. One fused e5rt program (no graph cut)."""
+    """Batched [B,S,D] pre-LN encoder block; attention bmm+softmax, one fused e5rt program."""
     x = af.input((B, S, D))
     xf = x.reshape(B * S, D)
     xn = xf.layer_norm(w["ln1w"], w["ln1b"], EPS)
@@ -138,8 +84,7 @@ def build_ane(w, B):
 
 
 def _lut_tally(build_dir):
-    """Count constexpr_lut_to_dense (int4-LUT) and the other weight encodings the
-    emitter actually chose, summed across all model.mil files under build_dir."""
+    """Count the weight encodings the emitter chose, summed across model.mil files."""
     counts = {"int4_lut": 0, "sparse": 0, "int8": 0, "fp16": 0}
     for mil in Path(build_dir).rglob("model.mil"):
         txt = mil.read_text()
@@ -162,10 +107,9 @@ def run_ane(w, B, x, label, compress, atol):
     return ms, np.asarray(y, np.float32), enc
 
 
-# ---- GPU: same block in MLX (fp16 and 4-bit group-affine) ------------------ #
+# GPU: same block in MLX (fp16 and 4-bit group-affine)
 def _mx_w(w):
-    """upload weights as mx float16; store linears transposed to [in,out] so
-    x[...,in] @ Wt[in,out] = (x @ W.T) matches the aneforge linear convention."""
+    """upload weights as mx float16; linears transposed to [in,out] for x @ Wt."""
     g = {}
     for kk, vv in w.items():
         g[kk] = mx.array(vv).astype(mx.float16)
@@ -175,8 +119,7 @@ def _mx_w(w):
 
 
 def _gpu_block(xm, g, lin):
-    """pre-LN encoder block in MLX. `lin(name, x)` does x @ W.T (+ bias) for the six
-    weight linears; norms/softmax/gelu/residuals are plain fp16."""
+    """pre-LN encoder block in MLX; `lin(name, x)` does x @ W.T (+ bias)."""
     B = xm.shape[0]
 
     def layernorm(t, gw, gb):
@@ -218,7 +161,7 @@ def run_gpu_fp16(g, B, xnp):
 
 def run_gpu_int4(g, B, xnp):
     xm = mx.array(xnp).astype(mx.float16)
-    # quantize the six linears (their [in,out] mx weight) 4-bit, group_size 64
+    # quantize the six linears 4-bit, group_size 64
     q4 = {}
     for nm in ("Wq", "Wk", "Wv", "Wo", "Wi", "Wd"):
         wq, sc, bi = mx.quantize(g[nm + "_t"], bits=4, group_size=GROUP)
@@ -238,7 +181,7 @@ def run_gpu_int4(g, B, xnp):
     return median_ms(run), out
 
 
-# ---- driver ---------------------------------------------------------------- #
+# driver
 def main():
     print("END-TO-END encoder-block serving, cross-path (ANE vs MLX-GPU)")
     print("=" * 78)

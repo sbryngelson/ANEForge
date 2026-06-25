@@ -1,28 +1,5 @@
 #!/usr/bin/env python3
-"""int8 decode accuracy validation (addresses "int8 within decode tolerance,
-asserted with no token-agreement or perplexity evidence").
-
-The decode section reports int8 weight-streaming at ~2x the fp16 relerr (~5e-2)
-and asserts it is "still within decode tolerance". This script backs that with
-a precision-divergence check: it runs one decode forward (the 8-layer TinyLlama-
-class block + vocab head) at several batch positions in three precisions, fp32
-(numpy reference), ANE fp16, and ANE int8 weight-stream, on SHARED weights, and
-compares the output logit distributions:
-
-  * next-token argmax agreement (does int8 pick the same top-1 token as fp32/fp16?)
-  * top-5 set overlap
-  * logit relative L2 error
-  * softmax KL divergence (int8||fp32 and fp16||fp32)
-
-Weights are random (this is a precision-divergence probe, not a trained-LM
-perplexity), so the meaningful quantity is whether int8 quantization changes the
-predicted token relative to fp16/fp32 on identical weights. A single forward (no
-sustained loop) keeps it fast and avoids the decode-loop's session-state issues.
-
-Run from repo root:
-    PYTHONPATH=. python3 bench/decode_int8_accuracy.py
-Writes bench/results/decode_int8_accuracy.json.
-"""
+"""int8 decode accuracy: token-agreement / top-5 / logit relerr / softmax KL of int8 weight-stream vs fp16/fp32 on shared weights. Run: PYTHONPATH=. python3 bench/decode_int8_accuracy.py"""
 from __future__ import annotations
 
 import json
@@ -67,7 +44,7 @@ def main() -> int:
     cfg = dm.Cfg(d_model=2048, n_layers=8, n_heads=16, d_ff=8192, vocab=32000, s_kv=256)
     print(f"=== int8 decode accuracy: {cfg.asdict()} ===")
     W = dm.make_weights(cfg)
-    B = 64                                   # 64 decode positions to average over
+    B = 64                                   # decode positions to average over
     rng = np.random.default_rng(123)
     x = (rng.standard_normal((B, cfg.d)).astype(np.float32) * 0.1)
 

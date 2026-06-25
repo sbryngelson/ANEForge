@@ -1,20 +1,4 @@
-"""A whisper-tiny encoder built two ways from one state dict: the HuggingFace
-reference, and the equivalent ANEForge graph that runs on the Apple Neural Engine.
-
-Weights are randomly initialised (fixed seed), so nothing is downloaded: latency and
-energy are weight-independent, and fidelity only needs the two graphs to share
-weights. Pass real whisper-tiny weights (same key names) to run the published
-checkpoint.
-
-Mapping notes:
-  - The whole transformer stack runs as 2-D [seq, d_model] (batch 1), which is what
-    af.mha / af.layer_norm expect.
-  - Whisper's conv1d stem maps to af.conv (2-D) with a singleton height axis. af.conv
-    pads symmetrically, so the time axis is zero-padded explicitly (_pad_time) and the
-    conv runs with pad=0, leaving the singleton axis alone.
-  - Whisper's k_proj has no bias (passed as None); attention scale is 1/sqrt(d_head),
-    which is af.mha's default.
-"""
+"""Whisper-tiny encoder built two ways from one state dict: the HuggingFace reference and the equivalent ANEForge graph for the Apple Neural Engine."""
 from __future__ import annotations
 
 import numpy as np

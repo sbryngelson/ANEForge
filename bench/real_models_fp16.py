@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""fp16 GPU baselines for the real models (addresses the fp16-ANE-vs-fp32-GPU
-asymmetry in the real-model table).
-
-The single-stream real-model rows compared an fp16 ANE against an fp32 torch-MPS
-GPU, so the headline energy ratios (e.g. ViT-B/16 ~18x mJ/inference) were not
-like-for-like. This script re-runs ResNet-18, ViT-B/16, and MiniLM on the GPU in
-BOTH fp32 and fp16 (torch-MPS .half()), under the same watt-complete harness, so
-the fp16-vs-fp16 GPU/ANE energy ratio can be reported. It reuses the exact model
-builders from device_compare_wattcomplete.py.
-
-Run from repo root (energy needs passwordless sudo):
-    PYTHONPATH=. python3 bench/real_models_fp16.py --window 6
-Writes bench/results/real_models_fp16_results.json.
-"""
+"""fp16 GPU (fp32+fp16) vs ANE energy baselines for the real models. Run: PYTHONPATH=. python3 bench/real_models_fp16.py --window 6"""
 from __future__ import annotations
 
 import argparse
@@ -35,14 +22,12 @@ import device_compare as dc  # noqa: E402
 import device_compare_wattcomplete as wc  # noqa: E402
 
 HAVE_SUDO = dc.HAVE_SUDO
-# GPU-only: the ANE real-model numbers are unchanged and read from the committed
-# device-map JSON, so we never re-dispatch the ANE here (avoids session-state hangs
-# and keeps the ANE pairing identical to the headline table).
+# GPU-only: ANE numbers read from committed device-map JSON, never re-dispatched.
 HAVE_ANE = False
 min_latency_with_out = dc.min_latency_with_out
 relerr = dc.relerr
 
-# ANE real-model energy from the committed single-stream run (the paper's M5 table).
+# ANE real-model energy from the committed single-stream run (paper's M5 table).
 _ANE_DEVMAP = json.loads((Path(__file__).resolve().parent / "results" /
     "device_compare_wattcomplete_results_M5.json").read_text())
 def _ane_mJ(wl_substr):
@@ -103,8 +88,7 @@ def resnet18(window):
 
 
 def vit_b16(window):
-    """Full ViT-B/16 (torchvision, 12-layer) on GPU fp32 + fp16. GPU-only: the ANE
-    ViT-B/16 energy is read from the committed device-map run (the paper's table)."""
+    """Full ViT-B/16 on GPU fp32 + fp16; ANE energy read from committed device-map run."""
     import torch, torchvision as tv
     wl = "ViT-B/16 forward (1x3x224x224, 197 tokens)"
     print(f"\n=== {wl} ===", flush=True)
