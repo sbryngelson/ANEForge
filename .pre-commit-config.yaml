@@ -1,18 +1,21 @@
 # Local pre-commit hooks: ruff lint + the tinygrad-compact 2-space lock (pylint
-# W0311/C0303). These are fast and dependency-light. pyright is intentionally NOT
-# here — it needs the full optional-dep stack (torch/scipy/...) to resolve the lazy
-# model-loader imports, so it runs in CI (.github/workflows/ci.yml `types` job).
-# Install with: pip install pre-commit && pre-commit install
+# W0311/C0303). Both run via the tools installed in your environment (`pip install
+# -e ".[dev]"`), mirroring the CI `lint` job exactly and avoiding an isolated-venv
+# build. pyright is intentionally NOT here — it needs the full optional-dep stack
+# (torch/scipy/...) to resolve the lazy model-loader imports, so it runs in CI
+# (.github/workflows/ci.yml `types` job).
+# Install with: pip install -e ".[dev]" pre-commit && pre-commit install
 # Run on all files with: pre-commit run --all-files
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.10
-    hooks:
-      - id: ruff               # uses [tool.ruff] in pyproject.toml (E/F/C4/A, 120 cols, 2-space)
-        args: [--no-fix]       # report only; do not silently rewrite on commit
-
   - repo: local
     hooks:
+      - id: ruff
+        name: ruff check
+        entry: ruff check --no-fix   # report only; do not silently rewrite on commit
+        language: system
+        types: [python]
+        pass_filenames: false        # ruff resolves its own paths from pyproject.toml
+
       - id: two-space
         name: 2-space indent + no trailing whitespace (pylint W0311/C0303)
         entry: python -m pylint --disable=all -e W0311 -e C0303 --indent-string='  '
