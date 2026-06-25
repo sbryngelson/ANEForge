@@ -45,19 +45,6 @@ def _shape_for(nelem: int, dlast: int = 4096) -> tuple[int, int]:
     return (r, d)
 
 
-def _ane_min_latency_with_out(net, xf):
-    best = float("inf")
-    out = None
-    for _ in range(6):
-        net(xf)
-    for _ in range(20):
-        import time
-        t0 = time.perf_counter()
-        out = net(xf)
-        best = min(best, time.perf_counter() - t0)
-    return best, out
-
-
 def run_archetype(name, byte_factor, build_ane, build_mlx, build_cpu,
                   ref_fn, sizes, want_acc=True):
     """Run one archetype across all sizes/devices. byte_factor: traffic = factor*N*dt."""
@@ -88,7 +75,7 @@ def run_archetype(name, byte_factor, build_ane, build_mlx, build_cpu,
         if HAVE_ANE and build_ane is not None:
             try:
                 net, xf = build_ane(x32, R, D)
-                lat, out = _ane_min_latency_with_out(net, xf)
+                lat, out = dc.min_latency_with_out(lambda: net(xf), reps=20, warmup=6)
                 gbps = byte_factor * N * 2 / lat / 1e9
                 row["ane_gbps"] = gbps
                 row["ane_lat_ms"] = lat * 1e3
@@ -262,40 +249,26 @@ def measure_peak_power(specs, sizes):
     for (name, bf, build_ane, build_mlx, build_cpu, _ref, _acc) in specs:
         rec = RESULTS["roofline"][name]
         rec["power"] = {}
-        # ANE
-        if HAVE_ANE and build_ane is not None and "ane_err" not in rec["sizes"][-1]:
-            net, xf = build_ane(x32, R, D)
-            e = wc.measure_energy(lambda: net(xf), tag=f"bw_{abs(hash(name))%9999}_ane",
-                                  window=wc.WINDOW)
+        # (key, gated, builder, run-from-build-result, bytes/elem multiplier)
+        arms = (
+            ("ane", HAVE_ANE and build_ane is not None and "ane_err" not in rec["sizes"][-1],
+             build_ane, lambda b: (lambda: b[0](b[1])), 2),
+            ("gpu", HAVE_MLX and build_mlx is not None and "gpu_err" not in rec["sizes"][-1],
+             build_mlx, lambda b: b[0], 2),
+            ("cpu", build_cpu is not None, build_cpu, lambda b: b[0], 4),
+        )
+        for key, gated, builder, run_of, mult in arms:
+            if not gated:
+                continue
+            e = wc.measure_energy(run_of(builder(x32, R, D)),
+                                  tag=f"bw_{abs(hash(name))%9999}_{key}", window=wc.WINDOW)
             if e:
                 apw = e.get("active_pkg_W", float("nan"))
                 if apw == apw and apw > 0:
-                    gbps = bf * N * 2 / (e["iter_ms"] / 1e3) / 1e9
+                    gbps = bf * N * mult / (e["iter_ms"] / 1e3) / 1e9
                     e["gbps_loop"] = gbps
                     e["gbps_per_W"] = gbps / apw
-                rec["power"]["ane"] = e
-        # GPU
-        if HAVE_MLX and build_mlx is not None and "gpu_err" not in rec["sizes"][-1]:
-            fn, _ = build_mlx(x32, R, D)
-            e = wc.measure_energy(fn, tag=f"bw_{abs(hash(name))%9999}_gpu", window=wc.WINDOW)
-            if e:
-                apw = e.get("active_pkg_W", float("nan"))
-                if apw == apw and apw > 0:
-                    gbps = bf * N * 2 / (e["iter_ms"] / 1e3) / 1e9
-                    e["gbps_loop"] = gbps
-                    e["gbps_per_W"] = gbps / apw
-                rec["power"]["gpu"] = e
-        # CPU
-        if build_cpu is not None:
-            fn, _ = build_cpu(x32, R, D)
-            e = wc.measure_energy(fn, tag=f"bw_{abs(hash(name))%9999}_cpu", window=wc.WINDOW)
-            if e:
-                apw = e.get("active_pkg_W", float("nan"))
-                if apw == apw and apw > 0:
-                    gbps = bf * N * 4 / (e["iter_ms"] / 1e3) / 1e9
-                    e["gbps_loop"] = gbps
-                    e["gbps_per_W"] = gbps / apw
-                rec["power"]["cpu"] = e
+                rec["power"][key] = e
         p = rec["power"]
         def _s(d):
             ee = p.get(d, {})
