@@ -1063,17 +1063,8 @@ class UnrolledTrainer:
   """Train with `K` Adam steps UNROLLED into ONE fused ANE program: each `step()`
     runs K forward->backward->update steps in a single dispatch. Bounded-K
     fully-on-engine analogue of `Trainer`, enabled by the stop-gradient frontier in
-    `backward` (each step treats current weights as leaves). See docs/developer/autograd.md.
-
-    Args:
-      params: trainable leaves (`af.parameter` / `af.conv_param`).
-      forward: `forward(P, x) -> output` building the model from current-step weight
-        tensors `P` and data input `x`; used per step and for `predict`.
-      kind: `"ce"` (logits + softmax-cross-entropy) or `"mse"`.
-      x_inputs, t_inputs: K data / target input placeholders, one per step.
-      dataset: `(X, Y)` arrays; `Y` one-hot [N, C] for `"ce"`.
-      resident: if True (default) optimizer state stays RESIDENT on-device across
-        dispatches (aliased via `share_buffer`); host feeds only minibatches + lr.
+    `backward` (each step treats current weights as leaves). `resident=True` keeps
+    optimizer state on-device across dispatches. See docs/developer/autograd.md.
     """
   def __init__(self, params, forward, kind, x_inputs, t_inputs, dataset, lr,
                loss_scale: float = 1.0, betas=(0.9, 0.999), eps: float = 1e-8,
