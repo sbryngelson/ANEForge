@@ -363,17 +363,17 @@ class Tensor:
            {"gamma": gamma, "beta": beta, "groups": num_groups, "eps": float(eps)})
 
   # -- spatial ----------------------------------------------------------- #
-  def max_pool(self, k: int, stride: int | None = None, pad: int = 0) -> "Tensor":
+  def _pool(self, op: str, k: int, stride: int | None, pad: int) -> "Tensor":
     stride = stride or k
     N, C, H, W = self.shape
     out = (N, C, (H + 2 * pad - k) // stride + 1, (W + 2 * pad - k) // stride + 1)
-    return Tensor(out, "max_pool", [self], {"k": k, "stride": stride, "pad": pad})
+    return Tensor(out, op, [self], {"k": k, "stride": stride, "pad": pad})
+
+  def max_pool(self, k: int, stride: int | None = None, pad: int = 0) -> "Tensor":
+    return self._pool("max_pool", k, stride, pad)
 
   def avg_pool(self, k: int, stride: int | None = None, pad: int = 0) -> "Tensor":
-    stride = stride or k
-    N, C, H, W = self.shape
-    out = (N, C, (H + 2 * pad - k) // stride + 1, (W + 2 * pad - k) // stride + 1)
-    return Tensor(out, "avg_pool", [self], {"k": k, "stride": stride, "pad": pad})
+    return self._pool("avg_pool", k, stride, pad)
 
   def upsample(self, scale: int = 2) -> "Tensor":
     """Nearest-neighbour upsample [N,C,H,W] -> [N,C,scale*H,scale*W]."""
@@ -449,6 +449,27 @@ def _binary(a: Tensor, b, kind: str) -> Tensor:
   return Tensor(_broadcast(a.shape, b.shape), kind, [a, b])
 
 
+def _check_kw(kW: int, op: str, weight_shape) -> None:
+  """ANE conv tiles along kernel WIDTH: kW>=16 fails ANECCompile (kH unconstrained)."""
+  if kW <= 15:
+    return
+  if weight_shape is None:                                 # dynamic_conv (runtime weight)
+    raise ValueError(f"{op}: kernel width kW={kW} exceeds the ANE limit (<=15); "
+            f"kernel height kH is unconstrained.")
+  raise ValueError(
+    f"{op}: kernel width kW={kW} exceeds the ANE limit (kW must be <=15); "
+    f"got weight {weight_shape}. Kernel height kH is unconstrained.")
+
+
+def _conv_attrs(weight, stride: int, pad: int, dilation: int, groups: int,
+        bias) -> "dict[str, Any]":
+  attrs: dict[str, Any] = {"weight": weight, "stride": stride, "pad": pad,
+              "dilation": dilation, "groups": groups}
+  if bias is not None:
+    attrs["bias"] = np.asarray(bias).astype(np.float32)
+  return attrs
+
+
 def conv(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
     groups: int = 1, bias=None) -> Tensor:
   """2D conv. `x`: [N,Cin,H,W]; `weight`: [Cout, Cin/groups, kH, kW]; `bias`: [Cout]."""
@@ -457,18 +478,11 @@ def conv(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
     raise ValueError(f"conv expects 4D input [N,Cin,H,W], got {x.shape}")
   N, Cin, H, W = x.shape
   Cout, _, kH, kW = weight.shape
-  # ANE conv tiles along kernel WIDTH: kW>=16 fails ANECCompile (kH unconstrained).
-  if kW > 15:
-    raise ValueError(
-      f"conv: kernel width kW={kW} exceeds the ANE limit (kW must be <=15); "
-      f"got weight {weight.shape}. Kernel height kH is unconstrained.")
+  _check_kw(kW, "conv", weight.shape)
   Hout = (H + 2 * pad - dilation * (kH - 1) - 1) // stride + 1
   Wout = (W + 2 * pad - dilation * (kW - 1) - 1) // stride + 1
-  attrs: dict[str, Any] = {"weight": weight, "stride": stride, "pad": pad,
-              "dilation": dilation, "groups": groups}
-  if bias is not None:
-    attrs["bias"] = np.asarray(bias).astype(np.float32)
-  return Tensor((N, Cout, Hout, Wout), "conv", [x], attrs)
+  return Tensor((N, Cout, Hout, Wout), "conv", [x],
+         _conv_attrs(weight, stride, pad, dilation, groups, bias))
 
 
 def dynamic_conv(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0,
@@ -492,9 +506,7 @@ def dynamic_conv(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0,
       f"is unsupported on the ANE dynamic-kernel path. Use af.conv / conv2d for batched convolution.")
   if Cin_g * groups != Cin:
     raise ValueError(f"dynamic_conv: weight Cin/groups={Cin_g} x groups={groups} != input Cin={Cin}")
-  if kW > 15:
-    raise ValueError(f"dynamic_conv: kernel width kW={kW} exceeds the ANE limit (<=15); "
-            f"kernel height kH is unconstrained.")
+  _check_kw(kW, "dynamic_conv", None)
   Hout = (H + 2 * pad - dilation * (kH - 1) - 1) // stride + 1
   Wout = (W + 2 * pad - dilation * (kW - 1) - 1) // stride + 1
   return Tensor((N, Cout, Hout, Wout), "dynamic_conv", [x, weight],
@@ -511,18 +523,11 @@ def conv_transpose(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: i
     raise ValueError(f"conv_transpose expects 4D [N,Cin,H,W], got {x.shape}")
   N, Cin, H, W = x.shape
   _, Cout, kH, kW = weight.shape
-  # Same kernel-WIDTH limit as conv: kW>=16 fails ANECCompile (kH unconstrained).
-  if kW > 15:
-    raise ValueError(
-      f"conv_transpose: kernel width kW={kW} exceeds the ANE limit (kW must be <=15); "
-      f"got weight {weight.shape}. Kernel height kH is unconstrained.")
+  _check_kw(kW, "conv_transpose", weight.shape)
   Hout = (H - 1) * stride - 2 * pad + dilation * (kH - 1) + 1
   Wout = (W - 1) * stride - 2 * pad + dilation * (kW - 1) + 1
-  attrs: dict[str, Any] = {"weight": weight, "stride": stride, "pad": pad,
-              "dilation": dilation, "groups": groups}
-  if bias is not None:
-    attrs["bias"] = np.asarray(bias).astype(np.float32)
-  return Tensor((N, Cout, Hout, Wout), "conv_transpose", [x], attrs)
+  return Tensor((N, Cout, Hout, Wout), "conv_transpose", [x],
+         _conv_attrs(weight, stride, pad, dilation, groups, bias))
 
 
 def batch_norm(x: Tensor, gamma, beta, mean, var, eps: float = 1e-5) -> Tensor:
@@ -995,6 +1000,34 @@ def _heads(t: Tensor, n: int, dh: int) -> Tensor:           # [S, D] -> [H, S, d
   return t.reshape(t.shape[0], n, dh).transpose([1, 0, 2])
 
 
+def _seq_slice(t: Tensor, axis: int, start: int, n: int) -> Tensor:
+  begin = [0] * len(t.shape); begin[axis] = start
+  size = list(t.shape); size[axis] = n
+  return t.slice_by_size(begin, size)
+
+
+def _tiled_attention(qh: Tensor, kt: Tensor, vh: Tensor, scale: float, n_tiles: int,
+           seq_axis: int, mask: "Tensor | None" = None) -> Tensor:
+  """Query-tiled softmax((q @ kt) * scale) @ v in `n_tiles` chunks (exact; ~3x faster
+    at large seq; `n_tiles==1` is one shot). Query seq runs along `seq_axis` (1 for 3D
+    [H,S,dh], 2 for 4D); tiles concat there. `mask` (sdpa) is sliced along the same axis."""
+  if n_tiles == 1:
+    scores = (qh @ kt) * scale
+    if mask is not None:
+      scores = scores + mask
+    return scores.softmax(-1) @ vh
+  Sq = qh.shape[seq_axis]
+  tile = -(-Sq // n_tiles)                                  # ceil -> near-even chunks
+  out_tiles = []
+  for start in range(0, Sq, tile):
+    n = min(tile, Sq - start)
+    st = (_seq_slice(qh, seq_axis, start, n) @ kt) * scale
+    if mask is not None:
+      st = st + _seq_slice(mask, seq_axis, start, n)
+    out_tiles.append(st.softmax(-1) @ vh)
+  return concat(out_tiles, axis=seq_axis)
+
+
 def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
   """Multi-head self-attention on `x` [S, D]. Weights [out,in]; biases [D] or None.
     Builds split-heads -> per-head SDPA -> concat -> output-proj from graph ops."""
@@ -1010,12 +1043,7 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
   # Exact and ~3x faster at large S (same fission as af.sdpa). Count from af.tune_attention.
   from . import _optimize as _opt
   n_tiles = _opt.attention_tiles(S, n_heads, dh)
-  if n_tiles == 1:
-    o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
-  else:
-    tile = -(-S // n_tiles)                                 # ceil -> near-even chunks
-    o = concat([((qh.slice_by_size([0, s, 0], [n_heads, min(tile, S-s), dh]) @ kt)
-                 * scale).softmax(-1) @ vh for s in range(0, S, tile)], axis=1)  # [H, S, dh]
+  o = _tiled_attention(qh, kt, vh, scale, n_tiles, seq_axis=1)  # [H, S, dh]
   o = o.transpose([1, 0, 2]).reshape(S, D)
   return o.linear(Wo, bo)
 
@@ -1037,12 +1065,7 @@ def cross_attention(x: Tensor, context: Tensor, Wq, Wk, Wv, Wo, n_heads: int,
   # (exact). Gated on score area so small-T cross-attention (SD T=77) stays single-shot.
   from . import _optimize as _opt
   n_tiles = _opt.attention_tiles(S, n_heads, dh, T=T) if (S >= 768 and T >= 512) else 1
-  if n_tiles == 1:
-    o = ((qh @ kt) * scale).softmax(-1) @ vh                # [H, S, dh]
-  else:
-    tile = -(-S // n_tiles)                                 # ceil -> near-even chunks
-    o = concat([((qh.slice_by_size([0, s, 0], [n_heads, min(tile, S-s), dh]) @ kt)
-                 * scale).softmax(-1) @ vh for s in range(0, S, tile)], axis=1)  # [H, S, dh]
+  o = _tiled_attention(qh, kt, vh, scale, n_tiles, seq_axis=1)  # [H, S, dh]
   o = o.transpose([1, 0, 2]).reshape(S, D)
   return o.linear(Wo, bo)
 
@@ -1111,23 +1134,7 @@ def sdpa(q: Tensor, k: Tensor, v: Tensor, scale: float | None = None,
     kt = k.transpose([0, 1, 3, 2])
     from . import _optimize as _opt
     n_tiles = _opt.attention_tiles(q.shape[2], q.shape[1], q.shape[3], T=k.shape[2])
-    if n_tiles == 1:
-      scores = q @ kt * float(_scale)
-      if attn_mask is not None:
-        scores = scores + attn_mask
-      return scores.softmax(-1) @ v
-    Sq = q.shape[2]
-    tile = -(-Sq // n_tiles)                            # ceil -> near-even chunks
-    out_tiles = []
-    for start in range(0, Sq, tile):
-      n = min(tile, Sq - start)
-      qt = q.slice_by_size([0, 0, start, 0], [q.shape[0], q.shape[1], n, q.shape[3]])
-      st = qt @ kt * float(_scale)
-      if attn_mask is not None:
-        st = st + attn_mask.slice_by_size(
-          [0, 0, start, 0], [attn_mask.shape[0], attn_mask.shape[1], n, attn_mask.shape[3]])
-      out_tiles.append(st.softmax(-1) @ v)
-    return concat(out_tiles, axis=2)
+    return _tiled_attention(q, kt, v, float(_scale), n_tiles, seq_axis=2, mask=attn_mask)
   if attn_mask is not None:                       # runtime mask rides the 5th bottom (stays native)
     return Tensor(q.shape, "sdpa", [q, k, v, attn_mask], {"scale": float(_scale), "masked": True})
   return Tensor(q.shape, "sdpa", [q, k, v], {"scale": float(_scale), "causal": bool(is_causal)})
