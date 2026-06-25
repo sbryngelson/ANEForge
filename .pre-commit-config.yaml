@@ -1,7 +1,9 @@
-# Local pre-commit hooks mirroring CI (.github/workflows/ci.yml): ruff lint, the
-# tinygrad-compact 2-space lock (pylint W0311/C0303), and pyright. Install with
-#   pip install pre-commit && pre-commit install
-# Run on all files with `pre-commit run --all-files`.
+# Local pre-commit hooks: ruff lint + the tinygrad-compact 2-space lock (pylint
+# W0311/C0303). These are fast and dependency-light. pyright is intentionally NOT
+# here — it needs the full optional-dep stack (torch/scipy/...) to resolve the lazy
+# model-loader imports, so it runs in CI (.github/workflows/ci.yml `types` job).
+# Install with: pip install pre-commit && pre-commit install
+# Run on all files with: pre-commit run --all-files
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.10
@@ -18,10 +20,3 @@ repos:
         types: [python]
         # lint only the shippable code + tests (matches CI); skip examples/bench/utils
         files: ^(aneforge|tests)/.*\.py$
-
-      - id: pyright
-        name: pyright (0 errors)
-        entry: pyright aneforge
-        language: system
-        pass_filenames: false   # pyright analyzes the whole package, not per-file
-        files: ^aneforge/.*\.py$

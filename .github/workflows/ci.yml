@@ -45,7 +45,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+      # pyright must resolve the lazily-imported OPTIONAL deps so it doesn't report
+      # them as missing: scipy (dsp/special reference paths) and the model-loader
+      # stack (torch/torchvision/transformers/huggingface_hub via the `models` extra).
+      # This matches the local type-check environment.
+      - run: pip install -e ".[dev,models]" scipy
       - run: pyright aneforge   # gate at 0 errors (pyright pinned in the dev extra)
 
   build:
