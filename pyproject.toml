@@ -85,6 +85,10 @@ Issues = "https://github.com/sbryngelson/ANEForge/issues"
 
 [tool.hatch.version]
 source = "vcs"
+# PyPI/TestPyPI reject PEP 440 local versions (the "+gHASH" suffix hatch-vcs adds to
+# untagged dev builds). Drop the local segment so dev builds (e.g. 0.1.5.dev23) are
+# uploadable; tagged releases (vX.Y.Z) are unaffected — they have no local segment.
+raw-options = { local_scheme = "no-local-version" }
 
 [tool.hatch.build.hooks.vcs]
 version-file = "aneforge/_version.py"
