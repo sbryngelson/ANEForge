@@ -66,6 +66,14 @@ def test_int8_decode_matches_fp16():  # int8-quantized ANE weights stay faithful
   assert len(out) == 5 and all(0 <= t < cfg.vocab for t in out)
 
 @requires_ane
+def test_segmented_decode_matches_single():  # splitting the decode across chunks must not change the output
+  cfg = LlamaConfig(dim=64, n_layers=6, n_heads=4, n_kv_heads=2, ffn_dim=128, vocab=48)
+  out1 = _random_model(cfg).generate([1, 2, 3], max_new_tokens=6)    # fits in one chunk
+  m2 = _random_model(cfg); m2._chunk_bytes = 1                       # force one layer per chunk -> 6 chunks chained
+  assert len(m2._layer_chunks()) == cfg.n_layers
+  assert m2.generate([1, 2, 3], max_new_tokens=6) == out1, "segmented decode diverged from single-program"
+
+@requires_ane
 def test_prefill_matches_huggingface_llama():  # the definitive check: ANE prefill == HF LlamaForCausalLM
   import torch
   from transformers import LlamaConfig as HF, LlamaForCausalLM

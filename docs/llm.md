@@ -28,12 +28,15 @@ logits = model.prefill(prompt_ids)                # next-token logits [1, vocab]
 
 `generate()` prefills the prompt, then runs a greedy decode loop with a resident KV-cache: each
 layer's K/V stays on the ANE across steps via `share_buffer`, so a decode step feeds only the new
-token's embedding and a position one-hot, and runs one fused program over all layers. The decode
-program compiles once and is reused.
+token's embedding and a position one-hot. The decode program compiles once and is reused.
 
-On Qwen3-0.6B: ~8,600 prompt-tok/s prefill, ~75 tok/s decode (after a one-time ~6 s decoder
-compile). *"The capital of France is"* → *"Paris. The capital of Italy is Rome. The capital of
-Spain is Madrid. ..."*
+A single ANE program holds ~2 GB of baked weights, so for larger models the layers are split into
+chunks under that ceiling; each chunk keeps its KV resident and the hidden state chains chunk →
+chunk (a `[1, dim]` round-trip). This is automatic — Qwen3-0.6B is one chunk; Qwen3-8B is nine.
+
+On Qwen3-0.6B: ~8,600 prompt-tok/s prefill, ~75 tok/s decode. On Qwen3-8B (36 layers, 16 GB fp16,
+9 chunks): ~7.5 tok/s decode. Both produce correct text — e.g. *"The capital of France is"* →
+*"Paris. The capital of Italy is Rome. The capital of Spain is Madrid. ..."*
 
 `examples/llm_chat.py` is an interactive streaming chat; `examples/llm_prefill.py` is a benchmark
 (prompt-tok/s, and `--energy` for ANE joules/token via `powermetrics`).
