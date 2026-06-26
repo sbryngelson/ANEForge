@@ -33,6 +33,26 @@ def test_rope_matches_numpy():
   cos_sim = float(got.ravel() @ ref.ravel() / (np.linalg.norm(got) * np.linalg.norm(ref) + 1e-9))
   assert cos_sim > 0.999, f"RoPE vs reference cosine={cos_sim}"
 
+def _random_model(cfg):
+  rng = np.random.default_rng(0); dh = cfg.dh
+  R = lambda *s: (rng.standard_normal(s) / np.sqrt(s[-1])).astype(np.float32)
+  sd = {"model.embed_tokens.weight": R(cfg.vocab, cfg.dim), "model.norm.weight": np.ones(cfg.dim, np.float32),
+        "lm_head.weight": R(cfg.vocab, cfg.dim)}
+  for L in range(cfg.n_layers):
+    p = f"model.layers.{L}."
+    for nm, sh in [("self_attn.q_proj", (cfg.n_heads * dh, cfg.dim)), ("self_attn.k_proj", (cfg.n_kv_heads * dh, cfg.dim)),
+                   ("self_attn.v_proj", (cfg.n_kv_heads * dh, cfg.dim)), ("self_attn.o_proj", (cfg.dim, cfg.n_heads * dh)),
+                   ("mlp.gate_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.up_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.down_proj", (cfg.dim, cfg.ffn_dim))]:
+      sd[p + nm + ".weight"] = R(*sh)
+    sd[p + "input_layernorm.weight"] = np.ones(cfg.dim, np.float32); sd[p + "post_attention_layernorm.weight"] = np.ones(cfg.dim, np.float32)
+  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg))
+
+@requires_ane
+def test_generate_runs():  # the decode loop produces the requested number of valid tokens
+  cfg = LlamaConfig(dim=64, n_layers=2, n_heads=4, n_kv_heads=2, ffn_dim=128, vocab=48)
+  out = _random_model(cfg).generate([1, 2, 3], max_new_tokens=5)
+  assert len(out) == 5 and all(0 <= t < cfg.vocab for t in out)
+
 @requires_ane
 def test_prefill_matches_huggingface_llama():  # the definitive check: ANE prefill == HF LlamaForCausalLM
   import torch

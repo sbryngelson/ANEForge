@@ -89,22 +89,40 @@ class LlamaPrefill:
     x = _input((seq, cfg.dim))
     for lw in self.w["layers"]:
       x = prefill_block(x, lw, cfg, cos, sin)
-    x = x.rms_norm(self.w["final_norm"], cfg.norm_eps)
-    last = x.slice_by_size([seq - 1, 0], [1, cfg.dim])      # only the last position predicts the next token
-    self._net = _compile.compile(last)                     # the ANE produces the final hidden state [1, dim]
+    self._net = _compile.compile(x.rms_norm(self.w["final_norm"], cfg.norm_eps))   # ANE -> all positions' hidden [seq, dim]
     self._seq = seq
     return self
 
-  def prefill(self, token_ids):
-    """Prefill `token_ids` (length must match `compile(seq)`) and return the next-token logits [1, vocab].
-    The transformer layers run on the ANE; the lm_head vocab projection (a single matvec, and the vocab can
-    exceed the ANE's per-op dim limit) is done on host."""
+  def _hidden(self, token_ids):
+    """Run the transformer layers on the ANE; return the final hidden states [S, dim]."""
     if self._net is None or len(token_ids) != self._seq:
       self.compile(len(token_ids))
     net = self._net; assert net is not None
-    emb = self.w["embed"][np.asarray(token_ids)]            # host embedding gather -> [S, dim]
-    hidden = np.asarray(net(emb.astype(np.float16)))[0].astype(np.float32)   # final hidden state [dim]
-    return (hidden @ np.asarray(self.w["lm_head"]).T)[None]                  # host lm_head -> [1, vocab]
+    emb = self.w["embed"][np.asarray(token_ids)]           # host embedding gather -> [S, dim]
+    return np.asarray(net(emb.astype(np.float16))).astype(np.float32)
+
+  def _logits(self, hidden_row):
+    return hidden_row @ np.asarray(self.w["lm_head"]).T    # host lm_head (vocab can exceed the ANE per-op dim limit)
+
+  def prefill(self, token_ids):
+    """Prefill `token_ids` and return the next-token logits [1, vocab] (the transformer runs on the ANE)."""
+    return self._logits(self._hidden(token_ids)[-1])[None]
+
+  def generate(self, token_ids, max_new_tokens=40, eos_id=None):
+    """Greedy autoregressive generation. Prompt + generated tokens fit one fixed-length ANE program (length
+    `len(prompt)+max_new_tokens`); each step re-runs it and reads the next-token logits at the current position.
+    Returns the generated token ids (prompt excluded)."""
+    prompt = [int(t) for t in token_ids]; n = len(prompt)
+    full = n + max_new_tokens
+    self.compile(full)
+    toks = prompt + [0] * max_new_tokens                   # pad to the fixed length (causal mask ignores future positions)
+    out = []
+    for cur in range(n, full):
+      nxt = int(self._logits(self._hidden(toks)[cur - 1]).argmax())   # next token from the last real position
+      out.append(nxt)
+      if nxt == eos_id: break
+      toks[cur] = nxt
+    return out
 
 
 def _weights_from_state_dict(sd, cfg: LlamaConfig) -> dict:

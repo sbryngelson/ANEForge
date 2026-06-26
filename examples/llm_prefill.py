@@ -47,26 +47,28 @@ def main():
     if args:
         print(f"loading {args[0]} from Hugging Face ...")
         model = af.load_llm(args[0]); from transformers import AutoTokenizer
-        tok = AutoTokenizer.from_pretrained(args[0]); ids = tok("The Apple Neural Engine is", return_tensors="np")["input_ids"][0]
+        tok = AutoTokenizer.from_pretrained(args[0])
     else:
         print("no model name given -> small random demo model (pass a HF Llama/Qwen name for a real one)")
-        model, tok = _demo_model(); ids = np.random.default_rng(0).integers(0, model.cfg.vocab, 64)
-
-    S = len(ids); model.compile(S)
-    nxt = model.prefill(ids)[0]
+        model, tok = _demo_model()
     print(f"\nmodel: {model.cfg.n_layers} layers, dim {model.cfg.dim}, {model.cfg.n_heads}h/{model.cfg.n_kv_heads}kv, vocab {model.cfg.vocab}")
-    print(f"prefilled {S} tokens -> next-token logits {nxt.shape}, argmax id {int(nxt.argmax())}")
-    if tok is not None:
-        print(f"  predicted next token: {tok.decode([int(nxt.argmax())])!r}")
 
-    model.prefill(ids)                                             # warm the compile cache
+    if tok is not None:                                           # real model -> actually generate text on the ANE
+        prompt = "The capital of France is"
+        ids = tok(prompt, return_tensors="np")["input_ids"][0]
+        t = time.perf_counter(); out = model.generate(ids, max_new_tokens=24, eos_id=tok.eos_token_id); dt = time.perf_counter() - t
+        print(f"\ngenerate (on the ANE): {prompt!r}\n  -> {(prompt + tok.decode(out))!r}")
+        print(f"  {len(out)} tokens in {dt:.1f}s ({len(out)/dt:.1f} tok/s decode, simple re-prefill loop)")
+
+    S = 128; ids2 = np.random.default_rng(0).integers(0, model.cfg.vocab, S)   # prefill throughput (token-independent)
+    model.compile(S); model.prefill(ids2)                        # warm the compile cache
     N = 10; t = time.perf_counter()
-    for _ in range(N): model.prefill(ids)
+    for _ in range(N): model.prefill(ids2)
     dt = (time.perf_counter() - t) / N
-    print(f"\nprefill: {dt*1000:.1f} ms  ->  {S/dt:,.0f} prompt-tokens/sec  (one fused ANE program)")
+    print(f"\nprefill {S} tokens: {dt*1000:.1f} ms  ->  {S/dt:,.0f} prompt-tokens/sec  (one fused ANE program)")
 
     if want_energy:
-        mj, _ = _ane_energy_mj(lambda: model.prefill(ids), 50)
+        mj, _ = _ane_energy_mj(lambda: model.prefill(ids2), 50)
         if np.isnan(mj): print("energy: powermetrics needs sudo (run with: sudo python3 examples/llm_prefill.py --energy)")
         else: print(f"energy: {mj/(50*S):.3f} mJ/token of ANE energy ({mj/1000:.2f} J over {50*S} tokens)")
 

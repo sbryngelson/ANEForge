@@ -13,14 +13,24 @@ weak phase. The energy win is in prefill.)
 ```python
 import aneforge as af
 
-model = af.load_llm("HuggingFaceTB/SmolLM-135M")   # any Llama/Qwen-class HF model
-logits = model.prefill(token_ids)                  # prefill on the ANE -> next-token logits [1, vocab]
+model = af.load_llm("Qwen/Qwen3-0.6B")             # any Llama/Qwen-class HF model
+text_ids = model.generate(prompt_ids, max_new_tokens=24)   # generate text on the ANE
+logits = model.prefill(prompt_ids)                 # or just prefill -> next-token logits [1, vocab]
 ```
 
-- `af.load_llm(name)` — load a Hugging Face Llama/Qwen model and prepare it for ANE prefill.
+- `af.load_llm(name)` — load a Hugging Face Llama/Qwen model and prepare it for ANE inference.
+- `model.generate(ids, max_new_tokens, eos_id)` — greedy autoregressive generation, on the ANE.
+- `model.prefill(ids)` — prefill only; returns next-token logits.
 - `af.LlamaPrefill(cfg, weights)` / `af.LlamaConfig` — build one directly from numpy weights.
-- `model.compile(seq)` builds the fused graph for a fixed prompt length; `model.prefill(ids)`
-  runs it. `af.rope` / `af.prefill_block` are the building blocks.
+  `af.rope` / `af.prefill_block` are the building blocks.
+
+## Prefill and decode
+
+An LLM writes one token at a time. **Prefill** reads the whole prompt in one parallel pass
+(compute-bound — the ANE's fast, energy-efficient phase). **Decode** then emits each following
+token one at a time. `generate()` does both: prefill, then a greedy decode loop. The current
+decode loop re-runs a fixed-length program each step (simple and correct, ~4 tok/s on
+Qwen3-0.6B); a resident KV-cache decode is the next optimization.
 
 A runnable benchmark (prompt-tokens/sec, plus `--energy` for ANE joules/token via
 `powermetrics`) is [`examples/llm_prefill.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/llm_prefill.py).
