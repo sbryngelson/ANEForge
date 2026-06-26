@@ -56,9 +56,11 @@ def main():
     if tok is not None:                                           # real model -> actually generate text on the ANE
         prompt = "The capital of France is"
         ids = tok(prompt, return_tensors="np")["input_ids"][0]
-        t = time.perf_counter(); out = model.generate(ids, max_new_tokens=24, eos_id=tok.eos_token_id); dt = time.perf_counter() - t
-        print(f"\ngenerate (on the ANE): {prompt!r}\n  -> {(prompt + tok.decode(out))!r}")
-        print(f"  {len(out)} tokens in {dt:.1f}s ({len(out)/dt:.1f} tok/s decode, simple re-prefill loop)")
+        out = model.generate(ids, max_new_tokens=32, max_len=96, eos_id=tok.eos_token_id)   # 1st call compiles the decoder
+        print(f"\ngenerate (resident KV-cache, on the ANE): {prompt!r}\n  -> {(prompt + tok.decode(out))!r}")
+        t = time.perf_counter(); out = model.generate(ids, max_new_tokens=32, max_len=96, eos_id=tok.eos_token_id)
+        dt = time.perf_counter() - t
+        print(f"  decode speed: {len(out)} tokens in {dt:.2f}s -> {len(out)/dt:.0f} tok/s (decoder compiled once, then reused)")
 
     S = 128; ids2 = np.random.default_rng(0).integers(0, model.cfg.vocab, S)   # prefill throughput (token-independent)
     model.compile(S); model.prefill(ids2)                        # warm the compile cache

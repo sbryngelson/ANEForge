@@ -28,9 +28,15 @@ logits = model.prefill(prompt_ids)                 # or just prefill -> next-tok
 
 An LLM writes one token at a time. **Prefill** reads the whole prompt in one parallel pass
 (compute-bound — the ANE's fast, energy-efficient phase). **Decode** then emits each following
-token one at a time. `generate()` does both: prefill, then a greedy decode loop. The current
-decode loop re-runs a fixed-length program each step (simple and correct, ~4 tok/s on
-Qwen3-0.6B); a resident KV-cache decode is the next optimization.
+token one at a time. `generate()` does both: prefill the prompt, then a greedy decode loop with
+a **resident on-device KV-cache** — each layer's K/V stays on the ANE across steps (via
+`share_buffer`), so a decode step feeds only the new token's embedding + a position one-hot and
+runs one fused program over all layers. The decode program is compiled once and reused.
+
+On **Qwen3-0.6B** this decodes at **~75 tok/s** (after a one-time ~6 s decoder compile),
+prefills at **~8,600 prompt-tok/s**, and produces correct text:
+*"The capital of France is"* → *"Paris. The capital of Italy is Rome. The capital of Spain is
+Madrid. The capital of Portugal is Lisbon. ..."*
 
 A runnable benchmark (prompt-tokens/sec, plus `--energy` for ANE joules/token via
 `powermetrics`) is [`examples/llm_prefill.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/llm_prefill.py).

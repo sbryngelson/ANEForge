@@ -30,13 +30,15 @@ def rope_tables(seq: int, dh: int, base: float = 10000.0):
 
 
 def rope(x: Tensor, cos, sin) -> Tensor:
-  """Apply rotary position embedding to `x` [.., seq, dh]: `x*cos + rotate_half(x)*sin`."""
+  """Apply rotary position embedding to `x` [.., seq, dh]: `x*cos + rotate_half(x)*sin`. `cos`/`sin` may be
+  numpy tables (prefill, baked as constants) or graph Tensors (decode, a runtime per-position row)."""
   dh = x.shape[-1]; half = dh // 2; rank = len(x.shape)
   s = list(x.shape); s[-1] = half
   x1 = x.slice_by_size([0] * rank, s)
   b2 = [0] * rank; b2[-1] = half
   x2 = x.slice_by_size(b2, s)
-  return x * _const(cos) + _concat([x2 * -1.0, x1], axis=rank - 1) * _const(sin)
+  c = cos if isinstance(cos, Tensor) else _const(cos); sn = sin if isinstance(sin, Tensor) else _const(sin)
+  return x * c + _concat([x2 * -1.0, x1], axis=rank - 1) * sn
 
 
 def _repeat_kv(k: Tensor, g: int) -> Tensor:
@@ -76,12 +78,40 @@ def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin) -> Tensor:
   return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"])
 
 
+def _repeat_kv3(k: Tensor, g: int) -> Tensor:
+  """Grouped-query repeat for the decode cache: [KV, M, dh] -> [KV*g, M, dh] (0/1 expansion matmul)."""
+  if g == 1: return k
+  KV, M, dh = k.shape
+  Mx = np.repeat(np.eye(KV, dtype=np.float16), g, axis=0)
+  return k.reshape(KV, M * dh).transpose([1, 0]).linear(Mx).transpose([1, 0]).reshape(KV * g, M, dh)
+
+
+def _decode_block(x: Tensor, w: dict, cfg: LlamaConfig, Kin, Vin, oh, inv, mask, cosp, sinp):
+  """One decoder block for a single new token, attending to a resident KV-cache. `x` [1, dim]; `Kin`/`Vin`
+  [KV, M, dh] are the cache; `oh`/`inv` [1, M, 1] write the new K/V at the current position; `cosp`/`sinp`
+  [1, dh] are RoPE for that position. Returns (hidden, Kout, Vout) where Kout/Vout become the resident cache."""
+  H, KV, dh = cfg.n_heads, cfg.n_kv_heads, cfg.dh
+  xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
+  q = xn.linear(w["wq"]).reshape(H, dh); k = xn.linear(w["wk"]).reshape(KV, dh); v = xn.linear(w["wv"]).reshape(KV, dh)
+  if "q_norm" in w:
+    q = q.rms_norm(w["q_norm"], cfg.norm_eps); k = k.rms_norm(w["k_norm"], cfg.norm_eps)
+  q = rope(q.reshape(H, 1, dh), cosp, sinp)        # [H, 1, dh]
+  k = rope(k.reshape(KV, 1, dh), cosp, sinp); v = v.reshape(KV, 1, dh)
+  Kout = Kin * inv + k * oh; Vout = Vin * inv + v * oh        # masked positional write into the cache
+  Kr, Vr = _repeat_kv3(Kout, H // KV), _repeat_kv3(Vout, H // KV)
+  sc = ((q @ Kr.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)   # [H, 1, M]
+  a = (sc @ Vr).reshape(H, 1, dh).transpose([1, 0, 2]).reshape(1, H * dh)
+  h = x + a.linear(w["wo"])
+  hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
+  return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"]), Kout, Vout
+
+
 class LlamaPrefill:
   """A Llama/Qwen decoder compiled for prefill on the ANE. `compile(seq)` builds the graph for a fixed
   prompt length; `prefill(token_ids)` returns the next-token logits. Weights are a dict of numpy arrays
   (see `from_pretrained`)."""
   def __init__(self, cfg: LlamaConfig, weights: dict):
-    self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0
+    self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None
 
   def compile(self, seq: int):
     cfg = self.cfg
@@ -108,20 +138,56 @@ class LlamaPrefill:
     """Prefill `token_ids` and return the next-token logits [1, vocab] (the transformer runs on the ANE)."""
     return self._logits(self._hidden(token_ids)[-1])[None]
 
-  def generate(self, token_ids, max_new_tokens=40, eos_id=None):
-    """Greedy autoregressive generation. Prompt + generated tokens fit one fixed-length ANE program (length
-    `len(prompt)+max_new_tokens`); each step re-runs it and reads the next-token logits at the current position.
-    Returns the generated token ids (prompt excluded)."""
-    prompt = [int(t) for t in token_ids]; n = len(prompt)
-    full = n + max_new_tokens
-    self.compile(full)
-    toks = prompt + [0] * max_new_tokens                   # pad to the fixed length (causal mask ignores future positions)
-    out = []
-    for cur in range(n, full):
-      nxt = int(self._logits(self._hidden(toks)[cur - 1]).argmax())   # next token from the last real position
-      out.append(nxt)
+  def _decoder(self, M):
+    """Build (once, cached) the resident-KV-cache decode-step program for a max sequence length `M`: all layers
+    run for one token attending to per-layer caches that stay on-device across `execute` via `share_buffer`."""
+    if self._dec is not None and self._dec["M"] == M: return self._dec
+    if self._dec is not None: self._dec["net"].release()
+    from ._compile import compile_multi
+    cfg = self.cfg; KV, dh, D, L = cfg.n_kv_heads, cfg.dh, cfg.dim, cfg.n_layers
+    x = _input((1, D)); oh = _input((1, M, 1)); inv = _input((1, M, 1)); mask = _input((1, 1, M))
+    cosp = _input((1, dh)); sinp = _input((1, dh))
+    Kin = [_input((KV, M, dh)) for _ in range(L)]; Vin = [_input((KV, M, dh)) for _ in range(L)]
+    h = x; Kout = []; Vout = []
+    for lw, ki, vi in zip(self.w["layers"], Kin, Vin):
+      h, ko, vo = _decode_block(h, lw, cfg, ki, vi, oh, inv, mask, cosp, sinp)
+      Kout.append(ko); Vout.append(vo)
+    h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)
+    net = compile_multi([h] + Kout + Vout)
+    inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
+    for ki, vi, ko, vo in zip(Kin, Vin, Kout, Vout):           # alias each layer's cache output -> its input (resident)
+      net.prog.share_buffer(0, om[ko], 0, inm[id(ki)]); net.prog.share_buffer(0, om[vo], 0, inm[id(vi)])
+    cos_t, sin_t = rope_tables(M, dh, cfg.rope_base)
+    ports = {"x": inm[id(x)], "oh": inm[id(oh)], "inv": inm[id(inv)], "mask": inm[id(mask)],
+             "cosp": inm[id(cosp)], "sinp": inm[id(sinp)], "h": om[h], "kv": [(inm[id(ki)], inm[id(vi)]) for ki, vi in zip(Kin, Vin)]}
+    self._dec = {"M": M, "net": net, "p": ports, "cos": cos_t, "sin": sin_t}
+    return self._dec
+
+  def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None):
+    """Greedy autoregressive generation with a resident on-device KV-cache. The decode program (compiled once
+    and cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each
+    step feeds only the token embedding + a position one-hot. Returns the generated token ids."""
+    cfg = self.cfg; KV, dh = cfg.n_kv_heads, cfg.dh; f16 = np.float16
+    prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
+    d = self._decoder(M); net = d["net"]; p = d["p"]
+    for ki, vi in p["kv"]:                                      # reset the resident cache for this generation
+      net.prog.set_input(ki, np.zeros((KV, M, dh), f16)); net.prog.set_input(vi, np.zeros((KV, M, dh), f16))
+    def step(tok, pos):
+      ohv = np.zeros((1, M, 1), f16); ohv[0, pos, 0] = 1.0
+      invv = np.ones((1, M, 1), f16); invv[0, pos, 0] = 0.0
+      mv = np.full((1, 1, M), -1e4, f16); mv[..., :pos + 1] = 0.0
+      net.prog.set_input(p["x"], np.asarray(self.w["embed"][tok])[None].astype(f16))
+      net.prog.set_input(p["oh"], ohv); net.prog.set_input(p["inv"], invv); net.prog.set_input(p["mask"], mv)
+      net.prog.set_input(p["cosp"], d["cos"][pos][None]); net.prog.set_input(p["sinp"], d["sin"][pos][None])
+      net.prog.execute()
+      return np.asarray(net.prog.read_output(p["h"])).reshape(cfg.dim).astype(np.float32)
+    for pos, tok in enumerate(prompt[:-1]): step(tok, pos)      # prefill the cache (discard hidden)
+    cur = prompt[-1]; pos = len(prompt) - 1; out = []
+    for _ in range(max_new_tokens):                            # decode
+      if pos >= M - 1: break                                   # cache full
+      nxt = int(self._logits(step(cur, pos)).argmax()); out.append(nxt)
       if nxt == eos_id: break
-      toks[cur] = nxt
+      cur = nxt; pos += 1
     return out
 
 
