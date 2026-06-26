@@ -37,8 +37,9 @@ def main():
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(name)
     print(f"ready: {model.cfg.n_layers}L dim {model.cfg.dim}, running on the Apple Neural Engine.")
-    print("type a message (Ctrl-D or 'exit' to quit). first reply compiles the decoder (~once), then streams.\n")
+    print("type a message (Ctrl-D or 'exit' to quit).\n")
 
+    warmed = False
     while True:
         try:
             prompt = input("you> ").strip()
@@ -49,6 +50,10 @@ def main():
         ids = _encode(tok, prompt)
         if len(ids) >= MAX_LEN - 8:
             print("ane> (prompt too long for the demo context)\n"); continue
+        if not warmed:                                   # the decode program compiles once -- show it so the pause makes sense
+            print("ane> compiling the decoder for the ANE (one-time, ~6s) ...", end="", flush=True)
+            model.warmup(MAX_LEN); warmed = True
+            print(" done.")
         print("ane> ", end="", flush=True)
         model.generate(ids, max_new_tokens=MAX_LEN - len(ids) - 1, max_len=MAX_LEN, eos_id=tok.eos_token_id,
                        on_token=lambda t: print(tok.decode([t]), end="", flush=True))

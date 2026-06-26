@@ -163,6 +163,11 @@ class LlamaPrefill:
     self._dec = {"M": M, "net": net, "p": ports, "cos": cos_t, "sin": sin_t}
     return self._dec
 
+  def warmup(self, max_len):
+    """Compile and cache the decode program for context length `max_len` (the one-time cost) so the next
+    `generate` streams immediately. Returns self."""
+    self._decoder(int(max_len)); return self
+
   def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None):
     """Greedy autoregressive generation with a resident on-device KV-cache. The decode program (compiled once
     and cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each
