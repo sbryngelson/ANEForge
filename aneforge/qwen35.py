@@ -10,6 +10,42 @@ import numpy as np
 
 from .graph import input as _input, _const, concat as _concat
 from . import llm
+from .llm import _repeat_kv3
+
+
+def _rotate_matrix(dh: int, rotary_dim: int, interleaved: bool) -> np.ndarray:
+  """The [dh, dh] matrix P for matmul-rope `x*cos + (x@P)*sin` over the first `rotary_dim` dims (pass-through
+  elsewhere, where cos=1/sin=0). `interleaved` (GPT-J) rotates pairs (2p, 2p+1); otherwise (NeoX/HF) rotates
+  the two halves (i, i+rotary_dim/2)."""
+  rd = rotary_dim or dh; half = rd // 2; P = np.zeros((dh, dh), np.float32)
+  if interleaved:
+    for p in range(half): P[2 * p + 1, 2 * p] = -1.0; P[2 * p, 2 * p + 1] = 1.0
+  else:
+    for i in range(half): P[i + half, i] = -1.0; P[i, i + half] = 1.0
+  return P
+
+
+def _gated_attn_decode(x, w, cfg, ls, ctx, M):
+  """Single-token gated attention against a resident KV-cache (Qwen3.5): RMSNorm -> q_proj (q + output gate)
+  /k/v -> QK-norm -> partial interleaved RoPE (matmul form) -> GQA causal SDPA -> out * sigmoid(gate) -> o_proj.
+  Returns (hidden+residual, [(Kout,Kin),(Vout,Vin)])."""
+  H, KV, dh = cfg.n_heads, cfg.n_kv_heads, cfg.dh
+  Kin = _input((KV, M, dh)); Vin = _input((KV, M, dh))
+  oh, inv, mask, cosp, sinp = ctx["oh"], ctx["inv"], ctx["mask"], ctx["cosp"], ctx["sinp"]
+  P = _const(_rotate_matrix(dh, cfg.rotary_dim, cfg.rope_interleaved))
+  xn = x.rms_norm(w["in_norm"], cfg.norm_eps)
+  qg = xn.linear(w["wq"]).reshape((H, dh * 2))                  # q_proj outputs query + output gate
+  q = qg.slice_by_size([0, 0], [H, dh]).rms_norm(w["q_norm"], cfg.norm_eps)
+  gate = qg.slice_by_size([0, dh], [H, dh]).reshape((1, H * dh))
+  k = xn.linear(w["wk"]).reshape((KV, dh)).rms_norm(w["k_norm"], cfg.norm_eps)
+  v = xn.linear(w["wv"]).reshape((KV, dh))
+  q = (q * cosp + (q @ P) * sinp).reshape((H, 1, dh))           # matmul-rope (interleaved partial)
+  k = (k * cosp + (k @ P) * sinp).reshape((KV, 1, dh))
+  Kout = Kin * inv + k * oh; Vout = Vin * inv + v.reshape((KV, 1, dh)) * oh
+  Kr, Vr = _repeat_kv3(Kout, H // KV), _repeat_kv3(Vout, H // KV)
+  sc = ((q @ Kr.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)
+  a = (sc @ Vr).reshape((1, H * dh)) * gate.sigmoid()
+  return x + a.linear(w["wo"]), [(Kout, Kin), (Vout, Vin)]
 
 
 def _deltanet_decode(x, w, cfg, ls, ctx, M):
@@ -44,3 +80,4 @@ def _deltanet_decode(x, w, cfg, ls, ctx, M):
 
 
 llm.DECODE_MIXERS["gated_deltanet"] = _deltanet_decode
+llm.DECODE_MIXERS["gated_attention"] = _gated_attn_decode
