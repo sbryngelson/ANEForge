@@ -81,3 +81,39 @@ def _deltanet_decode(x, w, cfg, ls, ctx, M):
 
 llm.DECODE_MIXERS["gated_deltanet"] = _deltanet_decode
 llm.DECODE_MIXERS["gated_attention"] = _gated_attn_decode
+
+
+def adapt(c, sd, prefix: str = ""):
+  """Adapter for a Qwen3.5 / Qwen3-Next hybrid TEXT model: emit (LlamaConfig with the interleaved per-layer
+  plan, canonical weights) from the HF text config `c` and a numpy state_dict `sd`. `prefix` is the layers
+  prefix in `sd` ('' for Qwen3_5TextModel, 'model.language_model.' for the VL checkpoint). Canonicalizes the
+  Qwen3.5 `(1+w)` RMSNorms (bake +1) and bakes `-exp(A_log)` so the runtime stays uniform."""
+  n = int(c.num_hidden_layers); interval = int(getattr(c, "full_attention_interval", 4))
+  hd = int(getattr(c, "head_dim", 0) or 0)
+  is_attn = lambda L: (L + 1) % interval == 0
+  cfg = llm.LlamaConfig(
+    dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads, n_kv_heads=c.num_key_value_heads,
+    ffn_dim=c.intermediate_size, vocab=c.vocab_size, rope_base=float(getattr(c, "rope_theta", 1e4)),
+    norm_eps=float(c.rms_norm_eps), head_dim=hd, rotary_dim=int(hd * getattr(c, "partial_rotary_factor", 1.0)),
+    layers=[llm.LayerSpec(mixer="gated_attention" if is_attn(L) else "gated_deltanet") for L in range(n)],
+    extra={"nk": c.linear_num_key_heads, "nv": c.linear_num_value_heads, "dk": c.linear_key_head_dim,
+           "dv": c.linear_value_head_dim, "conv_k": c.linear_conv_kernel_dim})
+  g = lambda k: sd[prefix + k]; p1 = lambda k: 1.0 + sd[prefix + k]      # p1: canonicalize (1+w) norm
+  w = {"embed": g("embed_tokens.weight"), "final_norm": p1("norm.weight"),
+       "lm_head": sd.get("lm_head.weight", sd.get(prefix + "embed_tokens.weight")), "layers": []}
+  for L in range(n):
+    q = f"layers.{L}."
+    lw = {"in_norm": p1(q + "input_layernorm.weight"), "mlp_norm": p1(q + "post_attention_layernorm.weight"),
+          "wgate": g(q + "mlp.gate_proj.weight"), "wup": g(q + "mlp.up_proj.weight"), "wdown": g(q + "mlp.down_proj.weight")}
+    if is_attn(L):
+      a = q + "self_attn."
+      lw |= {"wq": g(a + "q_proj.weight"), "wk": g(a + "k_proj.weight"), "wv": g(a + "v_proj.weight"),
+             "wo": g(a + "o_proj.weight"), "q_norm": p1(a + "q_norm.weight"), "k_norm": p1(a + "k_norm.weight")}
+    else:
+      d = q + "linear_attn."
+      lw |= {"in_proj_qkv": g(d + "in_proj_qkv.weight"), "in_proj_z": g(d + "in_proj_z.weight"),
+             "in_proj_a": g(d + "in_proj_a.weight"), "in_proj_b": g(d + "in_proj_b.weight"),
+             "conv1d": np.squeeze(g(d + "conv1d.weight")), "neg_exp_A": -np.exp(g(d + "A_log")),
+             "dt_bias": g(d + "dt_bias"), "ssm_norm": g(d + "norm.weight"), "out_proj": g(d + "out_proj.weight")}
+    w["layers"].append(lw)
+  return cfg, w

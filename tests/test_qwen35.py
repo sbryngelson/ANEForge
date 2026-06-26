@@ -86,3 +86,40 @@ def test_gated_attention_decode_matches_transformers():
   delta = outs - xs
   cos_ = float(delta.ravel() @ ref.ravel() / (np.linalg.norm(delta) * np.linalg.norm(ref)))
   assert cos_ > 0.95, f"gated_attention decode vs transformers: cosine {cos_}"
+
+
+@requires_ane
+def test_qwen35_hybrid_model_matches_transformers():
+  import torch
+  from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
+  from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextModel
+  import aneforge.qwen35 as q35
+  from aneforge.llm import LlamaPrefill
+  torch.manual_seed(0)
+  ct = Qwen3_5TextConfig(hidden_size=64, num_hidden_layers=4, full_attention_interval=4, num_attention_heads=4,
+    num_key_value_heads=2, head_dim=16, partial_rotary_factor=0.5, linear_num_key_heads=2, linear_num_value_heads=6,
+    linear_key_head_dim=16, linear_value_head_dim=16, linear_conv_kernel_dim=4, hidden_act="silu", rms_norm_eps=1e-6,
+    vocab_size=32, rope_theta=1e4, intermediate_size=128, mlp_only_layers=[0, 1, 2, 3], max_position_embeddings=32)
+  m = Qwen3_5TextModel(ct).eval()
+  T = 8; ids = torch.randint(0, 32, (1, T))
+  with torch.no_grad(): ref = m(ids).last_hidden_state[0].numpy()
+  sd = {k: v.detach().float().numpy() for k, v in m.named_parameters()}
+  cfg, w = q35.adapt(ct, sd)
+  assert [ls.mixer for ls in cfg.layers] == ["gated_deltanet", "gated_deltanet", "gated_deltanet", "gated_attention"]
+  model = LlamaPrefill(cfg, w); M = T; d = model._decoder(M); chunks = d["chunks"]; f16 = np.float16
+  for c in chunks:
+    for name, shape in c["p"]["states"].items(): c["net"].prog.set_input(name, np.zeros(shape, f16))
+  outs = np.zeros((T, cfg.dim), np.float32); idl = ids[0].numpy()
+  for pos in range(T):
+    oh = np.zeros((1, M, 1), f16); oh[0, pos, 0] = 1; iv = np.ones((1, M, 1), f16); iv[0, pos, 0] = 0
+    mv = np.full((1, 1, M), -1e4, f16); mv[..., :pos + 1] = 0
+    vals = {"oh": oh, "inv": iv, "mask": mv, "cosp": d["cos"][pos][None], "sinp": d["sin"][pos][None]}
+    h = np.asarray(w["embed"][idl[pos]])[None].astype(f16)
+    for c in chunks:
+      p = c["p"]; pr = c["net"].prog; pr.set_input(p["x"], h)
+      for k in ("oh", "inv", "mask", "cosp", "sinp"):
+        if k in p: pr.set_input(p[k], vals[k].astype(f16))
+      pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
+    outs[pos] = h.reshape(cfg.dim).astype(np.float32)
+  cos = float((outs.ravel() @ ref.ravel()) / (np.linalg.norm(outs) * np.linalg.norm(ref)))
+  assert cos > 0.95, f"qwen3.5 hybrid model vs transformers: cosine {cos}"
