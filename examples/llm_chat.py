@@ -1,6 +1,6 @@
-"""Interactive chat with an LLM running on the Apple Neural Engine. Type a message and the model streams a
-reply token-by-token, generated entirely on the ANE (resident KV-cache decode). Defaults to a cached
-Qwen3-0.6B if present, else pass a Hugging Face model name. Run: python3 examples/llm_chat.py [hf-model]"""
+"""Interactive chat with an LLM on the Apple Neural Engine. Type a message and the model streams a reply
+token-by-token (resident KV-cache decode). Defaults to a cached Qwen3-0.6B if present, else pass a Hugging
+Face model name. Run: python3 examples/llm_chat.py [hf-model] [--int8]"""
 import glob
 import os
 import sys

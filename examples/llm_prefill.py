@@ -1,7 +1,7 @@
-"""LLM prefill on the Apple Neural Engine -- the compute-bound phase where the ANE is most energy-efficient.
-Loads a Llama/Qwen-class model (a Hugging Face name, or a small random demo by default), prefills a prompt
-as ONE fused ANE program, and reports prompt-tokens/sec. With `--energy` (needs sudo) it also samples ANE
-power via `powermetrics` and reports joules/token. Run: python3 examples/llm_prefill.py [hf-model-name] [--energy]"""
+"""Benchmark an LLM on the Apple Neural Engine. Loads a Llama/Qwen-class model (a Hugging Face name, or a
+small random demo by default), generates text with the resident KV-cache decode, and reports decode and
+prefill throughput. `--int8` quantizes the weights; `--energy` (needs sudo) samples ANE power via
+`powermetrics` for joules/token. Run: python3 examples/llm_prefill.py [hf-model-name] [--int8] [--energy]"""
 import subprocess
 import sys
 import time

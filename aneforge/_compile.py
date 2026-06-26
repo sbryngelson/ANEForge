@@ -895,9 +895,8 @@ class MultiModel:
 
 def compile_multi(outs, build_dir=None, int8: bool = False, compress: str | None = None,
           compress_atol: float = 0.05, block_size: int = 32) -> MultiModel:
-  """Lower a multi-output graph into one fused program with N named output ports (fp16 I/O). Weights may be
-  compressed (`int8=True` or `compress=`) exactly as in `compile`: the I/O ports stay fp16, only the constant
-  weights are quantized (per-channel int8 / int4-LUT / blockwise) and dequantized on the ANE."""
+  """Lower a multi-output graph into one fused program with N named output ports (fp16 I/O). `int8`/`compress`
+  quantize the constant weights as in `compile` (per-channel int8 / int4-LUT / blockwise); I/O stays fp16."""
   order = _topo_multi(*outs)
   if any(t.op in NETPLIST_OPS for t in order):
     raise NotImplementedError("compile_multi: native-SDPA/netplist ops not supported")

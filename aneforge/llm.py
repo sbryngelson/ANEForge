@@ -1,7 +1,6 @@
-"""LLM prefill on the Apple Neural Engine. A config-driven Llama/Qwen-style decoder
-(RMSNorm + RoPE + grouped-query causal attention + SwiGLU) that loads real Hugging Face
-weights and prefills a prompt as ONE fused ANE program -- the compute-bound phase where the
-Neural Engine is most energy-efficient. Matches HF logits; see `examples/llm_prefill.py`."""
+"""LLMs on the Apple Neural Engine. A config-driven Llama/Qwen decoder
+(RMSNorm + RoPE + grouped-query causal attention + SwiGLU) that loads Hugging Face weights and
+runs prefill and KV-cache decode as fused ANE programs. Matches HF logits; see `docs/llm.md`."""
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
@@ -112,8 +111,7 @@ class LlamaPrefill:
   (see `from_pretrained`)."""
   def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None
-    self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise": quantize the ANE weights (halves/quarters
-    #                                weight bytes -> less memory and, on weight-bound large models, faster decode)
+    self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
 
   def compile(self, seq: int):
     cfg = self.cfg
@@ -172,9 +170,9 @@ class LlamaPrefill:
     self._decoder(int(max_len)); return self
 
   def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None):
-    """Greedy autoregressive generation with a resident on-device KV-cache. The decode program (compiled once
-    and cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each
-    step feeds only the token embedding + a position one-hot. `on_token(id)` is called per token (streaming).
+    """Greedy autoregressive generation with a resident KV-cache. The decode program (compiled once and
+    cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each step
+    feeds only the token embedding + a position one-hot. `on_token(id)` is called per token (streaming).
     Returns the generated token ids."""
     cfg = self.cfg; KV, dh = cfg.n_kv_heads, cfg.dh; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
@@ -228,8 +226,8 @@ def _cfg_from_hf(c) -> LlamaConfig:
 
 
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
-  """Load a Llama/Qwen-class model from Hugging Face and prepare it for ANE prefill. `compress` ("int8"/"int4"/
-  "blockwise") quantizes the ANE weights to cut their memory and, on weight-bound large models, speed decode."""
+  """Load a Llama/Qwen-class model from Hugging Face for ANE inference. `compress` ("int8"/"int4"/"blockwise")
+  quantizes the ANE weights."""
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
   cfg = _cfg_from_hf(hf.config)
