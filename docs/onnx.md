@@ -24,6 +24,10 @@ y = net(np.zeros((1, 3, 224, 224), np.float16))
   (`target=`, `opt=`, `compress=`, ...). `path` is a filename or an in-memory `onnx.ModelProto`.
 - `af.onnx_to_tensor(path)` - import only, returning `(graph_inputs, output)` ANEForge
   tensors so you can inspect or splice the graph before compiling it yourself.
+- `af.onnx_to_features(path)` - import a classifier and return `(inputs, features)` where
+  `features` is the input to the final linear layer. Compile it for a frozen feature
+  extractor and train a fresh head on the ANE for transfer learning (see
+  [`examples/onnx_finetune.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/onnx_finetune.py)).
 
 A runnable end-to-end example (export a torchvision model, import it, validate against
 onnxruntime) is in [`examples/onnx_import.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/onnx_import.py):

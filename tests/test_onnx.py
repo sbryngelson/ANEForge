@@ -105,6 +105,14 @@ def test_gemm_transb_builds():  # transB=1 -> W stays [out,in]; x[1,16] linear W
   m = _model([n], [_vi("x", [1, 16])], [_vi("y", [1, 10])], inits=[w, b])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 10) and out.op == "matmul"
 
+def test_onnx_to_features_peels_classifier():  # features = the input to the final linear layer
+  w = _init(np.zeros((10, 16)), "W"); b = _init(np.zeros(10), "B")
+  nodes = [helper.make_node("Flatten", ["x"], ["f"], axis=1),
+           helper.make_node("Gemm", ["f", "W", "B"], ["y"], transB=1)]
+  m = _model(nodes, [_vi("x", [1, 16, 1, 1])], [_vi("y", [1, 10])], inits=[w, b])
+  ins, feats = af.onnx_to_features(m)
+  assert feats.shape == (1, 16) and feats.op == "flatten2d"    # the Gemm's input, not the logits
+
 def test_flatten_builds():
   n = helper.make_node("Flatten", ["x"], ["y"], axis=1)
   m = _model([n], [_vi("x", [1, 8, 2, 2])], [_vi("y", [1, 32])])

@@ -66,6 +66,16 @@ def onnx_to_tensor(path):
   if not isinstance(out, Tensor): raise TypeError("onnx: graph output is not a Tensor")
   return graph_inputs, out
 
+def onnx_to_features(path):
+  """Import a classifier and return `(inputs, features)` where `features` is the input to the final
+  linear layer (a trailing softmax is peeled). Compile it for a frozen feature extractor — train a
+  fresh head on the features for on-ANE transfer learning."""
+  inputs, out = onnx_to_tensor(path)
+  if out.op == "softmax" and out.srcs: out = out.srcs[0]   # peel a trailing softmax to the logits
+  if out.op not in ("matmul", "bmm") or not out.srcs:
+    raise ValueError(f"onnx_to_features: expected the model to end in a linear classifier (matmul/bmm); got '{out.op}'")
+  return inputs, out.srcs[0]
+
 def load_onnx(path, fuse_attention=False, **compile_kwargs):
   """Import an ONNX model and compile it to a runnable ANE Model. `fuse_attention` rewrites
   the `softmax(Q@K^T*scale)@V` pattern onto the native fused-attention layer (a graph cut)."""
