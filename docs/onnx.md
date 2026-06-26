@@ -63,6 +63,10 @@ Export at `opset_version=13` with constant folding on (the default), which resol
 These attribute forms fall outside the supported subset and raise rather than
 mis-lower:
 
+- **Constant weights/params only.** Weight/parameter inputs (Conv/Gemm/MatMul/
+  BatchNormalization/InstanceNormalization/PRelu weights, reduce `axes`, TopK `k`,
+  Gather indices) must be constant initializers; a data-dependent (computed) weight or
+  param has no ANE path and raises `NotImplementedError`.
 - **Gemm:** only `alpha=1`, `beta=1`, `transA=0` (`transB` is honored).
 - **Conv:** explicit `pads` only - `auto_pad` (`SAME_UPPER`/`SAME_LOWER`/`VALID`) raises.
 - **Pooling:** `ceil_mode=0` (floor) only; `AveragePool` rejects `count_include_pad=1`

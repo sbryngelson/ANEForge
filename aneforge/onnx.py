@@ -177,6 +177,7 @@ def _gemm(node, ins, a, i):
   return x.linear(W, B)
 @onnx_op("MatMul")
 def _matmul(node, ins, a, i):
+  if not isinstance(ins[0], Tensor): raise NotImplementedError("ONNX MatMul: a constant first operand is not supported")
   b = ins[1]
   return ins[0] @ (np.asarray(b) if not isinstance(b, Tensor) else b)
 @onnx_op("BatchNormalization")
@@ -257,7 +258,9 @@ def _resize(node, ins, a, i):
 def _reduce_op(ins, a, method):
   """ONNX reduce: axes attr (opset<18) or input (>=18); empty/absent -> all axes; keepdims=0 squeezes after."""
   x = ins[0]; axes = a.get("axes")
-  if axes is None and len(ins) > 1 and ins[1] is not None: axes = [int(v) for v in np.asarray(ins[1]).ravel()]
+  if axes is None and len(ins) > 1 and ins[1] is not None:
+    if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Reduce: data-dependent axes (non-constant) not supported")
+    axes = [int(v) for v in np.asarray(ins[1]).ravel()]
   if not axes:
     if int(a.get("noop_with_empty_axes", 0)):
       raise NotImplementedError("ONNX Reduce: noop_with_empty_axes=1 with empty axes (identity) not supported")
@@ -300,5 +303,6 @@ def _topk_h(node, ins, a, i):
   x = ins[0]
   if len(x.shape) != 2: raise NotImplementedError("ONNX TopK: only 2D inputs supported on the ANE")
   if int(a.get("axis", -1)) not in (-1, 1): raise NotImplementedError("ONNX TopK: only last-axis (width) topk supported")
+  if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX TopK: data-dependent k (non-constant) not supported")
   k = int(np.asarray(ins[1]).ravel()[0])
   return _topk(x, k, largest=bool(int(a.get("largest", 1))))

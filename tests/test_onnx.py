@@ -446,6 +446,12 @@ def test_reduce_noop_empty_axes_raises():  # noop_with_empty_axes=1 + empty axes
   m = _model([n], [_vi("x", [2, 5])], [_vi("y", [2, 5])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
+def test_reduce_nonconstant_axes_raises():  # data-dependent (Tensor) axes have no static lowering
+  n = helper.make_node("ReduceSum", ["x", "ax"], ["y"], keepdims=1)
+  m = _model([n], [_vi("x", [2, 5]), helper.make_tensor_value_info("ax", TensorProto.INT64, [1])],
+             [_vi("y", [2, 1])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
 # -- gather / argmax / topk ------------------------------------------------- #
 def test_gather_builds():  # 1-D index along axis 0 -> [len(idx), W]; lowers to slice+concat
   idx = onnx.numpy_helper.from_array(np.array([0, 2, 3], dtype=np.int64), "idx")
@@ -510,6 +516,18 @@ def test_topk_axis_raises():  # only the last axis (width) is supported
   n = helper.make_node("TopK", ["x", "k"], ["vals", "idx"], axis=0)
   m = _model([n], [_vi("x", [3, 5])],
              [_vi("vals", [2, 5]), helper.make_tensor_value_info("idx", TensorProto.INT64, [2, 5])], inits=[k])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_topk_nonconstant_k_raises():  # data-dependent (Tensor) k has no static lowering
+  n = helper.make_node("TopK", ["x", "k"], ["vals", "idx"], axis=-1)
+  m = _model([n], [_vi("x", [3, 5]), helper.make_tensor_value_info("k", TensorProto.INT64, [1])],
+             [_vi("vals", [3, 2]), helper.make_tensor_value_info("idx", TensorProto.INT64, [3, 2])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_matmul_constant_first_operand_raises():  # ndarray @ Tensor has no ANE path
+  a_w = _init(np.zeros((4, 6)), "A")
+  n = helper.make_node("MatMul", ["A", "B"], ["y"])
+  m = _model([n], [_vi("B", [6, 3])], [_vi("y", [4, 3])], inits=[a_w])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
 @requires_ane
