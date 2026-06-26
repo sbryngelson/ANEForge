@@ -29,11 +29,13 @@ def _encode(tok, prompt):
 
 
 def main():
-    name = sys.argv[1] if len(sys.argv) > 1 else _default_model()
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+    compress = "int8" if "--int8" in sys.argv else ("int4" if "--int4" in sys.argv else None)
+    name = argv[0] if argv else _default_model()
     if not name:
-        print("usage: python3 examples/llm_chat.py <hf-model-name>   (no cached Qwen3-0.6B found)"); return 1
-    print(f"loading {os.path.basename(str(name))} ...")
-    model = af.load_llm(name)
+        print("usage: python3 examples/llm_chat.py <hf-model-name> [--int8|--int4]   (no cached Qwen3-0.6B found)"); return 1
+    print(f"loading {os.path.basename(str(name))}{' ('+compress+' weights)' if compress else ''} ...")
+    model = af.load_llm(name, compress=compress)
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(name)
     print("compiling the decoder for the ANE (one-time, ~6s) ...", end="", flush=True)

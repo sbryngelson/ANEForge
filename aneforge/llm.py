@@ -110,8 +110,10 @@ class LlamaPrefill:
   """A Llama/Qwen decoder compiled for prefill on the ANE. `compile(seq)` builds the graph for a fixed
   prompt length; `prefill(token_ids)` returns the next-token logits. Weights are a dict of numpy arrays
   (see `from_pretrained`)."""
-  def __init__(self, cfg: LlamaConfig, weights: dict):
+  def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None
+    self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise": quantize the ANE weights (halves/quarters
+    #                                weight bytes -> less memory and, on weight-bound large models, faster decode)
 
   def compile(self, seq: int):
     cfg = self.cfg
@@ -119,7 +121,8 @@ class LlamaPrefill:
     x = _input((seq, cfg.dim))
     for lw in self.w["layers"]:
       x = prefill_block(x, lw, cfg, cos, sin)
-    self._net = _compile.compile(x.rms_norm(self.w["final_norm"], cfg.norm_eps))   # ANE -> all positions' hidden [seq, dim]
+    self._net = _compile.compile(x.rms_norm(self.w["final_norm"], cfg.norm_eps),   # ANE -> all positions' hidden [seq, dim]
+                                 compress=self.compress)
     self._seq = seq
     return self
 
@@ -153,7 +156,7 @@ class LlamaPrefill:
       h, ko, vo = _decode_block(h, lw, cfg, ki, vi, oh, inv, mask, cosp, sinp)
       Kout.append(ko); Vout.append(vo)
     h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)
-    net = compile_multi([h] + Kout + Vout)
+    net = compile_multi([h] + Kout + Vout, compress=self.compress)
     inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
     for ki, vi, ko, vo in zip(Kin, Vin, Kout, Vout):           # alias each layer's cache output -> its input (resident)
       net.prog.share_buffer(0, om[ko], 0, inm[id(ki)]); net.prog.share_buffer(0, om[vo], 0, inm[id(vi)])
@@ -224,10 +227,11 @@ def _cfg_from_hf(c) -> LlamaConfig:
                      head_dim=int(getattr(c, "head_dim", 0) or 0))
 
 
-def from_pretrained(name: str) -> LlamaPrefill:
-  """Load a Llama/Qwen-class model from Hugging Face and prepare it for ANE prefill."""
+def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
+  """Load a Llama/Qwen-class model from Hugging Face and prepare it for ANE prefill. `compress` ("int8"/"int4"/
+  "blockwise") quantizes the ANE weights to cut their memory and, on weight-bound large models, speed decode."""
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
   cfg = _cfg_from_hf(hf.config)
   sd = {k: v.detach().float().numpy() for k, v in hf.state_dict().items()}
-  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg))
+  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), compress=compress)

@@ -33,7 +33,7 @@ def test_rope_matches_numpy():
   cos_sim = float(got.ravel() @ ref.ravel() / (np.linalg.norm(got) * np.linalg.norm(ref) + 1e-9))
   assert cos_sim > 0.999, f"RoPE vs reference cosine={cos_sim}"
 
-def _random_model(cfg):
+def _random_model(cfg, compress=None):
   rng = np.random.default_rng(0); dh = cfg.dh
   R = lambda *s: (rng.standard_normal(s) / np.sqrt(s[-1])).astype(np.float32)
   sd = {"model.embed_tokens.weight": R(cfg.vocab, cfg.dim), "model.norm.weight": np.ones(cfg.dim, np.float32),
@@ -45,12 +45,24 @@ def _random_model(cfg):
                    ("mlp.gate_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.up_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.down_proj", (cfg.dim, cfg.ffn_dim))]:
       sd[p + nm + ".weight"] = R(*sh)
     sd[p + "input_layernorm.weight"] = np.ones(cfg.dim, np.float32); sd[p + "post_attention_layernorm.weight"] = np.ones(cfg.dim, np.float32)
-  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg))
+  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), compress=compress)
 
 @requires_ane
 def test_generate_runs():  # the decode loop produces the requested number of valid tokens
   cfg = LlamaConfig(dim=64, n_layers=2, n_heads=4, n_kv_heads=2, ffn_dim=128, vocab=48)
   out = _random_model(cfg).generate([1, 2, 3], max_new_tokens=5)
+  assert len(out) == 5 and all(0 <= t < cfg.vocab for t in out)
+
+@requires_ane
+def test_int8_decode_matches_fp16():  # int8-quantized ANE weights stay faithful to fp16 (prefill + decode both run)
+  cfg = LlamaConfig(dim=128, n_layers=2, n_heads=4, n_kv_heads=2, ffn_dim=256, vocab=64)
+  prompt = [1, 2, 3, 4]
+  ref = _random_model(cfg).prefill(prompt)[0]
+  q8 = _random_model(cfg, compress="int8")                   # same weights, ANE matmuls quantized per-channel int8
+  lo = q8.prefill(prompt)[0]
+  cos = float(ref @ lo / (np.linalg.norm(ref) * np.linalg.norm(lo)))
+  assert cos > 0.99, f"int8 prefill logits diverged from fp16 (cos {cos:.4f})"
+  out = q8.generate(prompt, max_new_tokens=5)                # the int8 decode program (compile_multi compress=) runs
   assert len(out) == 5 and all(0 <= t < cfg.vocab for t in out)
 
 @requires_ane

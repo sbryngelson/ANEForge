@@ -18,7 +18,8 @@ text_ids = model.generate(prompt_ids, max_new_tokens=24)   # generate text on th
 logits = model.prefill(prompt_ids)                 # or just prefill -> next-token logits [1, vocab]
 ```
 
-- `af.load_llm(name)` — load a Hugging Face Llama/Qwen model and prepare it for ANE inference.
+- `af.load_llm(name, compress=None)` — load a Hugging Face Llama/Qwen model and prepare it for ANE inference.
+  `compress="int8"` (or `"int4"`) quantizes the ANE weights — see **Quantized weights** below.
 - `model.generate(ids, max_new_tokens, eos_id)` — greedy autoregressive generation, on the ANE.
 - `model.prefill(ids)` — prefill only; returns next-token logits.
 - `af.LlamaPrefill(cfg, weights)` / `af.LlamaConfig` — build one directly from numpy weights.
@@ -42,6 +43,22 @@ Madrid. The capital of Portugal is Lisbon. ..."*
 is an interactive chat that streams a reply token-by-token on the ANE; a runnable benchmark
 (prompt-tokens/sec, plus `--energy` for ANE joules/token via `powermetrics`) is
 [`examples/llm_prefill.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/llm_prefill.py).
+
+## Quantized weights
+
+`af.load_llm(name, compress="int8")` quantizes the on-ANE matmul weights to **per-channel int8**
+(or `"int4"` for 4-bit LUT palettization), dequantized on the ANE. This halves (int8) or quarters
+(int4) the weight bytes, which does two things:
+
+- **Memory** — the dominant, certain win. fp16 weights are 2 bytes/param; a model that does not
+  fit in fp16 can fit in int8. This is what makes larger models runnable.
+- **Decode speed** — *scales with model size*. Decode reads every weight per token; on a small
+  model (e.g. Qwen3-0.6B) decode is latency/under-utilization-bound, so int8 is roughly neutral
+  (~1.1×) and text is byte-identical. As weights grow, decode becomes weight-bandwidth-bound and
+  int8 approaches ~2× — that is where it pays off.
+
+int8 is faithful: on Qwen3-0.6B, greedy `generate` produces text **identical** to fp16. Try it
+with `examples/llm_chat.py <model> --int8`.
 
 ## What's inside
 

@@ -893,8 +893,11 @@ class MultiModel:
     self.prog.release()
 
 
-def compile_multi(outs, build_dir=None) -> MultiModel:
-  """Lower a multi-output graph into one fused program with N named output ports (fp16 only)."""
+def compile_multi(outs, build_dir=None, int8: bool = False, compress: str | None = None,
+          compress_atol: float = 0.05, block_size: int = 32) -> MultiModel:
+  """Lower a multi-output graph into one fused program with N named output ports (fp16 I/O). Weights may be
+  compressed (`int8=True` or `compress=`) exactly as in `compile`: the I/O ports stay fp16, only the constant
+  weights are quantized (per-channel int8 / int4-LUT / blockwise) and dequantized on the ANE."""
   order = _topo_multi(*outs)
   if any(t.op in NETPLIST_OPS for t in order):
     raise NotImplementedError("compile_multi: native-SDPA/netplist ops not supported")
@@ -904,7 +907,7 @@ def compile_multi(outs, build_dir=None) -> MultiModel:
   if not inputs: raise ValueError("aneforge.compile_multi: graph has no inputs")
   for i, t in enumerate(order): t._name = f"t{i}"
 
-  em = _Emitter(False)
+  em = _Emitter(int8, compress=compress, compress_atol=compress_atol, block_size=block_size)
   for t in order:
     if t.op != "input": _EMIT[t.op](em, t, t._name, [src._name for src in t.srcs])
 

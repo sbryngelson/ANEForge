@@ -44,9 +44,10 @@ def _ane_energy_mj(fn, repeats):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     want_energy = "--energy" in sys.argv
+    compress = "int8" if "--int8" in sys.argv else ("int4" if "--int4" in sys.argv else None)
     if args:
-        print(f"loading {args[0]} from Hugging Face ...")
-        model = af.load_llm(args[0]); from transformers import AutoTokenizer
+        print(f"loading {args[0]} from Hugging Face{' ('+compress+' weights)' if compress else ''} ...")
+        model = af.load_llm(args[0], compress=compress); from transformers import AutoTokenizer
         tok = AutoTokenizer.from_pretrained(args[0])
     else:
         print("no model name given -> small random demo model (pass a HF Llama/Qwen name for a real one)")
