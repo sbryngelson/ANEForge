@@ -16,9 +16,12 @@ net = af.load_onnx("resnet18.onnx")          # import + compile -> runnable Mode
 y = net(np.zeros((1, 3, 224, 224), np.float16))
 ```
 
-- `af.load_onnx(path, **compile_kwargs)` - import the model and compile it to a runnable
-  `Model`. Extra keyword arguments pass straight to `af.compile` (`target=`, `opt=`,
-  `compress=`, ...). `path` is a filename or an in-memory `onnx.ModelProto`.
+- `af.load_onnx(path, fuse_attention=False, **compile_kwargs)` - import the model and
+  compile it to a runnable `Model`. `fuse_attention=True` rewrites the
+  `softmax(Q@Kᵀ·scale [+ causal mask])@V` pattern onto `af.sdpa`; a **causal** mask routes
+  to the native fused-attention layer (a graph cut), so GPT-style decoder attention runs
+  on the dedicated SDPA hardware. Extra keyword arguments pass straight to `af.compile`
+  (`target=`, `opt=`, `compress=`, ...). `path` is a filename or an in-memory `onnx.ModelProto`.
 - `af.onnx_to_tensor(path)` - import only, returning `(graph_inputs, output)` ANEForge
   tensors so you can inspect or splice the graph before compiling it yourself.
 

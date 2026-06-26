@@ -66,10 +66,66 @@ def onnx_to_tensor(path):
   if not isinstance(out, Tensor): raise TypeError("onnx: graph output is not a Tensor")
   return graph_inputs, out
 
-def load_onnx(path, **compile_kwargs):
-  """Import an ONNX model and compile it to a runnable ANE Model."""
+def load_onnx(path, fuse_attention=False, **compile_kwargs):
+  """Import an ONNX model and compile it to a runnable ANE Model. `fuse_attention` rewrites
+  the `softmax(Q@K^T*scale)@V` pattern onto the native fused-attention layer (a graph cut)."""
   _, out = onnx_to_tensor(path)
+  if fuse_attention:
+    from ._rewrite import graph_rewrite, Rule
+    out = graph_rewrite(out, [Rule("fuse_sdpa", "numeric", _is_attention, _build_sdpa)])
   return _compile.compile(out, **compile_kwargs)
+
+def _attn_scores(scaled):
+  """The `scores * scale` step of attention: `muls(scores, k)` or `mul(scores, scalar const_array)`; return scores or None."""
+  if scaled.op == "muls": return scaled.srcs[0]
+  if scaled.op == "mul" and len(scaled.srcs) == 2:
+    a, b = scaled.srcs
+    if b.op == "const_array" and b.shape == (): return a
+    if a.op == "const_array" and a.shape == (): return b
+  return None
+
+def _split_mask(pre):
+  """softmax input is the scaled scores, or `add(scaled, mask_const)` (causal/additive mask). Returns (scaled, mask_const|None)."""
+  if pre.op == "add" and len(pre.srcs) == 2:
+    a, b = pre.srcs
+    if b.op == "const_array": return a, b
+    if a.op == "const_array": return b, a
+  return pre, None
+
+def _is_causal_mask(mc):
+  """True if a const additive mask is the causal upper-triangular -inf (strict upper << 0, diagonal+lower ~ 0)."""
+  m = np.asarray(mc.attrs["value"]).astype(np.float32)
+  while m.ndim > 2 and m.shape[0] == 1: m = m[0]
+  if m.ndim != 2 or m.shape[0] != m.shape[1]: return False
+  return bool((m[np.triu_indices(m.shape[0], 1)] < -1e3).all() and (m[np.tril_indices(m.shape[0], 0)] > -1e3).all())
+
+def _attn_parts(t):
+  """Decompose a candidate attention `bmm` into (q, k, v, scaled, mask) or None if it is not the pattern."""
+  if t.op != "bmm" or len(t.srcs) != 2: return None
+  attn, v = t.srcs
+  if attn.op != "softmax" or attn.attrs.get("axis") != len(attn.shape) - 1: return None
+  scaled, mask = _split_mask(attn.srcs[0])
+  scores = _attn_scores(scaled)
+  if scores is None or scores.op != "bmm" or len(scores.srcs) != 2: return None
+  q, kt = scores.srcs
+  if kt.op != "transpose" or tuple(kt.attrs.get("perm", ())) != (0, 1, 3, 2): return None
+  k = kt.srcs[0]
+  if not (len(q.shape) == 4 and q.shape[0] == 1 and k.shape == v.shape
+          and q.shape[1] == k.shape[1] and q.shape[3] == k.shape[3]): return None
+  return q, k, v, scaled, mask
+
+def _is_attention(t):
+  """Match `softmax(q@kᵀ*scale [+ causal_mask]) @ v`; a non-causal additive mask is left to the generic path."""
+  p = _attn_parts(t)
+  return p is not None and (p[4] is None or _is_causal_mask(p[4]))
+
+def _build_sdpa(t):
+  from .graph import sdpa as _sdpa
+  parts = _attn_parts(t); assert parts is not None    # guaranteed by _is_attention
+  q, k, v, scaled, mask = parts
+  scale = float(scaled.attrs["k"]) if scaled.op == "muls" else float(np.asarray(
+    (scaled.srcs[1] if scaled.srcs[1].op == "const_array" else scaled.srcs[0]).attrs["value"]))
+  return _sdpa(q, k, v, scale=scale, is_causal=mask is not None)   # causal mask -> native fused-attention layer
 
 @onnx_op("Relu")
 def _relu(node, ins, attrs, inits): return ins[0].relu()

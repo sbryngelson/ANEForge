@@ -707,3 +707,36 @@ def test_attention_block_matches_onnxruntime():  # full transformer attention: L
 def onnxruntime_run(path, x):
   import onnxruntime
   return onnxruntime.InferenceSession(path).run(None, {"x": x})[0]
+
+# -- fuse_attention: route softmax(QKᵀ·s[+causal])@V onto the native SDPA layer ----- #
+def _export_attn(causal, T=16, d=64, h=4):
+  import torch, torch.nn as nn
+  class A(nn.Module):
+    def __init__(self):
+      super().__init__(); self.h = h; self.d = d; self.causal = causal
+      self.qkv = nn.Linear(d, 3 * d); self.proj = nn.Linear(d, d); self.ln = nn.LayerNorm(d)
+      if causal: self.register_buffer("mask", torch.triu(torch.full((T, T), float("-inf")), 1))
+    def forward(self, x):
+      b, t, _ = x.shape; x = self.ln(x); qkv = self.qkv(x).reshape(b, t, 3, self.h, self.d // self.h).permute(2, 0, 3, 1, 4)
+      q, k, v = qkv[0], qkv[1], qkv[2]; sc = (q @ k.transpose(-2, -1)) * (1.0 / (self.d // self.h) ** 0.5)
+      if causal: sc = sc + self.mask
+      return self.proj((sc.softmax(-1) @ v).transpose(1, 2).reshape(b, t, self.d))
+  import torch as _t; x = _t.randn(1, T, d); p = f"/tmp/_aneforge_attn_{causal}.onnx"
+  _t.onnx.export(A().eval(), (x,), p, opset_version=17, do_constant_folding=True, input_names=["x"], dynamo=False)
+  return p, x.numpy()
+
+@requires_ane
+def test_fuse_attention_causal_uses_native_sdpa():  # causal mask -> native fused-attention layer (a graph cut)
+  p, x = _export_attn(causal=True)
+  net = af.load_onnx(p, fuse_attention=True)
+  assert getattr(net, "n_netplist", 0) >= 1, "causal attention should route to the native SDPA bridge"
+  got = np.asarray(net(x.astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnxruntime_run(p, x)).astype(np.float32).ravel()
+  cos = _cos(got, ref); assert cos > 0.99, f"causal fused-attention ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_fuse_attention_noncausal_matches():  # non-causal fuses to the decomposed path, still exact
+  p, x = _export_attn(causal=False)
+  got = np.asarray(af.load_onnx(p, fuse_attention=True)(x.astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnxruntime_run(p, x)).astype(np.float32).ravel()
+  cos = _cos(got, ref); assert cos > 0.99, f"non-causal fused-attention ANE vs onnxruntime cosine={cos}"
