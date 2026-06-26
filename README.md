@@ -75,7 +75,10 @@ PYTHONPATH=. python3 tests/op_smoketest.py    # compile + run each op on the ANE
 ```
 
 Then browse [`examples/`](examples/), starting with
-[`examples/quickstart.py`](examples/quickstart.py). For retrieval,
+[`examples/quickstart.py`](examples/quickstart.py). To run an existing ONNX
+model on the ANE, [`examples/onnx_import.py`](examples/onnx_import.py) imports
+a `.onnx` classifier via `af.load_onnx` and validates it against onnxruntime
+(cosine 1.0000). For retrieval,
 [`examples/rag_embeddings.py`](examples/rag_embeddings.py) is a LangChain
 `Embeddings` drop-in backed by the on-ANE encoder (4-5x faster than the GPU,
 cosine 1.0000).

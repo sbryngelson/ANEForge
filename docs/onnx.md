@@ -22,6 +22,10 @@ y = net(np.zeros((1, 3, 224, 224), np.float16))
 - `af.onnx_to_tensor(path)` - import only, returning `(graph_inputs, output)` ANEForge
   tensors so you can inspect or splice the graph before compiling it yourself.
 
+A runnable end-to-end example (export a torchvision model, import it, validate against
+onnxruntime) is in [`examples/onnx_import.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/onnx_import.py):
+`python3 examples/onnx_import.py [model.onnx]`.
+
 ## Supported operators
 
 The importer raises `NotImplementedError("ONNX op 'X' not supported")` for anything
