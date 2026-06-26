@@ -38,7 +38,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool` |
 | Linear | `Gemm`, `MatMul` |
 | Normalization | `BatchNormalization`, `InstanceNormalization` |
-| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat`, `SpaceToDepth`, `DepthToSpace` |
+| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat`, `SpaceToDepth`, `DepthToSpace`, `Slice`, `Shape` |
 | Normalization (cross-channel) | `LRN` |
 | Resampling | `Resize` (nearest / linear) |
 | Reduction | `ReduceMax`, `ReduceMin`, `ReduceSum`, `ReduceMean` |
@@ -72,9 +72,15 @@ mis-lower:
   Gather indices) must be constant initializers; a data-dependent (computed) weight or
   param has no ANE path and raises `NotImplementedError`.
 - **Gemm:** only `alpha=1`, `beta=1`, `transA=0` (`transB` is honored).
-- **Conv:** explicit `pads` only - `auto_pad` (`SAME_UPPER`/`SAME_LOWER`/`VALID`) raises.
-- **Pooling:** `ceil_mode=0` (floor) only; `AveragePool` rejects `count_include_pad=1`
-  and `MaxPool` rejects `dilations != 1`.
+- **Conv:** explicit `pads` only (`auto_pad` raises); asymmetric per-side pads are
+  supported (mapped to the native per-side MIL conv `pad`).
+- **Shape subgraph.** `Shape` and the dynamic-reshape plumbing (`Slice`/`Gather`/`Concat`/
+  arithmetic over shape vectors) constant-fold at import on the static input shape, so
+  patterns like ShuffleNet's channel shuffle (`Reshape`->`Transpose`->`Reshape`) import as
+  static ops. `Slice` on an activation lowers to a static `slice_by_size` (step 1 only).
+- **Pooling:** `ceil_mode` (both modes) and `AveragePool` `count_include_pad` (0/1) map
+  to the native MIL `ceil_mode` / `exclude_padding_from_average` params; `MaxPool` rejects
+  `dilations != 1`.
 - **Elementwise.** `Add`/`Sub`/`Mul`/`Div`/`Pow` accept either two tensors or a tensor
   and a constant: a constant operand (scalar, per-channel, or broadcastable) bakes in as
   a fused `const_array` (a MIL `const`, folded to the ANE's gain-offset epilogue for

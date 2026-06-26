@@ -37,6 +37,32 @@ def test_conv_builds():
   m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 32, 32])], inits=[w, b])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 32, 32) and out.op == "conv"
 
+def test_conv_asymmetric_pad_builds():  # ONNX pads [top,left,bottom,right] -> per-side MIL conv pad
+  w = _init(np.zeros((4, 3, 3, 3)), "W")
+  n = helper.make_node("Conv", ["x", "W"], ["y"], pads=[2, 1, 0, 0], strides=[1, 1])  # top=2,left=1
+  m = _model([n], [_vi("x", [1, 3, 10, 10])], [_vi("y", [1, 4, 10, 9])], inits=[w])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 10, 9) and out.op == "conv"
+
+def test_shape_subgraph_folds_to_reshape():  # Shape->Gather->Unsqueeze->Concat folds to a static Reshape target
+  nodes = [helper.make_node("Shape", ["x"], ["s"]),
+           helper.make_node("Gather", ["s", "i0"], ["d0"], axis=0),
+           helper.make_node("Unsqueeze", ["d0", "ax0"], ["d0u"]),     # opset>=13: axes is an input
+           helper.make_node("Concat", ["d0u", "neg1"], ["tgt"], axis=0),
+           helper.make_node("Reshape", ["x", "tgt"], ["y"])]
+  inits = [onnx.numpy_helper.from_array(np.array(0, np.int64), "i0"),
+           onnx.numpy_helper.from_array(np.array([0], np.int64), "ax0"),
+           onnx.numpy_helper.from_array(np.array([-1], np.int64), "neg1")]
+  m = _model(nodes, [_vi("x", [2, 3, 4])], [_vi("y", [2, 12])], inits=inits)
+  _, out = af.onnx_to_tensor(m); assert out.shape == (2, 12) and out.op == "reshape"
+
+def test_slice_channel_split_builds():  # ONNX Slice on an activation -> static slice_by_size
+  starts = onnx.numpy_helper.from_array(np.array([0], np.int64), "st")
+  ends = onnx.numpy_helper.from_array(np.array([4], np.int64), "en")
+  axes = onnx.numpy_helper.from_array(np.array([1], np.int64), "ax")
+  n = helper.make_node("Slice", ["x", "st", "en", "ax"], ["y"])
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 4, 4, 4])], inits=[starts, ends, axes])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 4, 4) and out.op == "slice_by_size"
+
 def test_maxpool_builds():
   n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2], strides=[2, 2])
   m = _model([n], [_vi("x", [1, 8, 32, 32])], [_vi("y", [1, 8, 16, 16])])
@@ -158,11 +184,11 @@ def test_conv_non_uniform_strides_raises():
   m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 16, 32])], inits=[w])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
-def test_conv_asymmetric_pads_raises():
+def test_conv_asymmetric_pads_builds():  # asymmetric pads map to the per-side MIL conv pad
   w = _init(np.zeros((8, 3, 3, 3)), "W")
-  n = helper.make_node("Conv", ["x", "W"], ["y"], pads=[1, 0, 1, 0])
-  m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 32, 31])], inits=[w])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  n = helper.make_node("Conv", ["x", "W"], ["y"], pads=[1, 0, 1, 0])  # H pad 1+1 -> 32; W pad 0+0 -> 30
+  m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 32, 30])], inits=[w])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 32, 30) and out.op == "conv"
 
 def test_conv_auto_pad_raises():
   w = _init(np.zeros((8, 3, 3, 3)), "W")
@@ -191,10 +217,15 @@ def test_squeeze_no_axes_raises():  # squeeze-all has no static lowering
   m = _model([n], [_vi("x", [1, 1, 4])], [_vi("y", [4])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
-def test_maxpool_ceil_mode_raises():
+def test_maxpool_ceil_mode_builds():  # ceil_mode rounds the output size up (native MIL ceil_mode)
   n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2], strides=[2, 2], ceil_mode=1)
   m = _model([n], [_vi("x", [1, 8, 31, 31])], [_vi("y", [1, 8, 16, 16])])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 16, 16) and out.op == "max_pool"
+
+def test_avgpool_count_include_pad_builds():  # count_include_pad maps to MIL exclude_padding_from_average
+  n = helper.make_node("AveragePool", ["x"], ["y"], kernel_shape=[3, 3], strides=[1, 1], pads=[1, 1, 1, 1], count_include_pad=1)
+  m = _model([n], [_vi("x", [1, 8, 8, 8])], [_vi("y", [1, 8, 8, 8])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8, 8, 8) and out.op == "avg_pool"
 
 def test_erf_builds():
   m = _model([helper.make_node("Erf", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
@@ -591,3 +622,51 @@ def test_hardswish_onnx_matches_onnxruntime():  # x * relu6(x+3)/6; HardSwish is
   m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 14)]); m.ir_version = 9
   got, ref = _run_vs_ort(m, x)
   cos = _cos(got, ref); assert cos > 0.99, f"HardSwish ANE vs onnxruntime cosine={cos}"
+
+# -- pooling attrs via native MIL params (ceil_mode, exclude_padding_from_average) -- #
+@requires_ane
+def test_maxpool_ceil_mode_onnx_matches_onnxruntime():  # ceil sizing must match onnxruntime's extra edge window
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[3, 3], strides=[2, 2], ceil_mode=1)
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 4, 4])])
+  got, ref = _run_vs_ort(m, x)
+  assert af.load_onnx(m)(x.astype(np.float16)).shape == (1, 4, 4, 4)  # ceil(8-3 /2)+1 = 4, not floor 3
+  cos = _cos(got, ref); assert cos > 0.99, f"MaxPool ceil_mode ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_avgpool_exclude_pad_onnx_matches_onnxruntime():  # count_include_pad=0 -> exclude_padding_from_average
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  n = helper.make_node("AveragePool", ["x"], ["y"], kernel_shape=[3, 3], strides=[1, 1], pads=[1, 1, 1, 1], count_include_pad=0)
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 8, 8])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"AveragePool count_include_pad=0 ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_avgpool_include_pad_onnx_matches_onnxruntime():  # count_include_pad=1 -> ANE-native (divide by full kernel area)
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  n = helper.make_node("AveragePool", ["x"], ["y"], kernel_shape=[3, 3], strides=[1, 1], pads=[1, 1, 1, 1], count_include_pad=1)
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 8, 8])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"AveragePool count_include_pad=1 ANE vs onnxruntime cosine={cos}"
+
+# -- asymmetric conv pad + shape-subgraph folding (Inception, ShuffleNet) ---------- #
+@requires_ane
+def test_conv_asymmetric_pad_onnx_matches_onnxruntime():  # per-side MIL conv pad order [top,bottom,left,right]
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 3, 10, 10)).astype(np.float32)
+  w = _init((rng.standard_normal((4, 3, 3, 3)) * 0.3).astype(np.float32), "W")
+  n = helper.make_node("Conv", ["x", "W"], ["y"], pads=[1, 0, 3, 0], strides=[1, 1])  # asymmetric: top=1,bottom=3
+  m = _model([n], [_vi("x", [1, 3, 10, 10])], [_vi("y", [1, 4, 12, 8])], inits=[w])
+  got, ref = _run_vs_ort(m, x)
+  assert af.load_onnx(m)(x.astype(np.float16)).shape == (1, 4, 12, 8)
+  cos = _cos(got, ref); assert cos > 0.99, f"Conv asymmetric pad ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_slice_channel_split_onnx_matches_onnxruntime():  # activation Slice -> static slice_by_size
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 8, 4, 4)).astype(np.float32)
+  st = onnx.numpy_helper.from_array(np.array([4], np.int64), "st")
+  en = onnx.numpy_helper.from_array(np.array([8], np.int64), "en")
+  ax = onnx.numpy_helper.from_array(np.array([1], np.int64), "ax")
+  n = helper.make_node("Slice", ["x", "st", "en", "ax"], ["y"])
+  m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 4, 4, 4])], inits=[st, en, ax])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.999, f"Slice channel-split ANE vs onnxruntime cosine={cos}"

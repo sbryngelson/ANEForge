@@ -105,17 +105,28 @@ def _instance_norm(node, ins, a, i):
   return _instnorm(ins[0], np.asarray(ins[1]), np.asarray(ins[2]), eps=float(a.get("epsilon", 1e-5)))
 @onnx_op("SpaceToDepth")
 def _space_to_depth(node, ins, a, i): return _s2d(ins[0], int(a["blocksize"]))
+def _isc(v): return not isinstance(v, Tensor)      # a constant (numpy/scalar from a folded shape subgraph) vs a graph tensor
 def _binops(ins):                                  # a constant operand bakes into the fused program (const_array -> GOC fold)
   return (ins[0] if isinstance(ins[0], Tensor) else _baked(ins[0]),
           ins[1] if isinstance(ins[1], Tensor) else _baked(ins[1]))
 @onnx_op("Add")
-def _add(node, ins, a, i): x, y = _binops(ins); return x + y
+def _add(node, ins, a, i):
+  if _isc(ins[0]) and _isc(ins[1]): return np.asarray(ins[0]) + np.asarray(ins[1])   # shape arithmetic folds to a constant
+  x, y = _binops(ins); return x + y
 @onnx_op("Sub")
-def _sub(node, ins, a, i): x, y = _binops(ins); return x - y
+def _sub(node, ins, a, i):
+  if _isc(ins[0]) and _isc(ins[1]): return np.asarray(ins[0]) - np.asarray(ins[1])
+  x, y = _binops(ins); return x - y
 @onnx_op("Mul")
-def _mul(node, ins, a, i): x, y = _binops(ins); return x * y
+def _mul(node, ins, a, i):
+  if _isc(ins[0]) and _isc(ins[1]): return np.asarray(ins[0]) * np.asarray(ins[1])
+  x, y = _binops(ins); return x * y
 @onnx_op("Div")
-def _div(node, ins, a, i): x, y = _binops(ins); return x / y
+def _div(node, ins, a, i):
+  if _isc(ins[0]) and _isc(ins[1]):
+    x0, x1 = np.asarray(ins[0]), np.asarray(ins[1])
+    return x0 // x1 if np.issubdtype(x0.dtype, np.integer) else x0 / x1     # ONNX integer Div truncates
+  x, y = _binops(ins); return x / y
 @onnx_op("HardSigmoid")
 def _hardsigmoid(node, ins, a, i):
   """ONNX HardSigmoid = clip(alpha*x + beta, 0, 1); defaults alpha=0.2, beta=0.5."""
@@ -151,27 +162,30 @@ def _sympad(pads, op):                         # pads = [top,left,bottom,right];
   if len(set(p)) != 1: raise NotImplementedError(f"onnx {op}: asymmetric pads {p} not supported")
   return int(p[0])
 
+def _pad4(pads):                               # ONNX conv pads=[top,left,bottom,right] -> scalar, or (top,bottom,left,right)
+  if pads is None: return 0
+  p = [int(v) for v in pads]
+  return p[0] if len(set(p)) == 1 else (p[0], p[2], p[1], p[3])
+
 @onnx_op("Conv")
 def _conv_h(node, ins, a, i):
   ap = a.get("auto_pad")
   if ap is not None and (ap.decode() if isinstance(ap, bytes) else ap) != "NOTSET":
     raise NotImplementedError(f"ONNX Conv: auto_pad={ap!r} not supported (use explicit pads)")
   x = ins[0]; w = np.asarray(ins[1]); b = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else None
-  return _conv(x, w, stride=_uniform(a.get("strides"), "Conv"), pad=_sympad(a.get("pads"), "Conv"),
+  return _conv(x, w, stride=_uniform(a.get("strides"), "Conv"), pad=_pad4(a.get("pads")),
                dilation=_uniform(a.get("dilations"), "Conv"), groups=int(a.get("group", 1)), bias=b)
 
 @onnx_op("MaxPool")
 def _maxpool(node, ins, a, i):
-  if int(a.get("ceil_mode", 0)): raise NotImplementedError("ONNX MaxPool: ceil_mode=1 not supported")
   if _uniform(a.get("dilations"), "MaxPool") != 1: raise NotImplementedError("ONNX MaxPool: dilations != 1 not supported")
-  return ins[0].max_pool(_uniform(a.get("kernel_shape"), "MaxPool"),
-                         _uniform(a.get("strides"), "MaxPool"), _sympad(a.get("pads"), "MaxPool"))
+  return ins[0].max_pool(_uniform(a.get("kernel_shape"), "MaxPool"), _uniform(a.get("strides"), "MaxPool"),
+                         _sympad(a.get("pads"), "MaxPool"), ceil_mode=bool(int(a.get("ceil_mode", 0))))
 @onnx_op("AveragePool")
 def _avgpool(node, ins, a, i):
-  if int(a.get("ceil_mode", 0)): raise NotImplementedError("ONNX AveragePool: ceil_mode=1 not supported")
-  if int(a.get("count_include_pad", 0)): raise NotImplementedError("ONNX AveragePool: count_include_pad=1 not supported")
-  return ins[0].avg_pool(_uniform(a.get("kernel_shape"), "AveragePool"),
-                         _uniform(a.get("strides"), "AveragePool"), _sympad(a.get("pads"), "AveragePool"))
+  return ins[0].avg_pool(_uniform(a.get("kernel_shape"), "AveragePool"), _uniform(a.get("strides"), "AveragePool"),
+                         _sympad(a.get("pads"), "AveragePool"), ceil_mode=bool(int(a.get("ceil_mode", 0))),
+                         exclude_pad=not int(a.get("count_include_pad", 0)))   # ONNX default count_include_pad=0 -> exclude pad cells
 @onnx_op("GlobalAveragePool")
 def _gap(node, ins, a, i): return ins[0].mean((2, 3))     # keepdims -> [N,C,1,1]
 
@@ -213,9 +227,35 @@ def _squeeze(node, ins, a, i):
 @onnx_op("Unsqueeze")
 def _unsqueeze(node, ins, a, i):
   axes = a.get("axes") or [int(v) for v in np.asarray(ins[1])]
+  if _isc(ins[0]): return np.expand_dims(np.asarray(ins[0]), tuple(axes))   # shape-vector unsqueeze folds
   return ins[0].expand_dims(tuple(axes))
 @onnx_op("Concat")
-def _concat_h(node, ins, a, i): return _concat(list(ins), axis=int(a["axis"]))
+def _concat_h(node, ins, a, i):
+  if all(_isc(v) for v in ins):                                             # concat of constant shape pieces folds
+    return np.concatenate([np.atleast_1d(np.asarray(v)) for v in ins], axis=int(a["axis"]))
+  return _concat(list(ins), axis=int(a["axis"]))
+@onnx_op("Shape")
+def _shape_op(node, ins, a, i):
+  """Static shape as an int64 constant (the channel-shuffle shape subgraph folds at import)."""
+  s = np.array(ins[0].shape, dtype=np.int64); r = len(s)
+  st = int(a.get("start", 0)); en = int(a.get("end", r))
+  return s[(st + r if st < 0 else st):(en + r if en < 0 else en)]
+@onnx_op("Slice")
+def _slice(node, ins, a, i):
+  starts = [int(v) for v in np.asarray(ins[1])]; ends = [int(v) for v in np.asarray(ins[2])]
+  axes = [int(v) for v in np.asarray(ins[3])] if len(ins) > 3 and ins[3] is not None else list(range(len(starts)))
+  steps = [int(v) for v in np.asarray(ins[4])] if len(ins) > 4 and ins[4] is not None else [1] * len(starts)
+  if _isc(ins[0]):                                   # constant (shape-arithmetic) slice folds
+    d = np.asarray(ins[0]); sl = [slice(None)] * d.ndim
+    for ax, s0, e0, st0 in zip(axes, starts, ends, steps): sl[ax % d.ndim] = slice(s0, e0, st0)
+    return d[tuple(sl)]
+  if any(st != 1 for st in steps): raise NotImplementedError("ONNX Slice: step != 1 on a tensor not supported")
+  x = ins[0]; rank = len(x.shape); begin = [0] * rank; size = list(x.shape)   # activation slice -> static slice_by_size
+  for ax, s0, e0 in zip(axes, starts, ends):
+    ax %= rank; dim = x.shape[ax]
+    s0 = s0 + dim if s0 < 0 else min(s0, dim); e0 = e0 + dim if e0 < 0 else min(e0, dim)
+    begin[ax] = max(0, s0); size[ax] = max(0, e0 - begin[ax])
+  return x.slice_by_size(begin, size)
 @onnx_op("Softmax")
 def _softmax(node, ins, a, i): return ins[0].softmax(int(a.get("axis", -1)))
 @onnx_op("Constant")
@@ -287,6 +327,8 @@ def _rmean(node, ins, a, i): return _reduce_op(ins, a, Tensor.mean)
 @onnx_op("Gather")
 def _gather_h(node, ins, a, i):
   """Static-index gather along `axis`; constant scalar/1-D integer indices only (data-dependent indices have no ANE path)."""
+  if _isc(ins[0]):                                   # gather over a constant shape vector folds (np.take preserves scalar-index rank reduction)
+    return np.take(np.asarray(ins[0]), np.asarray(ins[1]).astype(int), axis=int(a.get("axis", 0)))
   if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Gather: only constant integer indices supported")
   idx = np.asarray(ins[1])
   if idx.ndim > 1: raise NotImplementedError("ONNX Gather: only scalar or 1-D indices supported")
