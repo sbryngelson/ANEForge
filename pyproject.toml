@@ -61,6 +61,9 @@ models = [
     "torchvision",
     "transformers",
 ]
+# ONNX model import (aneforge.onnx.load_onnx / onnx_to_tensor). Imported lazily; the
+# core package stays numpy-only. Only install if you import ONNX models.
+onnx = ["onnx>=1.16"]
 # Linting + test runner (CI and local dev). ruff is the linter; the corpus/pytest
 # suites need real ANE hardware to run.
 dev = [
@@ -70,6 +73,8 @@ dev = [
     "pre-commit",        # local hooks mirroring CI; see .pre-commit-config.yaml
     "pytest",
     "pytest-forked",   # per-test process isolation (--forked); see tests/conftest.py
+    "onnx>=1.16",        # ONNX importer tests (tests/test_onnx.py); lazy in aneforge.onnx
+    "onnxruntime>=1.18", # reference numerics for ONNX importer tests
 ]
 
 [project.urls]

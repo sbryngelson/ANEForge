@@ -330,7 +330,8 @@ def _const_i32_pair(em, n, suf, v):
 
 
 def _const_pad4(em, n, p):
-  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{p}, {p}, {p}, {p}])];')
+  v = [p, p, p, p] if isinstance(p, int) else list(p)    # scalar (symmetric) or (top, bottom, left, right)
+  em.line(f'tensor<int32, [4]> {n}_pd = const()[name = string("{n}_pd"), val = tensor<int32, [4]>([{v[0]}, {v[1]}, {v[2]}, {v[3]}])];')
 
 
 def _emit_conv_params(em, n, p, st, dl, g):   # pt, st, pd, dl, g (conv/dynamic_conv/conv_transpose)
@@ -370,8 +371,9 @@ def _e_dynamic_conv(em, t, n, s):
 @op("max_pool")
 def _e_max_pool(em, t, n, s):
   k, st, p = t.attrs["k"], t.attrs["stride"], t.attrs["pad"]
+  cm = "true" if t.attrs.get("ceil_mode") else "false"
   _emit_pool_params(em, n, k, st, p)
-  em.line(f'bool {n}_cm = const()[name = string("{n}_cm"), val = bool(false)];')
+  em.line(f'bool {n}_cm = const()[name = string("{n}_cm"), val = bool({cm})];')
   em.line(f'{em.ty(t.shape)} {n} = max_pool(ceil_mode = {n}_cm, kernel_sizes = {n}_ks, pad = {n}_pd, '
       f'pad_type = {n}_pt, strides = {n}_st, x = {s[0]})[name = string("{n}")];')
 
@@ -379,9 +381,11 @@ def _e_max_pool(em, t, n, s):
 @op("avg_pool")
 def _e_avg_pool(em, t, n, s):
   k, st, p = t.attrs["k"], t.attrs["stride"], t.attrs["pad"]
+  cm = "true" if t.attrs.get("ceil_mode") else "false"
+  ep = "true" if t.attrs.get("exclude_pad") else "false"
   _emit_pool_params(em, n, k, st, p)
-  em.line(f'bool {n}_ep = const()[name = string("{n}_ep"), val = bool(false)];')
-  em.line(f'bool {n}_cm = const()[name = string("{n}_cm"), val = bool(false)];')
+  em.line(f'bool {n}_ep = const()[name = string("{n}_ep"), val = bool({ep})];')
+  em.line(f'bool {n}_cm = const()[name = string("{n}_cm"), val = bool({cm})];')
   em.line(f'{em.ty(t.shape)} {n} = avg_pool(ceil_mode = {n}_cm, exclude_padding_from_average = {n}_ep, '
       f'kernel_sizes = {n}_ks, pad = {n}_pd, pad_type = {n}_pt, strides = {n}_st, x = {s[0]})[name = string("{n}")];')
 

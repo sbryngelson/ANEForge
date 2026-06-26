@@ -340,17 +340,22 @@ class Tensor:
            {"gamma": gamma, "beta": beta, "groups": num_groups, "eps": float(eps)})
 
   # -- spatial ----------------------------------------------------------- #
-  def _pool(self, op: str, k: int, stride: int | None, pad: int) -> "Tensor":
+  def _pool(self, op: str, k: int, stride: int | None, pad: int,
+            ceil_mode: bool = False, exclude_pad: bool = False) -> "Tensor":
     stride = stride or k
     N, C, H, W = self.shape
-    out = (N, C, (H + 2 * pad - k) // stride + 1, (W + 2 * pad - k) // stride + 1)
-    return Tensor(out, op, [self], {"k": k, "stride": stride, "pad": pad})
+    r = stride - 1 if ceil_mode else 0                       # ceil((s+2p-k)/stride) vs floor
+    out = (N, C, (H + 2 * pad - k + r) // stride + 1, (W + 2 * pad - k + r) // stride + 1)
+    return Tensor(out, op, [self], {"k": k, "stride": stride, "pad": pad,
+                                    "ceil_mode": ceil_mode, "exclude_pad": exclude_pad})
 
-  def max_pool(self, k: int, stride: int | None = None, pad: int = 0) -> "Tensor":
-    return self._pool("max_pool", k, stride, pad)
+  def max_pool(self, k: int, stride: int | None = None, pad: int = 0, ceil_mode: bool = False) -> "Tensor":
+    return self._pool("max_pool", k, stride, pad, ceil_mode)
 
-  def avg_pool(self, k: int, stride: int | None = None, pad: int = 0) -> "Tensor":
-    return self._pool("avg_pool", k, stride, pad)
+  def avg_pool(self, k: int, stride: int | None = None, pad: int = 0,
+               ceil_mode: bool = False, exclude_pad: bool = False) -> "Tensor":
+    """Average pool. `exclude_pad` divides by the valid (non-pad) cell count (ONNX `count_include_pad=0`); default includes pad cells (divide by full kernel area)."""
+    return self._pool("avg_pool", k, stride, pad, ceil_mode, exclude_pad)
 
   def upsample(self, scale: int = 2) -> "Tensor":
     """Nearest-neighbour upsample [N,C,H,W] -> [N,C,scale*H,scale*W]."""
@@ -407,9 +412,14 @@ def image_input(shape: Sequence[int], scale: float = 1.0 / 255.0, bias=0.0) -> T
   return y
 
 
+def _const(v) -> Tensor:
+  """Bake a numpy array / scalar as a fused `const_array` graph constant (a MIL `const`, folded to GOC for affine ops)."""
+  v = np.asarray(v, np.float16)
+  return Tensor(v.shape, "const_array", [], {"value": v})
+
+
 def _binary(a: Tensor, b, kind: str) -> Tensor:
-  if not isinstance(b, Tensor):
-    raise TypeError("aneforge add/sub/mul expect two graph Tensors (use weights via matmul/linear)")
+  if not isinstance(b, Tensor): b = _const(b)              # a numpy/scalar constant operand bakes into the fused program
   return Tensor(_broadcast(a.shape, b.shape), kind, [a, b])
 
 
@@ -425,7 +435,7 @@ def _check_kw(kW: int, op: str, weight_shape) -> None:
     f"got weight {weight_shape}. Kernel height kH is unconstrained.")
 
 
-def _conv_attrs(weight, stride: int, pad: int, dilation: int, groups: int,
+def _conv_attrs(weight, stride: int, pad, dilation: int, groups: int,
         bias) -> "dict[str, Any]":
   attrs: dict[str, Any] = {"weight": weight, "stride": stride, "pad": pad,
               "dilation": dilation, "groups": groups}
@@ -434,17 +444,18 @@ def _conv_attrs(weight, stride: int, pad: int, dilation: int, groups: int,
   return attrs
 
 
-def conv(x: Tensor, weight, stride: int = 1, pad: int = 0, dilation: int = 1,
+def conv(x: Tensor, weight, stride: int = 1, pad: "int | tuple[int, int, int, int]" = 0, dilation: int = 1,
     groups: int = 1, bias=None) -> Tensor:
-  """2D conv. `x`: [N,Cin,H,W]; `weight`: [Cout, Cin/groups, kH, kW]; `bias`: [Cout]."""
+  """2D conv. `x`: [N,Cin,H,W]; `weight`: [Cout, Cin/groups, kH, kW]; `bias`: [Cout]. `pad` is a scalar (symmetric) or a `(top, bottom, left, right)` tuple."""
   weight = np.asarray(weight); _check_dtype(weight, "conv weight")
   if len(x.shape) != 4:
     raise ValueError(f"conv expects 4D input [N,Cin,H,W], got {x.shape}")
   N, Cin, H, W = x.shape
   Cout, _, kH, kW = weight.shape
   _check_kw(kW, "conv", weight.shape)
-  Hout = (H + 2 * pad - dilation * (kH - 1) - 1) // stride + 1
-  Wout = (W + 2 * pad - dilation * (kW - 1) - 1) // stride + 1
+  pt, pb, pl, pr = (pad, pad, pad, pad) if isinstance(pad, int) else pad
+  Hout = (H + pt + pb - dilation * (kH - 1) - 1) // stride + 1
+  Wout = (W + pl + pr - dilation * (kW - 1) - 1) // stride + 1
   return Tensor((N, Cout, Hout, Wout), "conv", [x],
          _conv_attrs(weight, stride, pad, dilation, groups, bias))
 

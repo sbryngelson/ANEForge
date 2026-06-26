@@ -32,6 +32,7 @@ from .autograd import (Adam, adam_step, backward, backward_from, conv2d, conv_pa
                        mse, parameter, SGD, softmax_cross_entropy, Trainer, UnrolledTrainer)
 from .streaming import CheckpointedStack
 from .models import Encoder, Vision, load, load_resnet18, conv_block, cifar_cnn, group_norm_train
+from .onnx import load_onnx, onnx_to_tensor
 
 __all__ = [
     "Tensor", "Model", "SegmentedModel", "PrecisionWarning", "CrossChipFP16Warning",
@@ -55,6 +56,7 @@ __all__ = [
     "softmax_cross_entropy", "Trainer", "UnrolledTrainer", "adam_step",
     "conv_param", "conv2d", "CheckpointedStack",
     "fft", "linalg", "special", "einsum", "dsp",
+    "load_onnx", "onnx_to_tensor",
 ]
 
 # applied-math submodules (af.fft / af.linalg / af.special / af.dsp), self-contained over the public ops

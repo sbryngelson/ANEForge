@@ -81,6 +81,7 @@ nav:
   - Know what works:
       - Capabilities: capabilities.md
       - Op catalog: op-catalog.md
+      - ONNX import: onnx.md
   - API reference:
       - Overview: api/index.md
       - Graph & operators: api/graph.md
