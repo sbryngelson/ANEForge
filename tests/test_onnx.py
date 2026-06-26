@@ -43,6 +43,21 @@ def test_conv_asymmetric_pad_builds():  # ONNX pads [top,left,bottom,right] -> p
   m = _model([n], [_vi("x", [1, 3, 10, 10])], [_vi("y", [1, 4, 10, 9])], inits=[w])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 10, 9) and out.op == "conv"
 
+def test_dequantize_weight_conv_builds():  # int8 weight DequantizeLinear -> fp32 const fed to conv
+  w8 = onnx.numpy_helper.from_array(np.ones((4, 3, 3, 3), np.int8), "w8")
+  sc = onnx.numpy_helper.from_array(np.full(4, 0.1, np.float32), "sc")
+  zp = onnx.numpy_helper.from_array(np.zeros(4, np.int8), "zp")
+  nodes = [helper.make_node("DequantizeLinear", ["w8", "sc", "zp"], ["w"], axis=0),
+           helper.make_node("Conv", ["x", "w"], ["y"], pads=[1, 1, 1, 1])]
+  m = _model(nodes, [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 4, 8, 8])], inits=[w8, sc, zp])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 8, 8) and out.op == "conv"
+
+def test_quantize_activation_folds_relu():  # QuantizeLinear with zp pinning qmin to 0 -> a clip (the folded relu)
+  sc = onnx.numpy_helper.from_array(np.array(0.05, np.float32), "sc"); zp = onnx.numpy_helper.from_array(np.array(-128, np.int8), "zp")
+  n = helper.make_node("QuantizeLinear", ["x", "sc", "zp"], ["y"])
+  m = _model([n], [_vi("x", [1, 8])], [_vi("y", [1, 8])], inits=[sc, zp])
+  _, out = af.onnx_to_tensor(m); assert out.op == "clip" and out.attrs["lo"] == 0.0
+
 def test_shape_subgraph_folds_to_reshape():  # Shape->Gather->Unsqueeze->Concat folds to a static Reshape target
   nodes = [helper.make_node("Shape", ["x"], ["s"]),
            helper.make_node("Gather", ["s", "i0"], ["d0"], axis=0),
@@ -740,3 +755,20 @@ def test_fuse_attention_noncausal_matches():  # non-causal fuses to the decompos
   got = np.asarray(af.load_onnx(p, fuse_attention=True)(x.astype(np.float16))).astype(np.float32).ravel()
   ref = np.asarray(onnxruntime_run(p, x)).astype(np.float32).ravel()
   cos = _cos(got, ref); assert cos > 0.99, f"non-causal fused-attention ANE vs onnxruntime cosine={cos}"
+
+# -- quantized (int8) ONNX: QDQ weights dequantize, activation Q/DQ clips (relu fold) -- #
+@requires_ane
+def test_quantized_qdq_matches_onnxruntime(tmp_path):
+  import torch, torch.nn as nn, onnxruntime
+  from onnxruntime.quantization import quantize_static, QuantType, QuantFormat, CalibrationDataReader
+  net = nn.Sequential(nn.Conv2d(3, 16, 3, padding=1), nn.ReLU(), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(16, 10)).eval()
+  fp32 = str(tmp_path / "m.onnx"); qdq = str(tmp_path / "q.onnx")
+  torch.onnx.export(net, (torch.randn(1, 3, 32, 32),), fp32, opset_version=13, input_names=["x"], dynamo=False)
+  class DR(CalibrationDataReader):
+    def __init__(self): self.it = iter([{"x": np.random.randn(1, 3, 32, 32).astype(np.float32)} for _ in range(8)])
+    def get_next(self): return next(self.it, None)  # type: ignore[override]  # base stub omits the None sentinel
+  quantize_static(fp32, qdq, DR(), quant_format=QuantFormat.QDQ, weight_type=QuantType.QInt8, per_channel=True)
+  x = np.random.default_rng(0).standard_normal((1, 3, 32, 32)).astype(np.float32)
+  got = np.asarray(af.load_onnx(qdq)(x.astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnxruntime.InferenceSession(qdq).run(None, {"x": x})[0]).astype(np.float32).ravel()
+  cos = _cos(got, ref); assert cos > 0.99, f"quantized QDQ ANE vs onnxruntime cosine={cos}"

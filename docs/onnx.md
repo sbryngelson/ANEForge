@@ -46,6 +46,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Resampling | `Resize` (nearest / linear) |
 | Reduction | `ReduceMax`, `ReduceMin`, `ReduceSum`, `ReduceMean` |
 | Indexing | `Gather` (static indices), `ArgMax`, `TopK` (2D, values only) |
+| Quantization | `DequantizeLinear`, `QuantizeLinear` (QDQ int8) |
 | Misc | `Softmax`, `Constant`, `Identity` |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
@@ -90,6 +91,12 @@ mis-lower:
   affine ops), so `Mul(x, c)`, `Add(x, c)`, `Pow(x, 2)`, and the like need no graph cut.
   This is what makes `HardSigmoid`/`HardSwish` and the scale/shift ops in MobileNetV3 and
   ConvNeXt importable.
+- **Quantized (QDQ int8).** A statically-quantized ONNX model imports: an int8 weight
+  `DequantizeLinear` folds to its dequantized constant, and an activation
+  `QuantizeLinear`/`DequantizeLinear` pair becomes a fp16 `clip` to the quant range (which
+  carries any relu/saturation the quantizer fused in). Weights run at fp16 by default;
+  pass `compress="int8"` to keep them on the ANE int8 weight datapath. Matches onnxruntime
+  on-device (cosine ~1.0).
 - **Gelu:** exact erf-gelu only; `approximate="tanh"` raises.
 - **PRelu:** slope is a per-channel initializer (`[C]`, `[C,1,1]`, or scalar, flattened
   to `[C]`); input must be rank>=3 `[N,C,...]`.

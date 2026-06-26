@@ -223,6 +223,25 @@ def _pad4(pads):                               # ONNX conv pads=[top,left,bottom
   p = [int(v) for v in pads]
   return p[0] if len(set(p)) == 1 else (p[0], p[2], p[1], p[3])
 
+@onnx_op("DequantizeLinear")
+def _dequant(node, ins, a, i):
+  """int8/uint8 weight -> dequantized fp32 const (per-channel along `axis`); on an activation it is identity (the ANE computes in fp16)."""
+  if isinstance(ins[0], Tensor): return ins[0]                       # activation Q/DQ pair is a fp16 passthrough
+  x = np.asarray(ins[0]).astype(np.float32); scale = np.asarray(ins[1]).astype(np.float32)
+  zp = np.asarray(ins[2]).astype(np.float32) if len(ins) > 2 and ins[2] is not None else np.float32(0)
+  if scale.ndim and scale.size > 1:                                  # per-channel: broadcast scale/zp along `axis`
+    shp = [1] * x.ndim; shp[int(a.get("axis", 1)) % x.ndim] = scale.size
+    scale = scale.reshape(shp); zp = zp.reshape(shp) if zp.ndim else zp
+  return (x - zp) * scale
+@onnx_op("QuantizeLinear")
+def _quant(node, ins, a, i):
+  """On an activation: clip to the quant range (keeps fp16, skips int8 rounding) — this folds a relu/saturation the QDQ encoded (zp pinning qmin to 0). On a const: quantize."""
+  scale = np.asarray(ins[1]); zp = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else np.array(0, np.int8)
+  if isinstance(ins[0], Tensor):
+    qmin, qmax = (0, 255) if zp.dtype == np.uint8 else (-128, 127)
+    s, z = float(scale), float(np.asarray(zp))
+    return ins[0].clip((qmin - z) * s, (qmax - z) * s)
+  return np.clip(np.round(np.asarray(ins[0]) / scale) + zp, -128, 127).astype(zp.dtype)
 @onnx_op("Conv")
 def _conv_h(node, ins, a, i):
   ap = a.get("auto_pad")
