@@ -24,6 +24,10 @@ y = net(np.zeros((1, 3, 224, 224), np.float16))
   (`target=`, `opt=`, `compress=`, ...). `path` is a filename or an in-memory `onnx.ModelProto`.
 - `af.onnx_to_tensor(path)` - import only, returning `(graph_inputs, output)` ANEForge
   tensors so you can inspect or splice the graph before compiling it yourself.
+- `af.onnx_to_features(path)` - import a classifier and return `(inputs, features)` where
+  `features` is the input to the final linear layer. Compile it for a frozen feature
+  extractor and train a fresh head on the ANE for transfer learning (see
+  [`examples/onnx_finetune.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/onnx_finetune.py)).
 
 A runnable end-to-end example (export a torchvision model, import it, validate against
 onnxruntime) is in [`examples/onnx_import.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/onnx_import.py):
@@ -37,7 +41,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Category | ONNX ops |
 | --- | --- |
 | Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf`, `HardSigmoid`, `HardSwish` |
-| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported) |
+| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported), `Abs`, `Neg`, `Sign`, `Reciprocal`, `Sin`, `Cos`, `Softplus`, `Floor`, `Ceil`, `Round`, `Min`, `Max`, `Where`, `Tile` |
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool` |
 | Linear | `Gemm`, `MatMul` |
 | Normalization | `BatchNormalization`, `InstanceNormalization` |
@@ -46,6 +50,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Resampling | `Resize` (nearest / linear) |
 | Reduction | `ReduceMax`, `ReduceMin`, `ReduceSum`, `ReduceMean` |
 | Indexing | `Gather` (static indices), `ArgMax`, `TopK` (2D, values only) |
+| Quantization | `DequantizeLinear`, `QuantizeLinear` (QDQ int8) |
 | Misc | `Softmax`, `Constant`, `Identity` |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
@@ -90,6 +95,12 @@ mis-lower:
   affine ops), so `Mul(x, c)`, `Add(x, c)`, `Pow(x, 2)`, and the like need no graph cut.
   This is what makes `HardSigmoid`/`HardSwish` and the scale/shift ops in MobileNetV3 and
   ConvNeXt importable.
+- **Quantized (QDQ int8).** A statically-quantized ONNX model imports: an int8 weight
+  `DequantizeLinear` folds to its dequantized constant, and an activation
+  `QuantizeLinear`/`DequantizeLinear` pair becomes a fp16 `clip` to the quant range (which
+  carries any relu/saturation the quantizer fused in). Weights run at fp16 by default;
+  pass `compress="int8"` to keep them on the ANE int8 weight datapath. Matches onnxruntime
+  on-device (cosine ~1.0).
 - **Gelu:** exact erf-gelu only; `approximate="tanh"` raises.
 - **PRelu:** slope is a per-channel initializer (`[C]`, `[C,1,1]`, or scalar, flattened
   to `[C]`); input must be rank>=3 `[N,C,...]`.
@@ -109,7 +120,10 @@ mis-lower:
       `align_corners`.
     - `half_pixel`/`pytorch_half_pixel` sampling and `mode="cubic"` are **not** matched by
       the ANE resamplers and raise. Note the ONNX default `coordinate_transformation_mode`
-      is `half_pixel`, so a `Resize` must set `asymmetric`/`align_corners` explicitly.
+      is `half_pixel`, so a `Resize` must set `asymmetric`/`align_corners` explicitly — or
+      pass `load_onnx(path, approx_resize=True)` to map a half-pixel `Resize` to the closest
+      ANE bilinear (an opt-in approximation, ~0.99 cosine on smooth maps). This is what lets
+      segmentation models (FCN, DeepLabV3) — whose final upsample is half-pixel — import.
 - **Reductions** (`ReduceMax`/`ReduceMin`/`ReduceSum`/`ReduceMean`): `axes` may be an
   attribute (opset < 18; ReduceSum < 13) or an input initializer (later opsets); an
   absent/empty `axes` reduces over every axis. `keepdims=1` (the default) keeps reduced

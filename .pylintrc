@@ -1,0 +1,16 @@
+# Narrow lint config. This codebase is tinygrad-compact (semicolons, multi-statement
+# lines, short names, sparse docstrings) and deliberately violates most pylint defaults,
+# so pylint is used ONLY as a 2-space-indent + trailing-whitespace lock. CI and
+# pre-commit invoke it explicitly as:
+#   pylint --disable=all -e W0311 -e C0303 --indent-string='  ' --recursive=y aneforge tests
+# This file bakes those flags in so a bare `pylint aneforge tests` matches CI locally.
+# (ruff config lives in pyproject.toml's [tool.ruff]; there is intentionally no .ruff.toml.)
+[MAIN]
+recursive = yes
+
+[MESSAGES CONTROL]
+disable = all
+enable = W0311, C0303
+
+[FORMAT]
+indent-string = '  '

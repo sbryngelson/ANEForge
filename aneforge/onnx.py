@@ -3,6 +3,7 @@ docs. Public: load_onnx / onnx_to_tensor."""
 from __future__ import annotations
 from typing import Callable
 from math import prod
+from functools import reduce
 import numpy as np
 from .graph import Tensor, input as _input, conv as _conv, batch_norm as _bn, concat as _concat
 from .graph import instance_norm as _instnorm, space_to_depth as _s2d
@@ -44,32 +45,51 @@ def _load(path):
   m = path if hasattr(path, "graph") else onnx.load(path)
   return onnx.shape_inference.infer_shapes(m)
 
-def onnx_to_tensor(path):
-  """Build an aneforge graph from an ONNX model; returns (graph_inputs, output)."""
-  m = _load(path); g = m.graph
-  inits = _inits(g)
-  vals: dict[str, object] = dict(inits)        # name -> Tensor | np.ndarray (initializers as arrays)
-  graph_inputs = []
-  for vi in g.input:
-    if vi.name in inits: continue              # initializers also listed as inputs in some exporters
-    t = _input(_shape(vi)); vals[vi.name] = t; graph_inputs.append(t)
-  for node in g.node:                          # ONNX node list is topologically ordered
-    if node.op_type not in _ONNX:
-      raise NotImplementedError(f"ONNX op '{node.op_type}' not supported")
-    ins = [vals.get(n) for n in node.input]
-    outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
-    outs = outs if isinstance(outs, (list, tuple)) else [outs]
-    for name, val in zip(node.output, outs): vals[name] = val
-  name = g.output[0].name
-  if name not in vals: raise ValueError(f"onnx: graph output '{name}' was never produced")
-  out = vals[name]
-  if not isinstance(out, Tensor): raise TypeError("onnx: graph output is not a Tensor")
-  return graph_inputs, out
+_APPROX_RESIZE = False                          # opt-in: map a half-pixel Resize to the closest ANE bilinear
 
-def load_onnx(path, fuse_attention=False, **compile_kwargs):
+def onnx_to_tensor(path, approx_resize=False):
+  """Build an aneforge graph from an ONNX model; returns (graph_inputs, output). `approx_resize` maps a
+  half-pixel Resize (no exact ANE match) to the closest bilinear (~0.99 on smooth maps) instead of raising."""
+  global _APPROX_RESIZE
+  prev = _APPROX_RESIZE; _APPROX_RESIZE = approx_resize
+  try:
+    m = _load(path); g = m.graph
+    inits = _inits(g)
+    vals: dict[str, object] = dict(inits)        # name -> Tensor | np.ndarray (initializers as arrays)
+    graph_inputs = []
+    for vi in g.input:
+      if vi.name in inits: continue              # initializers also listed as inputs in some exporters
+      t = _input(_shape(vi)); vals[vi.name] = t; graph_inputs.append(t)
+    for node in g.node:                          # ONNX node list is topologically ordered
+      if node.op_type not in _ONNX:
+        raise NotImplementedError(f"ONNX op '{node.op_type}' not supported")
+      ins = [vals.get(n) for n in node.input]
+      outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
+      outs = outs if isinstance(outs, (list, tuple)) else [outs]
+      for name, val in zip(node.output, outs): vals[name] = val
+    name = g.output[0].name
+    if name not in vals: raise ValueError(f"onnx: graph output '{name}' was never produced")
+    out = vals[name]
+    if not isinstance(out, Tensor): raise TypeError("onnx: graph output is not a Tensor")
+    return graph_inputs, out
+  finally:
+    _APPROX_RESIZE = prev
+
+def onnx_to_features(path):
+  """Import a classifier and return `(inputs, features)` where `features` is the input to the final
+  linear layer (a trailing softmax is peeled). Compile it for a frozen feature extractor — train a
+  fresh head on the features for on-ANE transfer learning."""
+  inputs, out = onnx_to_tensor(path)
+  if out.op == "softmax" and out.srcs: out = out.srcs[0]   # peel a trailing softmax to the logits
+  if out.op not in ("matmul", "bmm") or not out.srcs:
+    raise ValueError(f"onnx_to_features: expected the model to end in a linear classifier (matmul/bmm); got '{out.op}'")
+  return inputs, out.srcs[0]
+
+def load_onnx(path, fuse_attention=False, approx_resize=False, **compile_kwargs):
   """Import an ONNX model and compile it to a runnable ANE Model. `fuse_attention` rewrites
-  the `softmax(Q@K^T*scale)@V` pattern onto the native fused-attention layer (a graph cut)."""
-  _, out = onnx_to_tensor(path)
+  the `softmax(Q@K^T*scale)@V` pattern onto the native fused-attention layer (a graph cut).
+  `approx_resize` allows a half-pixel Resize (no exact ANE match) via the closest bilinear."""
+  _, out = onnx_to_tensor(path, approx_resize=approx_resize)
   if fuse_attention:
     from ._rewrite import graph_rewrite, Rule
     out = graph_rewrite(out, [Rule("fuse_sdpa", "numeric", _is_attention, _build_sdpa)])
@@ -141,6 +161,43 @@ def _exp(node, ins, a, i): return ins[0].exp()
 def _log(node, ins, a, i): return ins[0].log()
 @onnx_op("Sqrt")
 def _sqrt(node, ins, a, i): return ins[0].sqrt()
+@onnx_op("Abs")
+def _abs(node, ins, a, i): return ins[0].abs()
+@onnx_op("Sign")
+def _sign(node, ins, a, i): return ins[0].sign()
+@onnx_op("Sin")
+def _sin(node, ins, a, i): return ins[0].sin()
+@onnx_op("Cos")
+def _cos(node, ins, a, i): return ins[0].cos()
+@onnx_op("Softplus")
+def _softplus(node, ins, a, i): return ins[0].softplus()
+@onnx_op("Floor")
+def _floor(node, ins, a, i): return ins[0].floor()
+@onnx_op("Ceil")
+def _ceil(node, ins, a, i): return ins[0].ceil()
+@onnx_op("Round")
+def _round(node, ins, a, i): return ins[0].round()
+@onnx_op("Reciprocal")
+def _recip(node, ins, a, i): return ins[0].inverse()
+@onnx_op("Neg")
+def _neg(node, ins, a, i): return ins[0] * -1.0
+@onnx_op("Max")
+def _max(node, ins, a, i):
+  from .graph import maximum as _maximum
+  ts = [v if isinstance(v, Tensor) else _baked(v) for v in ins]
+  return reduce(_maximum, ts)
+@onnx_op("Min")
+def _min(node, ins, a, i):
+  from .graph import minimum as _minimum
+  ts = [v if isinstance(v, Tensor) else _baked(v) for v in ins]
+  return reduce(_minimum, ts)
+@onnx_op("Where")
+def _where(node, ins, a, i):
+  from .graph import select as _select
+  return _select(ins[0], ins[1] if isinstance(ins[1], Tensor) else _baked(ins[1]),
+                 ins[2] if isinstance(ins[2], Tensor) else _baked(ins[2]))
+@onnx_op("Tile")
+def _tile(node, ins, a, i): return ins[0].tile([int(v) for v in np.asarray(ins[1])])
 @onnx_op("Elu")
 def _elu(node, ins, a, i): return ins[0].elu(float(a.get("alpha", 1.0)))
 @onnx_op("LeakyRelu")
@@ -223,6 +280,25 @@ def _pad4(pads):                               # ONNX conv pads=[top,left,bottom
   p = [int(v) for v in pads]
   return p[0] if len(set(p)) == 1 else (p[0], p[2], p[1], p[3])
 
+@onnx_op("DequantizeLinear")
+def _dequant(node, ins, a, i):
+  """int8/uint8 weight -> dequantized fp32 const (per-channel along `axis`); on an activation it is identity (the ANE computes in fp16)."""
+  if isinstance(ins[0], Tensor): return ins[0]                       # activation Q/DQ pair is a fp16 passthrough
+  x = np.asarray(ins[0]).astype(np.float32); scale = np.asarray(ins[1]).astype(np.float32)
+  zp = np.asarray(ins[2]).astype(np.float32) if len(ins) > 2 and ins[2] is not None else np.float32(0)
+  if scale.ndim and scale.size > 1:                                  # per-channel: broadcast scale/zp along `axis`
+    shp = [1] * x.ndim; shp[int(a.get("axis", 1)) % x.ndim] = scale.size
+    scale = scale.reshape(shp); zp = zp.reshape(shp) if zp.ndim else zp
+  return (x - zp) * scale
+@onnx_op("QuantizeLinear")
+def _quant(node, ins, a, i):
+  """On an activation: clip to the quant range (keeps fp16, skips int8 rounding) — this folds a relu/saturation the QDQ encoded (zp pinning qmin to 0). On a const: quantize."""
+  scale = np.asarray(ins[1]); zp = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else np.array(0, np.int8)
+  if isinstance(ins[0], Tensor):
+    qmin, qmax = (0, 255) if zp.dtype == np.uint8 else (-128, 127)
+    s, z = float(scale), float(np.asarray(zp))
+    return ins[0].clip((qmin - z) * s, (qmax - z) * s)
+  return np.clip(np.round(np.asarray(ins[0]) / scale) + zp, -128, 127).astype(zp.dtype)
 @onnx_op("Conv")
 def _conv_h(node, ins, a, i):
   ap = a.get("auto_pad")
@@ -363,7 +439,10 @@ def _resize(node, ins, a, i):
   if mode == "linear":
     if ctm == "asymmetric": return _rbilin(x, th, tw, align_corners=False)
     if ctm == "align_corners": return _rbilin(x, th, tw, align_corners=True)
-    raise NotImplementedError(f"ONNX Resize linear: coordinate_transformation_mode={ctm!r} not supported (ANE matches 'asymmetric'/'align_corners' only)")
+    if _APPROX_RESIZE and ctm in ("half_pixel", "pytorch_half_pixel"):
+      return _rbilin(x, th, tw, align_corners=True)   # closest ANE convention (~0.99 on smooth maps; opt-in approx)
+    raise NotImplementedError(f"ONNX Resize linear: coordinate_transformation_mode={ctm!r} not supported "
+                              "(ANE matches 'asymmetric'/'align_corners'; pass approx_resize=True for half-pixel)")
   raise NotImplementedError(f"ONNX Resize: mode={mode!r} not supported")
 
 def _reduce_op(ins, a, method):

@@ -24,6 +24,27 @@ def test_sigmoid_builds():
   m = _model([helper.make_node("Sigmoid", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "sigmoid"
 
+def test_tier3_unary_ops_build():  # cheap unary ops over existing graph ops
+  for op, want in [("Abs", "abs"), ("Sign", "sign"), ("Sin", "sin"), ("Cos", "cos"), ("Softplus", "softplus"),
+                   ("Floor", "floor"), ("Ceil", "ceil"), ("Round", "round"), ("Reciprocal", "inverse"), ("Neg", "muls")]:
+    m = _model([helper.make_node(op, ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+    _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4) and out.op == want, f"{op} -> {out.op}"
+
+def test_tier3_max_min_tile_where_build():
+  for op, want in [("Max", "maximum"), ("Min", "minimum")]:
+    m = _model([helper.make_node(op, ["a", "b"], ["y"])], [_vi("a", [1, 4]), _vi("b", [1, 4])], [_vi("y", [1, 4])])
+    _, out = af.onnx_to_tensor(m); assert out.op == want
+  reps = onnx.numpy_helper.from_array(np.array([1, 2], np.int64), "r")
+  m = _model([helper.make_node("Tile", ["x", "r"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 8])], inits=[reps])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8) and out.op == "tile"
+
+def test_resize_half_pixel_needs_approx():  # default guards half_pixel; approx_resize=True maps it to bilinear
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], np.int64), "sz")
+  n = helper.make_node("Resize", ["x", "roi", "sc", "sz"], ["y"], mode="linear", coordinate_transformation_mode="half_pixel")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])], inits=[_empty_f32("roi"), _empty_f32("sc"), sizes])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m, approx_resize=True); assert out.shape == (1, 4, 16, 16) and out.op == "resize_bilinear"
+
 def test_clip_relu6_builds():
   n = helper.make_node("Clip", ["x"], ["y"], min=0.0, max=6.0)
   m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
@@ -42,6 +63,21 @@ def test_conv_asymmetric_pad_builds():  # ONNX pads [top,left,bottom,right] -> p
   n = helper.make_node("Conv", ["x", "W"], ["y"], pads=[2, 1, 0, 0], strides=[1, 1])  # top=2,left=1
   m = _model([n], [_vi("x", [1, 3, 10, 10])], [_vi("y", [1, 4, 10, 9])], inits=[w])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 10, 9) and out.op == "conv"
+
+def test_dequantize_weight_conv_builds():  # int8 weight DequantizeLinear -> fp32 const fed to conv
+  w8 = onnx.numpy_helper.from_array(np.ones((4, 3, 3, 3), np.int8), "w8")
+  sc = onnx.numpy_helper.from_array(np.full(4, 0.1, np.float32), "sc")
+  zp = onnx.numpy_helper.from_array(np.zeros(4, np.int8), "zp")
+  nodes = [helper.make_node("DequantizeLinear", ["w8", "sc", "zp"], ["w"], axis=0),
+           helper.make_node("Conv", ["x", "w"], ["y"], pads=[1, 1, 1, 1])]
+  m = _model(nodes, [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 4, 8, 8])], inits=[w8, sc, zp])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 8, 8) and out.op == "conv"
+
+def test_quantize_activation_folds_relu():  # QuantizeLinear with zp pinning qmin to 0 -> a clip (the folded relu)
+  sc = onnx.numpy_helper.from_array(np.array(0.05, np.float32), "sc"); zp = onnx.numpy_helper.from_array(np.array(-128, np.int8), "zp")
+  n = helper.make_node("QuantizeLinear", ["x", "sc", "zp"], ["y"])
+  m = _model([n], [_vi("x", [1, 8])], [_vi("y", [1, 8])], inits=[sc, zp])
+  _, out = af.onnx_to_tensor(m); assert out.op == "clip" and out.attrs["lo"] == 0.0
 
 def test_shape_subgraph_folds_to_reshape():  # Shape->Gather->Unsqueeze->Concat folds to a static Reshape target
   nodes = [helper.make_node("Shape", ["x"], ["s"]),
@@ -89,6 +125,14 @@ def test_gemm_transb_builds():  # transB=1 -> W stays [out,in]; x[1,16] linear W
   n = helper.make_node("Gemm", ["x", "W", "B"], ["y"], transB=1)
   m = _model([n], [_vi("x", [1, 16])], [_vi("y", [1, 10])], inits=[w, b])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 10) and out.op == "matmul"
+
+def test_onnx_to_features_peels_classifier():  # features = the input to the final linear layer
+  w = _init(np.zeros((10, 16)), "W"); b = _init(np.zeros(10), "B")
+  nodes = [helper.make_node("Flatten", ["x"], ["f"], axis=1),
+           helper.make_node("Gemm", ["f", "W", "B"], ["y"], transB=1)]
+  m = _model(nodes, [_vi("x", [1, 16, 1, 1])], [_vi("y", [1, 10])], inits=[w, b])
+  ins, feats = af.onnx_to_features(m)
+  assert feats.shape == (1, 16) and feats.op == "flatten2d"    # the Gemm's input, not the logits
 
 def test_flatten_builds():
   n = helper.make_node("Flatten", ["x"], ["y"], axis=1)
@@ -181,7 +225,7 @@ def test_dynamic_dim_raises():  # symbolic dim_param -> static-shapes-only error
   with pytest.raises(ValueError): af.onnx_to_tensor(m)
 
 def test_unsupported_op_raises():  # unregistered op type fails loudly
-  m = _model([helper.make_node("Cos", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  m = _model([helper.make_node("ScatterND", ["x", "i", "u"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
 def test_conv_non_uniform_strides_raises():
@@ -740,3 +784,39 @@ def test_fuse_attention_noncausal_matches():  # non-causal fuses to the decompos
   got = np.asarray(af.load_onnx(p, fuse_attention=True)(x.astype(np.float16))).astype(np.float32).ravel()
   ref = np.asarray(onnxruntime_run(p, x)).astype(np.float32).ravel()
   cos = _cos(got, ref); assert cos > 0.99, f"non-causal fused-attention ANE vs onnxruntime cosine={cos}"
+
+# -- quantized (int8) ONNX: QDQ weights dequantize, activation Q/DQ clips (relu fold) -- #
+@requires_ane
+def test_quantized_qdq_matches_onnxruntime(tmp_path):
+  import torch, torch.nn as nn, onnxruntime
+  from onnxruntime.quantization import quantize_static, QuantType, QuantFormat, CalibrationDataReader
+  net = nn.Sequential(nn.Conv2d(3, 16, 3, padding=1), nn.ReLU(), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(16, 10)).eval()
+  fp32 = str(tmp_path / "m.onnx"); qdq = str(tmp_path / "q.onnx")
+  torch.onnx.export(net, (torch.randn(1, 3, 32, 32),), fp32, opset_version=13, input_names=["x"], dynamo=False)
+  class DR(CalibrationDataReader):
+    def __init__(self): self.it = iter([{"x": np.random.randn(1, 3, 32, 32).astype(np.float32)} for _ in range(8)])
+    def get_next(self): return next(self.it, None)  # type: ignore[override]  # base stub omits the None sentinel
+  quantize_static(fp32, qdq, DR(), quant_format=QuantFormat.QDQ, weight_type=QuantType.QInt8, per_channel=True)
+  x = np.random.default_rng(0).standard_normal((1, 3, 32, 32)).astype(np.float32)
+  got = np.asarray(af.load_onnx(qdq)(x.astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnxruntime.InferenceSession(qdq).run(None, {"x": x})[0]).astype(np.float32).ravel()
+  cos = _cos(got, ref); assert cos > 0.99, f"quantized QDQ ANE vs onnxruntime cosine={cos}"
+
+# -- Tier 3 cheap ops + Tier 5 half-pixel resize approximation -------------------- #
+@requires_ane
+def test_tier3_softplus_matches_onnxruntime():
+  rng = np.random.default_rng(0); x = (rng.standard_normal((1, 8)) * 2).astype(np.float32)
+  m = _model([helper.make_node("Softplus", ["x"], ["y"])], [_vi("x", [1, 8])], [_vi("y", [1, 8])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"Softplus ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_resize_half_pixel_approx_close():  # the opt-in approximation is ~0.99 on a smooth upsample
+  rng = np.random.default_rng(0)
+  x = np.repeat(np.repeat(rng.standard_normal((1, 4, 4, 4)).astype(np.float32), 2, 2), 2, 3)  # smooth 8x8
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], np.int64), "sz")
+  n = helper.make_node("Resize", ["x", "roi", "sc", "sz"], ["y"], mode="linear", coordinate_transformation_mode="half_pixel")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])], inits=[_empty_f32("roi"), _empty_f32("sc"), sizes])
+  got = np.asarray(af.load_onnx(m, approx_resize=True)(x.astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnx_run(m, x)).astype(np.float32).ravel()
+  cos = _cos(got, ref); assert cos > 0.95, f"half-pixel approx Resize ANE vs onnxruntime cosine={cos}"
