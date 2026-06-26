@@ -112,6 +112,7 @@ class LlamaPrefill:
   def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
+    self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
 
   def compile(self, seq: int):
     cfg = self.cfg
@@ -139,29 +140,43 @@ class LlamaPrefill:
     """Prefill `token_ids` and return the next-token logits [1, vocab] (the transformer runs on the ANE)."""
     return self._logits(self._hidden(token_ids)[-1])[None]
 
+  def _layer_chunks(self):
+    """Group layers into contiguous chunks whose baked weights stay under the ANE single-program ceiling
+    (~2GB; measured ~1.5GB OK, ~3.4GB fails). int8/int4 weights are smaller, so more layers fit per chunk."""
+    per = sum(int(np.asarray(v).size) for v in self.w["layers"][0].values()) * 2   # fp16 bytes / layer
+    if self.compress in ("int8", "blockwise"): per //= 2
+    elif self.compress == "int4": per //= 4
+    n = max(1, min(self.cfg.n_layers, int(self._chunk_bytes // max(per, 1))))
+    return [range(i, min(i + n, self.cfg.n_layers)) for i in range(0, self.cfg.n_layers, n)]
+
   def _decoder(self, M):
-    """Build (once, cached) the resident-KV-cache decode-step program for a max sequence length `M`: all layers
-    run for one token attending to per-layer caches that stay on-device across `execute` via `share_buffer`."""
+    """Build (once, cached) the resident-KV-cache decode-step program(s) for a max sequence length `M`. Layers
+    are split into chunks under the ANE single-program weight ceiling (`_layer_chunks`); each chunk keeps its
+    layers' K/V caches on the ANE across `execute` via `share_buffer`, and the hidden state chains chunk->chunk."""
     if self._dec is not None and self._dec["M"] == M: return self._dec
-    if self._dec is not None: self._dec["net"].release()
+    if self._dec is not None:
+      for c in self._dec["chunks"]: c["net"].release()
     from ._compile import compile_multi
-    cfg = self.cfg; KV, dh, D, L = cfg.n_kv_heads, cfg.dh, cfg.dim, cfg.n_layers
-    x = _input((1, D)); oh = _input((1, M, 1)); inv = _input((1, M, 1)); mask = _input((1, 1, M))
-    cosp = _input((1, dh)); sinp = _input((1, dh))
-    Kin = [_input((KV, M, dh)) for _ in range(L)]; Vin = [_input((KV, M, dh)) for _ in range(L)]
-    h = x; Kout = []; Vout = []
-    for lw, ki, vi in zip(self.w["layers"], Kin, Vin):
-      h, ko, vo = _decode_block(h, lw, cfg, ki, vi, oh, inv, mask, cosp, sinp)
-      Kout.append(ko); Vout.append(vo)
-    h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)
-    net = compile_multi([h] + Kout + Vout, compress=self.compress)
-    inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
-    for ki, vi, ko, vo in zip(Kin, Vin, Kout, Vout):           # alias each layer's cache output -> its input (resident)
-      net.prog.share_buffer(0, om[ko], 0, inm[id(ki)]); net.prog.share_buffer(0, om[vo], 0, inm[id(vi)])
+    cfg = self.cfg; KV, dh, D = cfg.n_kv_heads, cfg.dh, cfg.dim
+    groups = self._layer_chunks(); chunks = []
+    for gi, grp in enumerate(groups):
+      x = _input((1, D)); oh = _input((1, M, 1)); inv = _input((1, M, 1)); mask = _input((1, 1, M))
+      cosp = _input((1, dh)); sinp = _input((1, dh))
+      Kin = [_input((KV, M, dh)) for _ in grp]; Vin = [_input((KV, M, dh)) for _ in grp]
+      h = x; Kout = []; Vout = []
+      for li, ki, vi in zip(grp, Kin, Vin):
+        h, ko, vo = _decode_block(h, self.w["layers"][li], cfg, ki, vi, oh, inv, mask, cosp, sinp)
+        Kout.append(ko); Vout.append(vo)
+      if gi == len(groups) - 1: h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)   # final norm on the last chunk
+      net = compile_multi([h] + Kout + Vout, compress=self.compress)
+      inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
+      for ki, vi, ko, vo in zip(Kin, Vin, Kout, Vout):          # alias each layer's cache output -> its input (resident)
+        net.prog.share_buffer(0, om[ko], 0, inm[id(ki)]); net.prog.share_buffer(0, om[vo], 0, inm[id(vi)])
+      chunks.append({"net": net, "p": {"x": inm[id(x)], "oh": inm[id(oh)], "inv": inm[id(inv)], "mask": inm[id(mask)],
+                     "cosp": inm[id(cosp)], "sinp": inm[id(sinp)], "h": om[h],
+                     "kv": [(inm[id(ki)], inm[id(vi)]) for ki, vi in zip(Kin, Vin)]}})
     cos_t, sin_t = rope_tables(M, dh, cfg.rope_base)
-    ports = {"x": inm[id(x)], "oh": inm[id(oh)], "inv": inm[id(inv)], "mask": inm[id(mask)],
-             "cosp": inm[id(cosp)], "sinp": inm[id(sinp)], "h": om[h], "kv": [(inm[id(ki)], inm[id(vi)]) for ki, vi in zip(Kin, Vin)]}
-    self._dec = {"M": M, "net": net, "p": ports, "cos": cos_t, "sin": sin_t}
+    self._dec = {"M": M, "chunks": chunks, "cos": cos_t, "sin": sin_t}
     return self._dec
 
   def warmup(self, max_len):
@@ -176,18 +191,22 @@ class LlamaPrefill:
     Returns the generated token ids."""
     cfg = self.cfg; KV, dh = cfg.n_kv_heads, cfg.dh; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
-    d = self._decoder(M); net = d["net"]; p = d["p"]
-    for ki, vi in p["kv"]:                                      # reset the resident cache for this generation
-      net.prog.set_input(ki, np.zeros((KV, M, dh), f16)); net.prog.set_input(vi, np.zeros((KV, M, dh), f16))
+    d = self._decoder(M); chunks = d["chunks"]
+    for c in chunks:                                           # reset every chunk's resident cache for this generation
+      for ki, vi in c["p"]["kv"]:
+        c["net"].prog.set_input(ki, np.zeros((KV, M, dh), f16)); c["net"].prog.set_input(vi, np.zeros((KV, M, dh), f16))
     def step(tok, pos):
       ohv = np.zeros((1, M, 1), f16); ohv[0, pos, 0] = 1.0
       invv = np.ones((1, M, 1), f16); invv[0, pos, 0] = 0.0
       mv = np.full((1, 1, M), -1e4, f16); mv[..., :pos + 1] = 0.0
-      net.prog.set_input(p["x"], np.asarray(self.w["embed"][tok])[None].astype(f16))
-      net.prog.set_input(p["oh"], ohv); net.prog.set_input(p["inv"], invv); net.prog.set_input(p["mask"], mv)
-      net.prog.set_input(p["cosp"], d["cos"][pos][None]); net.prog.set_input(p["sinp"], d["sin"][pos][None])
-      net.prog.execute()
-      return np.asarray(net.prog.read_output(p["h"])).reshape(cfg.dim).astype(np.float32)
+      cosp = d["cos"][pos][None]; sinp = d["sin"][pos][None]
+      h = np.asarray(self.w["embed"][tok])[None].astype(f16)
+      for c in chunks:                                         # hidden flows chunk -> chunk (cheap [1,dim] round-trip)
+        p = c["p"]; pr = c["net"].prog
+        pr.set_input(p["x"], h); pr.set_input(p["oh"], ohv); pr.set_input(p["inv"], invv); pr.set_input(p["mask"], mv)
+        pr.set_input(p["cosp"], cosp); pr.set_input(p["sinp"], sinp)
+        pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
+      return h.reshape(cfg.dim).astype(np.float32)
     for pos, tok in enumerate(prompt[:-1]): step(tok, pos)      # prefill the cache (discard hidden)
     cur = prompt[-1]; pos = len(prompt) - 1; out = []
     for _ in range(max_new_tokens):                            # decode
