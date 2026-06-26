@@ -80,7 +80,10 @@ model on the ANE, [`examples/onnx_import.py`](examples/onnx_import.py) imports
 a `.onnx` classifier via `af.load_onnx` and validates it against onnxruntime
 (cosine 1.0000); [`examples/onnx_finetune.py`](examples/onnx_finetune.py) imports
 one as a frozen feature extractor and trains a new head on it entirely on the
-ANE (transfer learning). For retrieval,
+ANE (transfer learning). To prefill an LLM prompt on the ANE,
+[`examples/llm_prefill.py`](examples/llm_prefill.py) loads a Llama/Qwen-class
+model via `af.load_llm` and runs prefill as one fused ANE program (matching
+Hugging Face logits). For retrieval,
 [`examples/rag_embeddings.py`](examples/rag_embeddings.py) is a LangChain
 `Embeddings` drop-in backed by the on-ANE encoder (4-5x faster than the GPU,
 cosine 1.0000).
