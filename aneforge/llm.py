@@ -1,8 +1,12 @@
-"""LLMs on the Apple Neural Engine. A config-driven Llama/Qwen decoder
-(RMSNorm + RoPE + grouped-query causal attention + SwiGLU) that loads Hugging Face weights and
-runs prefill and KV-cache decode as fused ANE programs. Matches HF logits; see `docs/llm.md`."""
+"""LLMs on the Apple Neural Engine. A config-driven decoder (RMSNorm + RoPE + grouped-query causal
+attention + SwiGLU) that loads Hugging Face weights and runs prefill and KV-cache decode as fused ANE
+programs. Matches HF logits; see `docs/llm.md`.
+
+The runner is model-agnostic: a `LlamaConfig` carries a per-layer plan (`LayerSpec`) naming a token-mixer
+and an MLP from the builder registries below, so supporting a new architecture is an *adapter* that emits
+the plan + canonical weights — not new branches in the hot path."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 
 from .graph import Tensor, input as _input, concat as _concat, _const
@@ -10,11 +14,22 @@ from . import _compile
 
 
 @dataclass
+class LayerSpec:
+  """Per-layer plan: which token-mixer and MLP to build (registry keys), plus mixer flags. The runner
+  dispatches on these rather than sniffing the weight dict."""
+  mixer: str = "attention"      # key into PREFILL_MIXERS / DECODE_MIXERS
+  mlp: str = "swiglu"           # key into PREFILL_MLPS / DECODE_MLPS
+  qk_norm: bool = False          # per-head RMSNorm on Q/K before RoPE (Qwen3)
+
+
+@dataclass
 class LlamaConfig:
-  """A Llama/Qwen-class decoder config (the fields the prefill graph needs). `head_dim` defaults to
-  `dim // n_heads` but is explicit for Qwen3 (where it differs)."""
+  """A decoder config (the fields the graph needs). `head_dim` defaults to `dim // n_heads` but is explicit
+  for Qwen3 (where it differs). `layers` is the optional per-layer plan; when empty the runner falls back to
+  all-attention with QK-norm detected from the weights (back-compat)."""
   dim: int; n_layers: int; n_heads: int; n_kv_heads: int; ffn_dim: int; vocab: int
   rope_base: float = 10000.0; norm_eps: float = 1e-5; head_dim: int = 0
+  layers: list[LayerSpec] = field(default_factory=list)
 
   @property
   def dh(self) -> int: return self.head_dim or self.dim // self.n_heads
@@ -58,13 +73,15 @@ def _causal_attn(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
   return ((q @ k.transpose([0, 1, 3, 2])) * (1.0 / dh ** 0.5) + _const(mask)).softmax(-1) @ v
 
 
-def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin) -> Tensor:
-  """One pre-norm Llama/Qwen decoder block over a prompt `x` [S, dim]: RMSNorm -> QKV (+ Qwen3 QK-norm)
-  -> RoPE -> causal attention -> SwiGLU MLP, with residuals."""
+# --- token-mixer + MLP builders (registry values). Each includes its own residual add. ---
+
+def _attn_prefill(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin) -> Tensor:
+  """Pre-norm attention mixer over a prompt `x` [S, dim]: RMSNorm -> QKV (+optional QK-norm) -> RoPE ->
+  causal attention -> o_proj, with the residual."""
   H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dh, x.shape[0]
   xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
   q = xn.linear(w["wq"]).reshape(S, H, dh); k = xn.linear(w["wk"]).reshape(S, KV, dh); v = xn.linear(w["wv"]).reshape(S, KV, dh)
-  if "q_norm" in w:                                 # Qwen3 QK-norm: per-head RMSNorm over head_dim before RoPE
+  if ls.qk_norm:                                   # Qwen3 QK-norm: per-head RMSNorm over head_dim before RoPE
     q = q.reshape(S * H, dh).rms_norm(w["q_norm"], cfg.norm_eps).reshape(S, H, dh)
     k = k.reshape(S * KV, dh).rms_norm(w["k_norm"], cfg.norm_eps).reshape(S, KV, dh)
   q = q.transpose([1, 0, 2]).reshape(1, H, S, dh); k = k.transpose([1, 0, 2]).reshape(1, KV, S, dh)
@@ -72,9 +89,19 @@ def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin) -> Tensor:
   q, k = rope(q, cos, sin), rope(k, cos, sin)
   k, v = _repeat_kv(k, H // KV), _repeat_kv(v, H // KV)
   a = _causal_attn(q, k, v).reshape(H, S, dh).transpose([1, 0, 2]).reshape(S, H * dh)
-  h = x + a.linear(w["wo"])
+  return x + a.linear(w["wo"])
+
+
+def _swiglu_prefill(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
+  """SwiGLU MLP with its residual: `h + down(silu(gate(norm(h))) * up(norm(h)))`."""
   hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
   return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"])
+
+
+def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin, ls: LayerSpec | None = None) -> Tensor:
+  """One pre-norm decoder block (mixer + MLP). Back-compatible: with no `ls`, QK-norm is detected from `w`."""
+  ls = ls or LayerSpec(qk_norm="q_norm" in w)
+  return PREFILL_MLPS[ls.mlp](PREFILL_MIXERS[ls.mixer](x, w, cfg, ls, cos, sin), w, cfg, ls)
 
 
 def _repeat_kv3(k: Tensor, g: int) -> Tensor:
@@ -85,14 +112,16 @@ def _repeat_kv3(k: Tensor, g: int) -> Tensor:
   return k.reshape(KV, M * dh).transpose([1, 0]).linear(Mx).transpose([1, 0]).reshape(KV * g, M, dh)
 
 
-def _decode_block(x: Tensor, w: dict, cfg: LlamaConfig, Kin, Vin, oh, inv, mask, cosp, sinp):
-  """One decoder block for a single new token, attending to a resident KV-cache. `x` [1, dim]; `Kin`/`Vin`
-  [KV, M, dh] are the cache; `oh`/`inv` [1, M, 1] write the new K/V at the current position; `cosp`/`sinp`
-  [1, dh] are RoPE for that position. Returns (hidden, Kout, Vout) where Kout/Vout become the resident cache."""
+def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict, M: int):
+  """Single-token attention against a resident KV-cache. Creates its own Kin/Vin state inputs and reads the
+  shared per-position inputs from `ctx` (oh/inv/mask/cosp/sinp). Returns (hidden+residual, state_pairs) where
+  `state_pairs` is [(out, in), ...] for the runner to alias resident via `share_buffer`."""
   H, KV, dh = cfg.n_heads, cfg.n_kv_heads, cfg.dh
+  Kin = _input((KV, M, dh)); Vin = _input((KV, M, dh))
+  oh, inv, mask, cosp, sinp = ctx["oh"], ctx["inv"], ctx["mask"], ctx["cosp"], ctx["sinp"]
   xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
   q = xn.linear(w["wq"]).reshape(H, dh); k = xn.linear(w["wk"]).reshape(KV, dh); v = xn.linear(w["wv"]).reshape(KV, dh)
-  if "q_norm" in w:
+  if ls.qk_norm:
     q = q.rms_norm(w["q_norm"], cfg.norm_eps); k = k.rms_norm(w["k_norm"], cfg.norm_eps)
   q = rope(q.reshape(H, 1, dh), cosp, sinp)        # [H, 1, dh]
   k = rope(k.reshape(KV, 1, dh), cosp, sinp); v = v.reshape(KV, 1, dh)
@@ -100,26 +129,45 @@ def _decode_block(x: Tensor, w: dict, cfg: LlamaConfig, Kin, Vin, oh, inv, mask,
   Kr, Vr = _repeat_kv3(Kout, H // KV), _repeat_kv3(Vout, H // KV)
   sc = ((q @ Kr.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)   # [H, 1, M]
   a = (sc @ Vr).reshape(H, 1, dh).transpose([1, 0, 2]).reshape(1, H * dh)
-  h = x + a.linear(w["wo"])
+  return x + a.linear(w["wo"]), [(Kout, Kin), (Vout, Vin)]
+
+
+def _swiglu_decode(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
-  return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"]), Kout, Vout
+  return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"])
+
+
+PREFILL_MIXERS = {"attention": _attn_prefill}
+PREFILL_MLPS = {"swiglu": _swiglu_prefill}
+DECODE_MIXERS = {"attention": _attn_decode}
+DECODE_MLPS = {"swiglu": _swiglu_decode}
+# Per-position decode inputs a mixer may read from `ctx` (created per chunk, shared across its layers).
+_DECODE_CTX = ("oh", "inv", "mask", "cosp", "sinp")
 
 
 class LlamaPrefill:
-  """A Llama/Qwen decoder compiled for prefill on the ANE. `compile(seq)` builds the graph for a fixed
-  prompt length; `prefill(token_ids)` returns the next-token logits. Weights are a dict of numpy arrays
-  (see `from_pretrained`)."""
+  """A decoder compiled for the ANE. `compile(seq)` builds the prefill graph for a fixed prompt length;
+  `prefill(token_ids)` returns next-token logits; `generate(...)` does resident-KV-cache decode. Weights are
+  a dict of numpy arrays (see `from_pretrained`)."""
   def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
 
+  def _spec(self, i: int) -> LayerSpec:
+    """The plan for layer `i`: the config's per-layer plan, or an attention fallback with QK-norm sniffed
+    from the weights (back-compat for callers that pass no `layers`)."""
+    if self.cfg.layers: return self.cfg.layers[i]
+    return LayerSpec(qk_norm="q_norm" in self.w["layers"][i])
+
   def compile(self, seq: int):
     cfg = self.cfg
     cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base)
     x = _input((seq, cfg.dim))
-    for lw in self.w["layers"]:
-      x = prefill_block(x, lw, cfg, cos, sin)
+    for i, lw in enumerate(self.w["layers"]):
+      ls = self._spec(i)
+      x = PREFILL_MIXERS[ls.mixer](x, lw, cfg, ls, cos, sin)
+      x = PREFILL_MLPS[ls.mlp](x, lw, cfg, ls)
     self._net = _compile.compile(x.rms_norm(self.w["final_norm"], cfg.norm_eps),   # ANE -> all positions' hidden [seq, dim]
                                  compress=self.compress)
     self._seq = seq
@@ -150,31 +198,35 @@ class LlamaPrefill:
     return [range(i, min(i + n, self.cfg.n_layers)) for i in range(0, self.cfg.n_layers, n)]
 
   def _decoder(self, M):
-    """Build (once, cached) the resident-KV-cache decode-step program(s) for a max sequence length `M`. Layers
-    are split into chunks under the ANE single-program weight ceiling (`_layer_chunks`); each chunk keeps its
-    layers' K/V caches on the ANE across `execute` via `share_buffer`, and the hidden state chains chunk->chunk."""
+    """Build (once, cached) the resident-state decode-step program(s) for a max sequence length `M`. Layers
+    are split into chunks under the ANE single-program weight ceiling (`_layer_chunks`); each mixer keeps its
+    resident state (KV cache, ...) on the ANE across `execute` via `share_buffer`, and the hidden state chains
+    chunk->chunk. Mixers own their state, so the runner is agnostic to the mixer type."""
     if self._dec is not None and self._dec["M"] == M: return self._dec
     if self._dec is not None:
       for c in self._dec["chunks"]: c["net"].release()
     from ._compile import compile_multi
-    cfg = self.cfg; KV, dh, D = cfg.n_kv_heads, cfg.dh, cfg.dim
+    cfg = self.cfg; dh, D = cfg.dh, cfg.dim
     groups = self._layer_chunks(); chunks = []
     for gi, grp in enumerate(groups):
-      x = _input((1, D)); oh = _input((1, M, 1)); inv = _input((1, M, 1)); mask = _input((1, 1, M))
-      cosp = _input((1, dh)); sinp = _input((1, dh))
-      Kin = [_input((KV, M, dh)) for _ in grp]; Vin = [_input((KV, M, dh)) for _ in grp]
-      h = x; Kout = []; Vout = []
-      for li, ki, vi in zip(grp, Kin, Vin):
-        h, ko, vo = _decode_block(h, self.w["layers"][li], cfg, ki, vi, oh, inv, mask, cosp, sinp)
-        Kout.append(ko); Vout.append(vo)
+      x = _input((1, D))
+      ctx = {"oh": _input((1, M, 1)), "inv": _input((1, M, 1)), "mask": _input((1, 1, M)),
+             "cosp": _input((1, dh)), "sinp": _input((1, dh))}
+      h = x; pairs = []
+      for li in grp:
+        ls = self._spec(li); lw = self.w["layers"][li]
+        h, sp = DECODE_MIXERS[ls.mixer](h, lw, cfg, ls, ctx, M)
+        pairs += sp
+        h = DECODE_MLPS[ls.mlp](h, lw, cfg, ls)
       if gi == len(groups) - 1: h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)   # final norm on the last chunk
-      net = compile_multi([h] + Kout + Vout, compress=self.compress)
+      net = compile_multi([h] + [o for o, _ in pairs], compress=self.compress)
       inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
-      for ki, vi, ko, vo in zip(Kin, Vin, Kout, Vout):          # alias each layer's cache output -> its input (resident)
-        net.prog.share_buffer(0, om[ko], 0, inm[id(ki)]); net.prog.share_buffer(0, om[vo], 0, inm[id(vi)])
-      chunks.append({"net": net, "p": {"x": inm[id(x)], "oh": inm[id(oh)], "inv": inm[id(inv)], "mask": inm[id(mask)],
-                     "cosp": inm[id(cosp)], "sinp": inm[id(sinp)], "h": om[h],
-                     "kv": [(inm[id(ki)], inm[id(vi)]) for ki, vi in zip(Kin, Vin)]}})
+      for o, i in pairs:                                        # alias each state output -> its input (resident)
+        net.prog.share_buffer(0, om[o], 0, inm[id(i)])
+      p = {"x": inm[id(x)], "h": om[h], "states": {inm[id(i)]: i.shape for _, i in pairs}}
+      for k, t in ctx.items():
+        if id(t) in inm: p[k] = inm[id(t)]                      # only ports the chunk's mixers actually use
+      chunks.append({"net": net, "p": p})
     cos_t, sin_t = rope_tables(M, dh, cfg.rope_base)
     self._dec = {"M": M, "chunks": chunks, "cos": cos_t, "sin": sin_t}
     return self._dec
@@ -189,22 +241,23 @@ class LlamaPrefill:
     cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each step
     feeds only the token embedding + a position one-hot. `on_token(id)` is called per token (streaming).
     Returns the generated token ids."""
-    cfg = self.cfg; KV, dh = cfg.n_kv_heads, cfg.dh; f16 = np.float16
+    cfg = self.cfg; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
     d = self._decoder(M); chunks = d["chunks"]
-    for c in chunks:                                           # reset every chunk's resident cache for this generation
-      for ki, vi in c["p"]["kv"]:
-        c["net"].prog.set_input(ki, np.zeros((KV, M, dh), f16)); c["net"].prog.set_input(vi, np.zeros((KV, M, dh), f16))
+    for c in chunks:                                           # reset every mixer's resident state for this generation
+      for name, shape in c["p"]["states"].items():
+        c["net"].prog.set_input(name, np.zeros(shape, f16))
     def step(tok, pos):
       ohv = np.zeros((1, M, 1), f16); ohv[0, pos, 0] = 1.0
       invv = np.ones((1, M, 1), f16); invv[0, pos, 0] = 0.0
       mv = np.full((1, 1, M), -1e4, f16); mv[..., :pos + 1] = 0.0
-      cosp = d["cos"][pos][None]; sinp = d["sin"][pos][None]
+      vals = {"oh": ohv, "inv": invv, "mask": mv, "cosp": d["cos"][pos][None], "sinp": d["sin"][pos][None]}
       h = np.asarray(self.w["embed"][tok])[None].astype(f16)
       for c in chunks:                                         # hidden flows chunk -> chunk (cheap [1,dim] round-trip)
         p = c["p"]; pr = c["net"].prog
-        pr.set_input(p["x"], h); pr.set_input(p["oh"], ohv); pr.set_input(p["inv"], invv); pr.set_input(p["mask"], mv)
-        pr.set_input(p["cosp"], cosp); pr.set_input(p["sinp"], sinp)
+        pr.set_input(p["x"], h)
+        for k in _DECODE_CTX:
+          if k in p: pr.set_input(p[k], vals[k])
         pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
       return h.reshape(cfg.dim).astype(np.float32)
     for pos, tok in enumerate(prompt[:-1]): step(tok, pos)      # prefill the cache (discard hidden)
@@ -236,7 +289,22 @@ def _weights_from_state_dict(sd, cfg: LlamaConfig) -> dict:
   return w
 
 
+def _dense_adapter(c, sd) -> tuple[LlamaConfig, dict]:
+  """Adapter for dense Llama/Qwen-class models: emit a `LlamaConfig` (with an explicit per-layer plan) and the
+  canonical weight dict from a Hugging Face config + state_dict. New architectures get their own adapter."""
+  n = int(c.num_hidden_layers)
+  qk = "model.layers.0.self_attn.q_norm.weight" in sd
+  cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
+                    n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
+                    ffn_dim=c.intermediate_size, vocab=c.vocab_size,
+                    rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0),
+                    layers=[LayerSpec(mixer="attention", mlp="swiglu", qk_norm=qk) for _ in range(n)])
+  return cfg, _weights_from_state_dict(sd, cfg)
+
+
 def _cfg_from_hf(c) -> LlamaConfig:
+  """Back-compat: a `LlamaConfig` (no per-layer plan) from a Hugging Face config."""
   return LlamaConfig(dim=c.hidden_size, n_layers=c.num_hidden_layers, n_heads=c.num_attention_heads,
                      n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                      ffn_dim=c.intermediate_size, vocab=c.vocab_size,
@@ -249,6 +317,6 @@ def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
   quantizes the ANE weights."""
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
-  cfg = _cfg_from_hf(hf.config)
   sd = {k: v.detach().float().numpy() for k, v in hf.state_dict().items()}
-  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), compress=compress)
+  cfg, weights = _dense_adapter(hf.config, sd)
+  return LlamaPrefill(cfg, weights, compress=compress)
