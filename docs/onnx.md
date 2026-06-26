@@ -41,7 +41,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Category | ONNX ops |
 | --- | --- |
 | Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf`, `HardSigmoid`, `HardSwish` |
-| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported) |
+| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported), `Abs`, `Neg`, `Sign`, `Reciprocal`, `Sin`, `Cos`, `Softplus`, `Floor`, `Ceil`, `Round`, `Min`, `Max`, `Where`, `Tile` |
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool` |
 | Linear | `Gemm`, `MatMul` |
 | Normalization | `BatchNormalization`, `InstanceNormalization` |
@@ -120,7 +120,10 @@ mis-lower:
       `align_corners`.
     - `half_pixel`/`pytorch_half_pixel` sampling and `mode="cubic"` are **not** matched by
       the ANE resamplers and raise. Note the ONNX default `coordinate_transformation_mode`
-      is `half_pixel`, so a `Resize` must set `asymmetric`/`align_corners` explicitly.
+      is `half_pixel`, so a `Resize` must set `asymmetric`/`align_corners` explicitly — or
+      pass `load_onnx(path, approx_resize=True)` to map a half-pixel `Resize` to the closest
+      ANE bilinear (an opt-in approximation, ~0.99 cosine on smooth maps). This is what lets
+      segmentation models (FCN, DeepLabV3) — whose final upsample is half-pixel — import.
 - **Reductions** (`ReduceMax`/`ReduceMin`/`ReduceSum`/`ReduceMean`): `axes` may be an
   attribute (opset < 18; ReduceSum < 13) or an input initializer (later opsets); an
   absent/empty `axes` reduces over every axis. `keepdims=1` (the default) keeps reduced

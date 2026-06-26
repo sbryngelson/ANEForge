@@ -24,6 +24,27 @@ def test_sigmoid_builds():
   m = _model([helper.make_node("Sigmoid", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "sigmoid"
 
+def test_tier3_unary_ops_build():  # cheap unary ops over existing graph ops
+  for op, want in [("Abs", "abs"), ("Sign", "sign"), ("Sin", "sin"), ("Cos", "cos"), ("Softplus", "softplus"),
+                   ("Floor", "floor"), ("Ceil", "ceil"), ("Round", "round"), ("Reciprocal", "inverse"), ("Neg", "muls")]:
+    m = _model([helper.make_node(op, ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+    _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4) and out.op == want, f"{op} -> {out.op}"
+
+def test_tier3_max_min_tile_where_build():
+  for op, want in [("Max", "maximum"), ("Min", "minimum")]:
+    m = _model([helper.make_node(op, ["a", "b"], ["y"])], [_vi("a", [1, 4]), _vi("b", [1, 4])], [_vi("y", [1, 4])])
+    _, out = af.onnx_to_tensor(m); assert out.op == want
+  reps = onnx.numpy_helper.from_array(np.array([1, 2], np.int64), "r")
+  m = _model([helper.make_node("Tile", ["x", "r"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 8])], inits=[reps])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8) and out.op == "tile"
+
+def test_resize_half_pixel_needs_approx():  # default guards half_pixel; approx_resize=True maps it to bilinear
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], np.int64), "sz")
+  n = helper.make_node("Resize", ["x", "roi", "sc", "sz"], ["y"], mode="linear", coordinate_transformation_mode="half_pixel")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])], inits=[_empty_f32("roi"), _empty_f32("sc"), sizes])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m, approx_resize=True); assert out.shape == (1, 4, 16, 16) and out.op == "resize_bilinear"
+
 def test_clip_relu6_builds():
   n = helper.make_node("Clip", ["x"], ["y"], min=0.0, max=6.0)
   m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
@@ -204,7 +225,7 @@ def test_dynamic_dim_raises():  # symbolic dim_param -> static-shapes-only error
   with pytest.raises(ValueError): af.onnx_to_tensor(m)
 
 def test_unsupported_op_raises():  # unregistered op type fails loudly
-  m = _model([helper.make_node("Cos", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  m = _model([helper.make_node("ScatterND", ["x", "i", "u"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
 def test_conv_non_uniform_strides_raises():
@@ -780,3 +801,22 @@ def test_quantized_qdq_matches_onnxruntime(tmp_path):
   got = np.asarray(af.load_onnx(qdq)(x.astype(np.float16))).astype(np.float32).ravel()
   ref = np.asarray(onnxruntime.InferenceSession(qdq).run(None, {"x": x})[0]).astype(np.float32).ravel()
   cos = _cos(got, ref); assert cos > 0.99, f"quantized QDQ ANE vs onnxruntime cosine={cos}"
+
+# -- Tier 3 cheap ops + Tier 5 half-pixel resize approximation -------------------- #
+@requires_ane
+def test_tier3_softplus_matches_onnxruntime():
+  rng = np.random.default_rng(0); x = (rng.standard_normal((1, 8)) * 2).astype(np.float32)
+  m = _model([helper.make_node("Softplus", ["x"], ["y"])], [_vi("x", [1, 8])], [_vi("y", [1, 8])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"Softplus ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_resize_half_pixel_approx_close():  # the opt-in approximation is ~0.99 on a smooth upsample
+  rng = np.random.default_rng(0)
+  x = np.repeat(np.repeat(rng.standard_normal((1, 4, 4, 4)).astype(np.float32), 2, 2), 2, 3)  # smooth 8x8
+  sizes = onnx.numpy_helper.from_array(np.array([1, 4, 16, 16], np.int64), "sz")
+  n = helper.make_node("Resize", ["x", "roi", "sc", "sz"], ["y"], mode="linear", coordinate_transformation_mode="half_pixel")
+  m = _model([n], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 16, 16])], inits=[_empty_f32("roi"), _empty_f32("sc"), sizes])
+  got = np.asarray(af.load_onnx(m, approx_resize=True)(x.astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnx_run(m, x)).astype(np.float32).ravel()
+  cos = _cos(got, ref); assert cos > 0.95, f"half-pixel approx Resize ANE vs onnxruntime cosine={cos}"
