@@ -30,6 +30,7 @@ class LlamaConfig:
   dim: int; n_layers: int; n_heads: int; n_kv_heads: int; ffn_dim: int; vocab: int
   rope_base: float = 10000.0; norm_eps: float = 1e-5; head_dim: int = 0
   layers: list[LayerSpec] = field(default_factory=list)
+  extra: dict = field(default_factory=dict)   # arch-specific params for non-default mixers (e.g. DeltaNet head dims)
 
   @property
   def dh(self) -> int: return self.head_dim or self.dim // self.n_heads
