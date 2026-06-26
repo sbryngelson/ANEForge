@@ -14,9 +14,35 @@ n_experts_per_tok, norm_topk_prob."""
 from __future__ import annotations
 import numpy as np
 
-from .graph import _const, select, topk
+from .graph import _const, concat as _concat, select
 from . import llm
 from .llm import LayerSpec, LlamaConfig
+
+_MAX_DIM = 65536          # ANE per-op dimension cap; the all-expert gate/up matmul must tile under it
+
+
+def _topk_gate(probs, k, E, T):
+  """Top-k routing weights WITHOUT a graph cut. The native `topk`/`sort` ops are graph cuts that don't
+  compose -- two of them in one program (i.e. two MoE layers) fail to compile -- so build the top-k mask by
+  peeling the row-max k times with plain reductions (`amax`) and `select`. Returns probs masked to the top-k
+  (0 elsewhere); the caller renormalizes. Selection matches exact top-k for distinct logits."""
+  neg = _const(np.full((T, E), -3.0e4, np.float16))
+  one = _const(np.ones((T, E), np.float16)); chosen = _const(np.zeros((T, E), np.float16))
+  rem = probs
+  for _ in range(k):
+    hit = rem.greater_equal(rem.amax([1]).reshape(T, 1))   # [T,E] bool: this round's row-max position
+    chosen = select(hit, one, chosen)                      # accumulate the selected experts
+    rem = select(hit, neg, rem)                            # drop it before the next round
+  return probs * chosen                                    # keep probs at the top-k, 0 elsewhere
+
+
+def _experts_gate(hn, wexps, E, ffn, dim, T):
+  """All experts' projection hn @ wexps[e].T -> [T, E, ffn], tiled over experts so each matmul's output
+  dimension (g*ffn) stays under the ANE's _MAX_DIM."""
+  g = max(1, min(E, _MAX_DIM // ffn))
+  parts = [hn.linear(wexps[s:s + g].reshape(min(g, E - s) * ffn, dim)).reshape(T, min(g, E - s), ffn)
+           for s in range(0, E, g)]
+  return parts[0] if len(parts) == 1 else _concat(parts, axis=1)
 
 
 def _moe(h, w, cfg, ls):
@@ -29,12 +55,11 @@ def _moe(h, w, cfg, ls):
   T = h.shape[0]
   hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)                       # [T, dim]
   probs = hn.linear(w["router"]).softmax(-1)                         # [T, E] softmax over all experts
-  thr = topk(probs, k).slice_by_size([0, k - 1], [T, 1])            # [T, 1]: the k-th largest prob (cutoff)
-  gate_w = select(probs.greater_equal(thr), probs, _const(np.zeros((T, E), np.float16)))   # zero out non-top-k
+  gate_w = _topk_gate(probs, k, E, T)                                # probs masked to top-k (cut-free)
   if e.get("norm_topk_prob", True):
     gate_w = gate_w / gate_w.sum([1]).reshape(T, 1)                  # renormalize over the selected k
-  gate = hn.linear(w["wgate_exps"].reshape(E * ffn, dim)).reshape(T, E, ffn)   # all experts, one matmul
-  up = hn.linear(w["wup_exps"].reshape(E * ffn, dim)).reshape(T, E, ffn)
+  gate = _experts_gate(hn, w["wgate_exps"], E, ffn, dim, T)          # [T, E, ffn] (tiled over experts)
+  up = _experts_gate(hn, w["wup_exps"], E, ffn, dim, T)
   act = (gate.silu() * up).transpose([1, 0, 2])                      # [E, T, ffn]
   out = act @ _const(np.ascontiguousarray(w["wdown_exps"]))          # [E,T,ffn] @ [E,ffn,dim] -> [E, T, dim]
   combined = (out * gate_w.transpose([1, 0]).reshape(E, T, 1)).sum([0]).reshape(T, dim)   # weight + combine
@@ -88,3 +113,50 @@ def _moe_adapter(c, sd) -> tuple[LlamaConfig, dict]:
 
 
 llm.ADAPTERS.append((lambda c: bool(getattr(c, "num_experts", 0)), _moe_adapter))
+
+
+def load_gguf(path: str, n_layers: int | None = None, compress: str | None = None) -> "llm.LlamaPrefill":
+  """Load a Qwen3-MoE GGUF (e.g. Qwen3-30B-A3B Q4_K_M) for ANE inference, dequantizing each tensor to fp16.
+
+  GGUF stores weights transposed-and-reversed; the `gguf` reader already returns them in PyTorch [out, in]
+  order, so the only re-layout is ffn_down_exps [E, dim, ffn] -> [E, ffn, dim] for the batched matmul.
+  `n_layers` truncates to the first N decoder layers -- the full 30B is ~60GB in fp16 (> RAM), but a few
+  layers fit, which is enough to measure whether MoE decode is latency-bound (dense viable) or
+  bandwidth-bound. Norms/router are F32 in the file; everything is cast to fp16 to halve resident memory."""
+  import gguf
+  from gguf.quants import dequantize
+  r = gguf.GGUFReader(path)
+  meta = {f.name: f for f in r.fields.values()}
+  arch = next(k.split(".")[0] for k in meta if k.endswith(".block_count"))
+  sc = lambda key: meta[arch + "." + key].parts[meta[arch + "." + key].data[-1]][0]
+  tn = {t.name: t for t in r.tensors}
+
+  def get(name, dtype: np.typing.DTypeLike = np.float16):   # dequantize -> fp16 (halves resident memory)
+    t = tn[name]; d = np.asarray(t.data)
+    if t.tensor_type != gguf.GGMLQuantizationType.F32:
+      d = dequantize(d, t.tensor_type)
+    return d.astype(dtype)
+
+  n_total = int(sc("block_count")); n = n_total if n_layers is None else min(n_layers, n_total)
+  E, k = int(sc("expert_count")), int(sc("expert_used_count"))
+  dim, vocab = int(sc("embedding_length")), tn["token_embd.weight"].data.shape[0]
+  cfg = llm.LlamaConfig(
+    dim=dim, n_layers=n, n_heads=int(sc("attention.head_count")), n_kv_heads=int(sc("attention.head_count_kv")),
+    ffn_dim=int(sc("expert_feed_forward_length")), vocab=int(vocab), rope_base=float(sc("rope.freq_base")),
+    norm_eps=float(sc("attention.layer_norm_rms_epsilon")), head_dim=int(sc("attention.key_length")),
+    layers=[llm.LayerSpec(mixer="attention", mlp="moe", qk_norm=True) for _ in range(n)],
+    extra={"n_experts": E, "n_experts_per_tok": k, "norm_topk_prob": True})
+  # embed (host gather) and lm_head (host matmul) stay fp32: numpy has no BLAS for fp16, so an fp16 lm_head
+  # at vocab 151936 makes per-token logits pathologically slow.
+  w = {"embed": get("token_embd.weight", np.float32), "final_norm": get("output_norm.weight"),
+       "lm_head": get("output.weight", np.float32), "layers": []}
+  for L in range(n):
+    b = f"blk.{L}."
+    w["layers"].append({
+      "wq": get(b + "attn_q.weight"), "wk": get(b + "attn_k.weight"), "wv": get(b + "attn_v.weight"),
+      "wo": get(b + "attn_output.weight"), "q_norm": get(b + "attn_q_norm.weight"),
+      "k_norm": get(b + "attn_k_norm.weight"), "attn_norm": get(b + "attn_norm.weight"),
+      "mlp_norm": get(b + "ffn_norm.weight"), "router": get(b + "ffn_gate_inp.weight"),
+      "wgate_exps": get(b + "ffn_gate_exps.weight"), "wup_exps": get(b + "ffn_up_exps.weight"),
+      "wdown_exps": np.ascontiguousarray(get(b + "ffn_down_exps.weight").transpose(0, 2, 1))})  # [E,dim,ffn]->[E,ffn,dim]
+  return llm.LlamaPrefill(cfg, w, compress=compress)
