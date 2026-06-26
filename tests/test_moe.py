@@ -1,8 +1,8 @@
 import numpy as np
 import aneforge as af
-import aneforge.moe  # noqa: F401 - registers the "moe" MLP into the llm registries
-from aneforge.llm import LlamaConfig, LayerSpec
-from aneforge.moe import _moe
+import aneforge.moe  # noqa: F401 - registers the "moe" MLP + adapter into the llm registries
+from aneforge.llm import LlamaConfig, LayerSpec, LlamaPrefill
+from aneforge.moe import _moe, _moe_adapter
 from _helpers import requires_ane
 
 
@@ -52,3 +52,22 @@ def test_moe_matches_numpy_reference():  # dense ANE MoE == exact top-k routing 
     ref = _ref(h, w, cfg, ffn)
     cos = float((got.ravel() @ ref.ravel()) / (np.linalg.norm(got) * np.linalg.norm(ref) + 1e-9))
     assert cos > 0.99, f"T={T}: dense MoE diverged from top-k reference (cos {cos:.4f})"
+
+
+@requires_ane
+def test_moe_prefill_matches_huggingface():  # definitive: ANE MoE model (adapter + _moe) == HF Qwen3MoeForCausalLM
+  import torch
+  from transformers import Qwen3MoeConfig, Qwen3MoeForCausalLM
+  hf_cfg = Qwen3MoeConfig(hidden_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
+                          intermediate_size=128, moe_intermediate_size=32, num_experts=8, num_experts_per_tok=2,
+                          vocab_size=64, rms_norm_eps=1e-5, rope_theta=10000.0, max_position_embeddings=64,
+                          decoder_sparse_step=1, norm_topk_prob=True, head_dim=16)
+  torch.manual_seed(0); m = Qwen3MoeForCausalLM(hf_cfg).eval()
+  toks = np.random.default_rng(0).integers(0, 64, 10)
+  with torch.no_grad(): ref = m(torch.tensor(toks)[None]).logits[0, -1].numpy()
+  sd = {k: v.detach().float().numpy() for k, v in m.state_dict().items()}
+  cfg, weights = _moe_adapter(m.config, sd)
+  assert [ls.mlp for ls in cfg.layers] == ["moe", "moe"]      # both layers routed (decoder_sparse_step=1)
+  ane = np.asarray(LlamaPrefill(cfg, weights).prefill(toks)).ravel().astype(np.float32)
+  cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
+  assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE MoE vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"

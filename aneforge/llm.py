@@ -313,11 +313,18 @@ def _cfg_from_hf(c) -> LlamaConfig:
                      head_dim=int(getattr(c, "head_dim", 0) or 0))
 
 
+# Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, state_dict) -> (cfg, weights)).
+# First match wins; the dense Llama/Qwen path is the fallback. New architectures (MoE, hybrid) append here
+# from their own module (e.g. aneforge.moe) so the loader stays arch-agnostic.
+ADAPTERS: list = []
+
+
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
   """Load a Llama/Qwen-class model from Hugging Face for ANE inference. `compress` ("int8"/"int4"/"blockwise")
   quantizes the ANE weights."""
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
   sd = {k: v.detach().float().numpy() for k, v in hf.state_dict().items()}
-  cfg, weights = _dense_adapter(hf.config, sd)
+  adapt = next((fn for pred, fn in ADAPTERS if pred(hf.config)), _dense_adapter)
+  cfg, weights = adapt(hf.config, sd)
   return LlamaPrefill(cfg, weights, compress=compress)

@@ -34,6 +34,7 @@ from .streaming import CheckpointedStack
 from .models import Encoder, Vision, load, load_resnet18, conv_block, cifar_cnn, group_norm_train
 from .onnx import load_onnx, onnx_to_tensor, onnx_to_features
 from .llm import LlamaConfig, LlamaPrefill, from_pretrained as load_llm, rope, rope_tables, prefill_block
+from . import moe as moe   # registers the "moe" MLP + Qwen3-MoE adapter into the llm registries
 
 __all__ = [
     "Tensor", "Model", "SegmentedModel", "PrecisionWarning", "CrossChipFP16Warning",

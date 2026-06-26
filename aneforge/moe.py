@@ -16,6 +16,7 @@ import numpy as np
 
 from .graph import _const, select, topk
 from . import llm
+from .llm import LayerSpec, LlamaConfig
 
 
 def _moe(h, w, cfg, ls):
@@ -42,3 +43,48 @@ def _moe(h, w, cfg, ls):
 
 llm.PREFILL_MLPS["moe"] = _moe
 llm.DECODE_MLPS["moe"] = _moe
+
+
+def _moe_adapter(c, sd) -> tuple[LlamaConfig, dict]:
+  """Adapter for Qwen3-MoE: attention layers as usual; sparse FFN layers carry stacked expert weights and a
+  router. Reads the fused HF expert layout -- experts.gate_up_proj [E, dim, 2*ffn] (gate||up) and
+  experts.down_proj [E, ffn, dim] -- and lays them out for `_moe` (wgate_exps/wup_exps [E, ffn, dim] for the
+  per-expert linears, wdown_exps [E, ffn, dim] for the batched matmul). `decoder_sparse_step`/`mlp_only_layers`
+  pick which layers are MoE vs plain SwiGLU."""
+  n, E, k = int(c.num_hidden_layers), int(c.num_experts), int(c.num_experts_per_tok)
+  moe_ffn = int(c.moe_intermediate_size)
+  qk = "model.layers.0.self_attn.q_norm.weight" in sd
+  step = int(getattr(c, "decoder_sparse_step", 1) or 1)
+  mlp_only = set(getattr(c, "mlp_only_layers", []) or [])
+  is_moe = [(L not in mlp_only) and ((L + 1) % step == 0) for L in range(n)]
+  specs = [LayerSpec(mixer="attention", mlp=("moe" if is_moe[L] else "swiglu"), qk_norm=qk) for L in range(n)]
+  cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
+                    n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
+                    ffn_dim=c.intermediate_size, vocab=c.vocab_size,
+                    rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0), layers=specs,
+                    extra={"n_experts": E, "n_experts_per_tok": k,
+                           "norm_topk_prob": bool(getattr(c, "norm_topk_prob", True))})
+  w = {"embed": sd["model.embed_tokens.weight"], "final_norm": sd["model.norm.weight"],
+       "lm_head": sd.get("lm_head.weight", sd["model.embed_tokens.weight"]), "layers": []}
+  for L in range(n):
+    p = f"model.layers.{L}."
+    lw = {"wq": sd[p + "self_attn.q_proj.weight"], "wk": sd[p + "self_attn.k_proj.weight"],
+          "wv": sd[p + "self_attn.v_proj.weight"], "wo": sd[p + "self_attn.o_proj.weight"],
+          "attn_norm": sd[p + "input_layernorm.weight"], "mlp_norm": sd[p + "post_attention_layernorm.weight"]}
+    if qk:
+      lw["q_norm"] = sd[p + "self_attn.q_norm.weight"]; lw["k_norm"] = sd[p + "self_attn.k_norm.weight"]
+    if is_moe[L]:
+      gu = sd[p + "mlp.experts.gate_up_proj"]                                    # [E, 2*ffn, dim] (out=gate||up)
+      lw["router"] = sd[p + "mlp.gate.weight"]                                   # [E, dim]
+      lw["wgate_exps"] = np.ascontiguousarray(gu[:, :moe_ffn, :])                # [E, ffn, dim] (Linear out,in)
+      lw["wup_exps"] = np.ascontiguousarray(gu[:, moe_ffn:, :])                  # [E, ffn, dim]
+      lw["wdown_exps"] = np.ascontiguousarray(sd[p + "mlp.experts.down_proj"].transpose(0, 2, 1))  # [E,dim,ffn]->[E,ffn,dim]
+    else:
+      lw["wgate"] = sd[p + "mlp.gate_proj.weight"]; lw["wup"] = sd[p + "mlp.up_proj.weight"]
+      lw["wdown"] = sd[p + "mlp.down_proj.weight"]
+    w["layers"].append(lw)
+  return cfg, w
+
+
+llm.ADAPTERS.append((lambda c: bool(getattr(c, "num_experts", 0)), _moe_adapter))
