@@ -38,8 +38,10 @@ prefills at **~8,600 prompt-tok/s**, and produces correct text:
 *"The capital of France is"* → *"Paris. The capital of Italy is Rome. The capital of Spain is
 Madrid. The capital of Portugal is Lisbon. ..."*
 
-A runnable benchmark (prompt-tokens/sec, plus `--energy` for ANE joules/token via
-`powermetrics`) is [`examples/llm_prefill.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/llm_prefill.py).
+[`examples/llm_chat.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/llm_chat.py)
+is an interactive chat that streams a reply token-by-token on the ANE; a runnable benchmark
+(prompt-tokens/sec, plus `--energy` for ANE joules/token via `powermetrics`) is
+[`examples/llm_prefill.py`](https://github.com/sbryngelson/ANEForge/blob/main/examples/llm_prefill.py).
 
 ## What's inside
 

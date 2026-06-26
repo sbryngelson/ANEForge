@@ -163,10 +163,11 @@ class LlamaPrefill:
     self._dec = {"M": M, "net": net, "p": ports, "cos": cos_t, "sin": sin_t}
     return self._dec
 
-  def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None):
+  def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None):
     """Greedy autoregressive generation with a resident on-device KV-cache. The decode program (compiled once
     and cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each
-    step feeds only the token embedding + a position one-hot. Returns the generated token ids."""
+    step feeds only the token embedding + a position one-hot. `on_token(id)` is called per token (streaming).
+    Returns the generated token ids."""
     cfg = self.cfg; KV, dh = cfg.n_kv_heads, cfg.dh; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
     d = self._decoder(M); net = d["net"]; p = d["p"]
@@ -187,6 +188,7 @@ class LlamaPrefill:
       if pos >= M - 1: break                                   # cache full
       nxt = int(self._logits(step(cur, pos)).argmax()); out.append(nxt)
       if nxt == eos_id: break
+      if on_token is not None: on_token(nxt)                   # stream the token
       cur = nxt; pos += 1
     return out
 
