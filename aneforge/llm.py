@@ -12,9 +12,13 @@ from . import _compile
 
 @dataclass
 class LlamaConfig:
-  """A Llama/Qwen-class decoder config (the fields the prefill graph needs)."""
+  """A Llama/Qwen-class decoder config (the fields the prefill graph needs). `head_dim` defaults to
+  `dim // n_heads` but is explicit for Qwen3 (where it differs)."""
   dim: int; n_layers: int; n_heads: int; n_kv_heads: int; ffn_dim: int; vocab: int
-  rope_base: float = 10000.0; norm_eps: float = 1e-5
+  rope_base: float = 10000.0; norm_eps: float = 1e-5; head_dim: int = 0
+
+  @property
+  def dh(self) -> int: return self.head_dim or self.dim // self.n_heads
 
 
 def rope_tables(seq: int, dh: int, base: float = 10000.0):
@@ -54,12 +58,16 @@ def _causal_attn(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
 
 
 def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin) -> Tensor:
-  """One pre-norm Llama decoder block over a prompt `x` [S, dim]: RMSNorm -> QKV -> RoPE -> causal attention -> SwiGLU MLP, with residuals."""
-  H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dim // cfg.n_heads, x.shape[0]
+  """One pre-norm Llama/Qwen decoder block over a prompt `x` [S, dim]: RMSNorm -> QKV (+ Qwen3 QK-norm)
+  -> RoPE -> causal attention -> SwiGLU MLP, with residuals."""
+  H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dh, x.shape[0]
   xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
-  q = xn.linear(w["wq"]).reshape(S, H, dh).transpose([1, 0, 2]).reshape(1, H, S, dh)
-  k = xn.linear(w["wk"]).reshape(S, KV, dh).transpose([1, 0, 2]).reshape(1, KV, S, dh)
-  v = xn.linear(w["wv"]).reshape(S, KV, dh).transpose([1, 0, 2]).reshape(1, KV, S, dh)
+  q = xn.linear(w["wq"]).reshape(S, H, dh); k = xn.linear(w["wk"]).reshape(S, KV, dh); v = xn.linear(w["wv"]).reshape(S, KV, dh)
+  if "q_norm" in w:                                 # Qwen3 QK-norm: per-head RMSNorm over head_dim before RoPE
+    q = q.reshape(S * H, dh).rms_norm(w["q_norm"], cfg.norm_eps).reshape(S, H, dh)
+    k = k.reshape(S * KV, dh).rms_norm(w["k_norm"], cfg.norm_eps).reshape(S, KV, dh)
+  q = q.transpose([1, 0, 2]).reshape(1, H, S, dh); k = k.transpose([1, 0, 2]).reshape(1, KV, S, dh)
+  v = v.transpose([1, 0, 2]).reshape(1, KV, S, dh)
   q, k = rope(q, cos, sin), rope(k, cos, sin)
   k, v = _repeat_kv(k, H // KV), _repeat_kv(v, H // KV)
   a = _causal_attn(q, k, v).reshape(H, S, dh).transpose([1, 0, 2]).reshape(S, H * dh)
@@ -76,24 +84,27 @@ class LlamaPrefill:
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0
 
   def compile(self, seq: int):
-    cfg = self.cfg; dh = cfg.dim // cfg.n_heads
-    cos, sin = rope_tables(seq, dh, cfg.rope_base)
+    cfg = self.cfg
+    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base)
     x = _input((seq, cfg.dim))
     for lw in self.w["layers"]:
       x = prefill_block(x, lw, cfg, cos, sin)
     x = x.rms_norm(self.w["final_norm"], cfg.norm_eps)
     last = x.slice_by_size([seq - 1, 0], [1, cfg.dim])      # only the last position predicts the next token
-    self._net = _compile.compile(last.linear(self.w["lm_head"]))
+    self._net = _compile.compile(last)                     # the ANE produces the final hidden state [1, dim]
     self._seq = seq
     return self
 
   def prefill(self, token_ids):
-    """Prefill `token_ids` (length must match `compile(seq)`) and return the next-token logits [1, vocab]."""
+    """Prefill `token_ids` (length must match `compile(seq)`) and return the next-token logits [1, vocab].
+    The transformer layers run on the ANE; the lm_head vocab projection (a single matvec, and the vocab can
+    exceed the ANE's per-op dim limit) is done on host."""
     if self._net is None or len(token_ids) != self._seq:
       self.compile(len(token_ids))
     net = self._net; assert net is not None
     emb = self.w["embed"][np.asarray(token_ids)]            # host embedding gather -> [S, dim]
-    return np.asarray(net(emb.astype(np.float16)))
+    hidden = np.asarray(net(emb.astype(np.float16)))[0].astype(np.float32)   # final hidden state [dim]
+    return (hidden @ np.asarray(self.w["lm_head"]).T)[None]                  # host lm_head -> [1, vocab]
 
 
 def _weights_from_state_dict(sd, cfg: LlamaConfig) -> dict:
@@ -102,12 +113,15 @@ def _weights_from_state_dict(sd, cfg: LlamaConfig) -> dict:
        "lm_head": sd.get("lm_head.weight", sd["model.embed_tokens.weight"]), "layers": []}
   for L in range(cfg.n_layers):
     p = f"model.layers.{L}."
-    w["layers"].append({
+    lw = {
       "wq": sd[p + "self_attn.q_proj.weight"], "wk": sd[p + "self_attn.k_proj.weight"],
       "wv": sd[p + "self_attn.v_proj.weight"], "wo": sd[p + "self_attn.o_proj.weight"],
       "wgate": sd[p + "mlp.gate_proj.weight"], "wup": sd[p + "mlp.up_proj.weight"],
       "wdown": sd[p + "mlp.down_proj.weight"], "attn_norm": sd[p + "input_layernorm.weight"],
-      "mlp_norm": sd[p + "post_attention_layernorm.weight"]})
+      "mlp_norm": sd[p + "post_attention_layernorm.weight"]}
+    if p + "self_attn.q_norm.weight" in sd:         # Qwen3 QK-norm
+      lw["q_norm"] = sd[p + "self_attn.q_norm.weight"]; lw["k_norm"] = sd[p + "self_attn.k_norm.weight"]
+    w["layers"].append(lw)
   return w
 
 
@@ -115,7 +129,8 @@ def _cfg_from_hf(c) -> LlamaConfig:
   return LlamaConfig(dim=c.hidden_size, n_layers=c.num_hidden_layers, n_heads=c.num_attention_heads,
                      n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                      ffn_dim=c.intermediate_size, vocab=c.vocab_size,
-                     rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps))
+                     rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
+                     head_dim=int(getattr(c, "head_dim", 0) or 0))
 
 
 def from_pretrained(name: str) -> LlamaPrefill:

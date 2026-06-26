@@ -40,8 +40,15 @@ A pre-norm Llama/Qwen decoder block, all on the ANE:
 
 ## Correctness
 
-The prefill output matches Hugging Face's own `LlamaForCausalLM` forward pass — next-token
-logits at **cosine ~1.0** and an identical argmax — validated on-device (`tests/test_llm.py`).
+The prefill output matches Hugging Face's own forward pass — next-token logits at **cosine
+~1.0** and an identical argmax — validated on-device (`tests/test_llm.py`). On a real
+**Qwen3-0.6B** (28 layers), *"The capital of France is"* → **" Paris"**, the same token
+HuggingFace predicts, at **~8,600 prompt-tokens/sec** prefill.
+
+Qwen3 specifics are handled: a separate `head_dim` (≠ `dim/n_heads`), **QK-norm** (per-head
+RMSNorm on Q/K before RoPE), and a large vocab — the transformer layers run on the ANE and
+the lm_head vocab projection (a single matvec, and the vocab can exceed the ANE's per-op
+dimension limit) is done on host.
 
 ## Scope
 
