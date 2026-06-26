@@ -80,7 +80,12 @@ model on the ANE, [`examples/onnx_import.py`](examples/onnx_import.py) imports
 a `.onnx` classifier via `af.load_onnx` and validates it against onnxruntime
 (cosine 1.0000); [`examples/onnx_finetune.py`](examples/onnx_finetune.py) imports
 one as a frozen feature extractor and trains a new head on it entirely on the
-ANE (transfer learning). For retrieval,
+ANE (transfer learning). For LLMs, [`examples/llm_chat.py`](examples/llm_chat.py)
+is an interactive chat that streams a reply token-by-token on the ANE (resident
+KV-cache decode, ~75 tok/s on Qwen3-0.6B), and
+[`examples/llm_prefill.py`](examples/llm_prefill.py) loads a Llama/Qwen-class
+model via `af.load_llm` and benchmarks prefill/decode (matching Hugging Face
+logits). For retrieval,
 [`examples/rag_embeddings.py`](examples/rag_embeddings.py) is a LangChain
 `Embeddings` drop-in backed by the on-ANE encoder (4-5x faster than the GPU,
 cosine 1.0000).

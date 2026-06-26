@@ -33,6 +33,7 @@ from .autograd import (Adam, adam_step, backward, backward_from, conv2d, conv_pa
 from .streaming import CheckpointedStack
 from .models import Encoder, Vision, load, load_resnet18, conv_block, cifar_cnn, group_norm_train
 from .onnx import load_onnx, onnx_to_tensor, onnx_to_features
+from .llm import LlamaConfig, LlamaPrefill, from_pretrained as load_llm, rope, rope_tables, prefill_block
 
 __all__ = [
     "Tensor", "Model", "SegmentedModel", "PrecisionWarning", "CrossChipFP16Warning",
@@ -57,6 +58,7 @@ __all__ = [
     "conv_param", "conv2d", "CheckpointedStack",
     "fft", "linalg", "special", "einsum", "dsp",
     "load_onnx", "onnx_to_tensor", "onnx_to_features",
+    "LlamaConfig", "LlamaPrefill", "load_llm", "rope", "rope_tables", "prefill_block",
 ]
 
 # applied-math submodules (af.fft / af.linalg / af.special / af.dsp), self-contained over the public ops
