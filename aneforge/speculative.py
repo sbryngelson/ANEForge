@@ -2,16 +2,16 @@
 
 A small draft model proposes K tokens; the target verifies all K in ONE forward against its resident KV-cache.
 On the ANE this is a strong win: decode is latency/dispatch-bound at one token, so `verify(K) ~= verify(1)`
-(~1.05x for K=5 on Qwen3-8B) — the draft's proposals are checked almost for free. Measured 2.04x end-to-end on
-Qwen3-8B with a Qwen3-0.6B draft (7.5 -> 15.3 tok/s); the host lm_head (Kq-per-round) is the remaining cap.
-Greedy speculative is exact: it emits the same tokens as plain greedy decode.
+(~1.05x for K=5 on Qwen3-8B) — the draft's proposals are checked almost for free. With a tiled ANE lm_head
+(which also amortizes, ~1.02x), measured 2.28x end-to-end on Qwen3-8B with a Qwen3-0.6B draft (7.4 -> 16.8
+tok/s); the draft is then the remaining cost. Greedy speculative is exact: it emits the same tokens as greedy.
 
 Target: a dense Llama/Qwen `LlamaPrefill` (the registered `attention` mixer). Draft: a smaller `LlamaPrefill`
 sharing the tokenizer/vocab. Use via `spec_generate(target, draft, ids, ...)`."""
 from __future__ import annotations
 import numpy as np
 
-from .graph import input as _input, concat as _cat
+from .graph import input as _input, concat as _cat, _const
 from . import _compile
 from .llm import rope_tables, _repeat_kv3
 
@@ -62,12 +62,31 @@ def _build_verifier(m, M, Kq):
          "cosp": inm[id(cosp)], "sinp": inm[id(sinp)], "h": om[h], "states": {inm[id(t)]: t.shape for t in Kin + Vin}}
     chunks.append({"net": net, "p": p})
   cos_t, sin_t = rope_tables(M, dh, cfg.rope_base)        # dense full RoPE (speculative target is a dense model)
-  return {"M": M, "Kq": Kq, "chunks": chunks, "cos": cos_t, "sin": sin_t}
+  return {"M": M, "Kq": Kq, "chunks": chunks, "cos": cos_t, "sin": sin_t, "lmhead": _build_lm_head(m, Kq)}
+
+
+def _build_lm_head(m, Kq):
+  """Tiled lm_head on the ANE: [Kq, dim] -> [Kq, vocab] in `ceil(vocab/65536)` matmul tiles (the per-op dim
+  limit). Amortizes over Kq like the verify (~1.02x for K=5), so the per-round logit cost drops from Kq host
+  matmuls to one ANE forward."""
+  D = m.cfg.dim; lm = np.asarray(m.w["lm_head"]).astype(np.float32); V = lm.shape[0]
+  nt = (V + 65535) // 65536; ts = (V + nt - 1) // nt
+  x = _input((Kq, D)); outs = [x @ _const(np.ascontiguousarray(lm[i * ts:min((i + 1) * ts, V)].T)) for i in range(nt)]
+  net = _compile.compile_multi(outs, compress=m.compress)
+  inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
+  return {"net": net, "x": inm[id(x)], "outs": [om[o] for o in outs], "V": V}
+
+
+def _logits(lmh, hidden):
+  """Run the tiled ANE lm_head on `hidden` [Kq, dim] -> logits [Kq, vocab]."""
+  pr = lmh["net"].prog; pr.set_input(lmh["x"], hidden.astype(f16)); pr.execute()
+  tiles = [np.asarray(pr.read_output(op)) for op in lmh["outs"]]
+  return np.concatenate(tiles, axis=1)[:, :lmh["V"]].astype(np.float32)
 
 
 def _verify(m, vf, toks, positions, attends):
   """Run the Kq-token verify: write `toks` to cache `positions`, each attending to cache 0..`attends[i]`.
-  Returns next-token logits [Kq, vocab] (host lm_head)."""
+  Returns the final hidden states [Kq, dim] (pass to `_logits` for next-token logits)."""
   M, Kq, chunks = vf["M"], vf["Kq"], vf["chunks"]
   plc = np.zeros((m.cfg.n_kv_heads, M, Kq), f16); iv = np.ones((1, M, 1), f16); mk = np.full((1, Kq, M), -1e4, f16)
   for i in range(Kq):
@@ -78,7 +97,7 @@ def _verify(m, vf, toks, positions, attends):
     p = c["p"]; pr = c["net"].prog; pr.set_input(p["x"], h)
     for nm, val in (("place", plc), ("invc", iv), ("mask", mk), ("cosp", cs), ("sinp", ss)): pr.set_input(p[nm], val.astype(f16))
     pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
-  return h.reshape(Kq, m.cfg.dim).astype(np.float32) @ np.asarray(m.w["lm_head"]).T
+  return _logits(vf["lmhead"], h.reshape(Kq, m.cfg.dim).astype(np.float32))
 
 
 def _draft_step(draft, d, tok, pos):
