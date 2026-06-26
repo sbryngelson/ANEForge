@@ -102,6 +102,12 @@ def test_batchnorm_builds():  # shape unchanged
   m = _model([n], [_vi("x", [1, 4, 5, 5])], [_vi("y", [1, 4, 5, 5])], inits=[s, bb, mean, var])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 5, 5) and out.op == "batch_norm"
 
+def test_layernorm_builds():  # transformer LayerNorm over the last axis -> reshape back to input shape
+  s = _init(np.ones(8), "s"); bb = _init(np.zeros(8), "bb")
+  n = helper.make_node("LayerNormalization", ["x", "s", "bb"], ["y"], axis=-1, epsilon=1e-5)
+  m = _model([n], [_vi("x", [1, 16, 8])], [_vi("y", [1, 16, 8])], inits=[s, bb])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 16, 8) and out.op == "reshape"
+
 def test_concat_builds():
   n = helper.make_node("Concat", ["a", "b"], ["y"], axis=1)
   m = _model([n], [_vi("a", [1, 3]), _vi("b", [1, 3])], [_vi("y", [1, 6])])
@@ -670,3 +676,34 @@ def test_slice_channel_split_onnx_matches_onnxruntime():  # activation Slice -> 
   m = _model([n], [_vi("x", [1, 8, 4, 4])], [_vi("y", [1, 4, 4, 4])], inits=[st, en, ax])
   got, ref = _run_vs_ort(m, x)
   cos = _cos(got, ref); assert cos > 0.999, f"Slice channel-split ANE vs onnxruntime cosine={cos}"
+
+# -- transformers: LayerNorm + attention block on-device ---------------------------- #
+@requires_ane
+def test_layernorm_onnx_matches_onnxruntime():
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 16, 8)).astype(np.float32)
+  s = _init((rng.standard_normal(8) * 0.5 + 1).astype(np.float32), "s"); bb = _init((rng.standard_normal(8) * 0.1).astype(np.float32), "bb")
+  n = helper.make_node("LayerNormalization", ["x", "s", "bb"], ["y"], axis=-1, epsilon=1e-5)
+  m = _model([n], [_vi("x", [1, 16, 8])], [_vi("y", [1, 16, 8])], inits=[s, bb])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"LayerNorm ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_attention_block_matches_onnxruntime():  # full transformer attention: LN + QKV + batched attn + softmax + proj
+  import torch, torch.nn as nn
+  class Attn(nn.Module):
+    def __init__(self, d=64, h=4):
+      super().__init__(); self.h = h; self.d = d
+      self.qkv = nn.Linear(d, 3 * d); self.proj = nn.Linear(d, d); self.ln = nn.LayerNorm(d)
+    def forward(self, x):
+      b, t, _ = x.shape; x = self.ln(x); qkv = self.qkv(x).reshape(b, t, 3, self.h, self.d // self.h).permute(2, 0, 3, 1, 4)
+      q, k, v = qkv[0], qkv[1], qkv[2]; a = ((q @ k.transpose(-2, -1)) * (1.0 / (self.d // self.h) ** 0.5)).softmax(-1)
+      return self.proj((a @ v).transpose(1, 2).reshape(b, t, self.d))
+  x = torch.randn(1, 16, 64); p = "/tmp/_aneforge_attn.onnx"
+  torch.onnx.export(Attn().eval(), (x,), p, opset_version=17, do_constant_folding=True, input_names=["x"], dynamo=False)
+  net = af.load_onnx(p); got = np.asarray(net(x.numpy().astype(np.float16))).astype(np.float32).ravel()
+  ref = np.asarray(onnxruntime_run(p, x.numpy())).astype(np.float32).ravel()
+  cos = _cos(got, ref); assert cos > 0.99, f"attention block ANE vs onnxruntime cosine={cos}"
+
+def onnxruntime_run(path, x):
+  import onnxruntime
+  return onnxruntime.InferenceSession(path).run(None, {"x": x})[0]

@@ -205,6 +205,14 @@ def _matmul(node, ins, a, i):
 def _bnorm(node, ins, a, i):
   x, s, bb, mean, var = ins[0], np.asarray(ins[1]), np.asarray(ins[2]), np.asarray(ins[3]), np.asarray(ins[4])
   return _bn(x, s, bb, mean, var, eps=float(a.get("epsilon", 1e-5)))
+@onnx_op("LayerNormalization")
+def _layernorm(node, ins, a, i):
+  """LayerNorm over the trailing axes [axis:] (the transformer/ViT case); folds to native layer_norm on a 2-D view."""
+  x = ins[0]; ax = int(a.get("axis", -1)) % len(x.shape)
+  scale = np.asarray(ins[1]).reshape(-1)
+  bias = np.asarray(ins[2]).reshape(-1) if len(ins) > 2 and ins[2] is not None else np.zeros_like(scale)
+  m, d = prod(x.shape[:ax]) or 1, prod(x.shape[ax:])
+  return x.reshape(m, d).layer_norm(scale, bias, float(a.get("epsilon", 1e-5))).reshape(*x.shape)
 @onnx_op("Reshape")
 def _reshape(node, ins, a, i):
   shape = [int(v) for v in np.asarray(ins[1])]
