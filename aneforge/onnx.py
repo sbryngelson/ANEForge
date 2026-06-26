@@ -8,7 +8,7 @@ from .graph import Tensor, input as _input, conv as _conv, batch_norm as _bn, co
 from .graph import instance_norm as _instnorm, space_to_depth as _s2d
 from .graph import local_response_norm as _lrnorm, depth_to_space as _d2s
 from .graph import resize_bilinear as _rbilin, resize_nearest_neighbor as _rnn
-from .graph import gather as _gather, topk as _topk
+from .graph import gather as _gather, topk as _topk, _const as _baked
 from . import _compile
 
 _ONNX: dict[str, Callable] = {}
@@ -99,24 +99,31 @@ def _gelu(node, ins, a, i):
 @onnx_op("PRelu")
 def _prelu(node, ins, a, i): return ins[0].prelu(np.asarray(ins[1]).reshape(-1))   # slope=ins[1], [C,1,1]->[C]
 @onnx_op("Pow")
-def _pow(node, ins, a, i): x, y = _two(ins, "Pow"); return x.pow(y)   # tensor-tensor only
+def _pow(node, ins, a, i): x, y = _binops(ins); return x.pow(y)
 @onnx_op("InstanceNormalization")
 def _instance_norm(node, ins, a, i):
   return _instnorm(ins[0], np.asarray(ins[1]), np.asarray(ins[2]), eps=float(a.get("epsilon", 1e-5)))
 @onnx_op("SpaceToDepth")
 def _space_to_depth(node, ins, a, i): return _s2d(ins[0], int(a["blocksize"]))
-def _two(ins, op):                                 # aneforge elementwise is tensor-tensor only
-  if not isinstance(ins[0], Tensor) or not isinstance(ins[1], Tensor):
-    raise NotImplementedError(f"ONNX {op}: a constant operand is not supported (tensor-tensor elementwise only)")
-  return ins[0], ins[1]
+def _binops(ins):                                  # a constant operand bakes into the fused program (const_array -> GOC fold)
+  return (ins[0] if isinstance(ins[0], Tensor) else _baked(ins[0]),
+          ins[1] if isinstance(ins[1], Tensor) else _baked(ins[1]))
 @onnx_op("Add")
-def _add(node, ins, a, i): x, y = _two(ins, "Add"); return x + y
+def _add(node, ins, a, i): x, y = _binops(ins); return x + y
 @onnx_op("Sub")
-def _sub(node, ins, a, i): x, y = _two(ins, "Sub"); return x - y
+def _sub(node, ins, a, i): x, y = _binops(ins); return x - y
 @onnx_op("Mul")
-def _mul(node, ins, a, i): x, y = _two(ins, "Mul"); return x * y
+def _mul(node, ins, a, i): x, y = _binops(ins); return x * y
 @onnx_op("Div")
-def _div(node, ins, a, i): x, y = _two(ins, "Div"); return x / y
+def _div(node, ins, a, i): x, y = _binops(ins); return x / y
+@onnx_op("HardSigmoid")
+def _hardsigmoid(node, ins, a, i):
+  """ONNX HardSigmoid = clip(alpha*x + beta, 0, 1); defaults alpha=0.2, beta=0.5."""
+  return (ins[0] * float(a.get("alpha", 0.2)) + float(a.get("beta", 0.5))).clip(0.0, 1.0)
+@onnx_op("HardSwish")
+def _hardswish(node, ins, a, i):
+  """ONNX HardSwish(x) = x * relu6(x + 3) / 6 (the fixed-point hard-swish)."""
+  return ins[0] * ((ins[0] + 3.0).relu6() * (1.0 / 6.0))
 @onnx_op("Clip")
 def _clip(node, ins, a, i):
   """Clip; opset<11 reads min/max attrs, opset>=11 reads inputs 2/3. (0,6)->relu6, (0,inf)->relu."""

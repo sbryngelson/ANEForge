@@ -407,9 +407,14 @@ def image_input(shape: Sequence[int], scale: float = 1.0 / 255.0, bias=0.0) -> T
   return y
 
 
+def _const(v) -> Tensor:
+  """Bake a numpy array / scalar as a fused `const_array` graph constant (a MIL `const`, folded to GOC for affine ops)."""
+  v = np.asarray(v, np.float16)
+  return Tensor(v.shape, "const_array", [], {"value": v})
+
+
 def _binary(a: Tensor, b, kind: str) -> Tensor:
-  if not isinstance(b, Tensor):
-    raise TypeError("aneforge add/sub/mul expect two graph Tensors (use weights via matmul/linear)")
+  if not isinstance(b, Tensor): b = _const(b)              # a numpy/scalar constant operand bakes into the fused program
   return Tensor(_broadcast(a.shape, b.shape), kind, [a, b])
 
 

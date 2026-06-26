@@ -176,11 +176,15 @@ def test_gemm_alpha_raises():
   m = _model([n], [_vi("x", [1, 16])], [_vi("y", [1, 10])], inits=[w, b])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
-def test_add_constant_operand_raises():  # elementwise is tensor-tensor only
+def test_add_constant_operand_builds():  # a constant operand bakes in as a fused const_array
   c = _init(np.zeros((1, 3)), "c")
   n = helper.make_node("Add", ["x", "c"], ["y"])
   m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])], inits=[c])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "add"
+
+def test_hardsigmoid_builds():
+  m = _model([helper.make_node("HardSigmoid", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "clip"
 
 def test_squeeze_no_axes_raises():  # squeeze-all has no static lowering
   n = helper.make_node("Squeeze", ["x"], ["y"])
@@ -235,11 +239,11 @@ def test_pow_builds():  # tensor-tensor exponent
   m = _model([helper.make_node("Pow", ["a", "b"], ["y"])], [_vi("a", [1, 3]), _vi("b", [1, 3])], [_vi("y", [1, 3])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "pow"
 
-def test_pow_constant_operand_raises():  # constant exponent cannot lower
+def test_pow_constant_operand_builds():  # a constant exponent bakes in (Pow(x, 2) etc.)
   c = _init(np.full((1, 3), 2.0), "c")
   n = helper.make_node("Pow", ["x", "c"], ["y"])
   m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])], inits=[c])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "pow"
 
 def test_instance_norm_builds():  # shape unchanged
   s = _init(np.ones(4), "s"); b = _init(np.zeros(4), "b")
@@ -554,3 +558,36 @@ def test_gather_onnx_matches_onnxruntime():  # static-index gather along axis 0
   m = _model([n], [_vi("x", [4, 8])], [_vi("y", [3, 8])], inits=[idx])
   got, ref = _run_vs_ort(m, x)
   cos = _cos(got, ref); assert cos > 0.999, f"Gather ANE vs onnxruntime cosine={cos}"
+
+# -- constant-operand elementwise (baked as a fused const_array, no graph cut) ---- #
+@requires_ane
+def test_mul_constant_onnx_matches_onnxruntime():  # per-channel constant scale
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  c = _init((rng.standard_normal((1, 4, 1, 1)) * 0.5).astype(np.float32), "c")
+  m = _model([helper.make_node("Mul", ["x", "c"], ["y"])], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 8, 8])], inits=[c])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"Mul-const ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_pow2_constant_onnx_matches_onnxruntime():  # Pow(x, 2) with a constant exponent
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  e = _init(np.array(2.0, np.float32), "e")
+  m = _model([helper.make_node("Pow", ["x", "e"], ["y"])], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 8, 8])], inits=[e])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"Pow2-const ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_hardsigmoid_onnx_matches_onnxruntime():  # clip(0.2x + 0.5, 0, 1)
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  m = _model([helper.make_node("HardSigmoid", ["x"], ["y"])], [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 8, 8])])
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"HardSigmoid ANE vs onnxruntime cosine={cos}"
+
+@requires_ane
+def test_hardswish_onnx_matches_onnxruntime():  # x * relu6(x+3)/6; HardSwish is opset 14
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
+  g = helper.make_graph([helper.make_node("HardSwish", ["x"], ["y"])], "g",
+                        [_vi("x", [1, 4, 8, 8])], [_vi("y", [1, 4, 8, 8])])
+  m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 14)]); m.ir_version = 9
+  got, ref = _run_vs_ort(m, x)
+  cos = _cos(got, ref); assert cos > 0.99, f"HardSwish ANE vs onnxruntime cosine={cos}"

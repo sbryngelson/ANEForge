@@ -33,8 +33,8 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 
 | Category | ONNX ops |
 | --- | --- |
-| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf` |
-| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` |
+| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf`, `HardSigmoid`, `HardSwish` |
+| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported) |
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool` |
 | Linear | `Gemm`, `MatMul` |
 | Normalization | `BatchNormalization`, `InstanceNormalization` |
@@ -75,9 +75,12 @@ mis-lower:
 - **Conv:** explicit `pads` only - `auto_pad` (`SAME_UPPER`/`SAME_LOWER`/`VALID`) raises.
 - **Pooling:** `ceil_mode=0` (floor) only; `AveragePool` rejects `count_include_pad=1`
   and `MaxPool` rejects `dilations != 1`.
-- **Elementwise.** `Add`/`Sub`/`Mul`/`Div`/`Pow` are tensor-tensor only; a constant
-  operand raises (exporters usually fold these into the adjacent
-  `Conv`/`BatchNormalization`). A constant `Pow` exponent (`Pow(x, 2)`) raises.
+- **Elementwise.** `Add`/`Sub`/`Mul`/`Div`/`Pow` accept either two tensors or a tensor
+  and a constant: a constant operand (scalar, per-channel, or broadcastable) bakes in as
+  a fused `const_array` (a MIL `const`, folded to the ANE's gain-offset epilogue for
+  affine ops), so `Mul(x, c)`, `Add(x, c)`, `Pow(x, 2)`, and the like need no graph cut.
+  This is what makes `HardSigmoid`/`HardSwish` and the scale/shift ops in MobileNetV3 and
+  ConvNeXt importable.
 - **Gelu:** exact erf-gelu only; `approximate="tanh"` raises.
 - **PRelu:** slope is a per-channel initializer (`[C]`, `[C,1,1]`, or scalar, flattened
   to `[C]`); input must be rank>=3 `[N,C,...]`.
