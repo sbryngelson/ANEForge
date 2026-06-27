@@ -82,7 +82,7 @@ nav:
       - Capabilities: capabilities.md
       - Op catalog: op-catalog.md
       - ONNX import: onnx.md
-      - LLM prefill: llm.md
+      - LLMs (decode, MoE, speculative): llm.md
   - API reference:
       - Overview: api/index.md
       - Graph & operators: api/graph.md

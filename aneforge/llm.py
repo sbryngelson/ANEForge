@@ -91,7 +91,8 @@ def _attn_prefill(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin)
   causal attention -> o_proj, with the residual."""
   H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dh, x.shape[0]
   xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
-  q = xn.linear(w["wq"]).reshape(S, H, dh); k = xn.linear(w["wk"]).reshape(S, KV, dh); v = xn.linear(w["wv"]).reshape(S, KV, dh)
+  q = xn.linear(w["wq"], w.get("q_bias")).reshape(S, H, dh)        # QKV biases (Qwen2): None when absent
+  k = xn.linear(w["wk"], w.get("k_bias")).reshape(S, KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(S, KV, dh)
   if ls.qk_norm:                                   # Qwen3 QK-norm: per-head RMSNorm over head_dim before RoPE
     q = q.reshape(S * H, dh).rms_norm(w["q_norm"], cfg.norm_eps).reshape(S, H, dh)
     k = k.reshape(S * KV, dh).rms_norm(w["k_norm"], cfg.norm_eps).reshape(S, KV, dh)
@@ -131,7 +132,8 @@ def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict,
   Kin = _input((KV, M, dh)); Vin = _input((KV, M, dh))
   oh, inv, mask, cosp, sinp = ctx["oh"], ctx["inv"], ctx["mask"], ctx["cosp"], ctx["sinp"]
   xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
-  q = xn.linear(w["wq"]).reshape(H, dh); k = xn.linear(w["wk"]).reshape(KV, dh); v = xn.linear(w["wv"]).reshape(KV, dh)
+  q = xn.linear(w["wq"], w.get("q_bias")).reshape(H, dh)           # QKV biases (Qwen2): None when absent
+  k = xn.linear(w["wk"], w.get("k_bias")).reshape(KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(KV, dh)
   if ls.qk_norm:
     q = q.rms_norm(w["q_norm"], cfg.norm_eps); k = k.rms_norm(w["k_norm"], cfg.norm_eps)
   q = rope(q.reshape(H, 1, dh), cosp, sinp)        # [H, 1, dh]
@@ -238,6 +240,8 @@ class LlamaPrefill:
       for k, t in ctx.items():
         if id(t) in inm: p[k] = inm[id(t)]                      # only ports the chunk's mixers actually use
       chunks.append({"net": net, "p": p})
+      if hasattr(self.w["layers"], "free"):                    # streamed weights: free this chunk's fp16 now it's baked
+        for li in grp: self.w["layers"].free(li)
     cos_t, sin_t = rope_tables(M, dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved)
     self._dec = {"M": M, "chunks": chunks, "cos": cos_t, "sin": sin_t}
     return self._dec
@@ -323,11 +327,17 @@ def _cfg_from_hf(c) -> LlamaConfig:
                      head_dim=int(getattr(c, "head_dim", 0) or 0))
 
 
+# Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, sd) -> (cfg, weights)); first match
+# wins, dense Llama/Qwen is the fallback. New archs append here (e.g. aneforge.moe) so the loader stays generic.
+ADAPTERS: list = []
+
+
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
   """Load a Llama/Qwen-class model from Hugging Face for ANE inference. `compress` ("int8"/"int4"/"blockwise")
   quantizes the ANE weights."""
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
   sd = {k: v.detach().float().numpy() for k, v in hf.state_dict().items()}
-  cfg, weights = _dense_adapter(hf.config, sd)
+  adapt = next((fn for pred, fn in ADAPTERS if pred(hf.config)), _dense_adapter)
+  cfg, weights = adapt(hf.config, sd)
   return LlamaPrefill(cfg, weights, compress=compress)

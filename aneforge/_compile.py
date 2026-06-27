@@ -1,7 +1,8 @@
 """Lower a graph into ONE fused e5rt program (one MIL op per node, weights in one BLOBFILE)."""
 from __future__ import annotations
 
-import tempfile
+import hashlib
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -318,6 +319,14 @@ def _e_matmul(em, t, n, s):
 def _e_bmm(em, t, n, s):
   em.line(f'{em.ty(t.shape)} {n} = matmul(transpose_x = bool(false), transpose_y = bool(false), '
       f'x = {s[0]}, y = {s[1]})[name = string("{n}")];')
+
+
+@op("bmm_w")
+def _e_bmm_w(em, t, n, s):
+  # batched matmul x @ W with a baked, quantizable weight W [B, K, N] (per-batch int8 scale via em.weight).
+  w = em.weight(f"{n}_w", t.attrs["wt"], allow_int8=True, int8=t.attrs.get("int8"), allow_int4=True)
+  em.line(f'{em.ty(t.shape)} {n} = matmul(transpose_x = bool(false), transpose_y = bool(false), '
+      f'x = {s[0]}, y = {w})[name = string("{n}")];')
 
 
 # shared const/param preambles for the conv & pool emitters.
@@ -795,15 +804,31 @@ def _sig_ty(em, t: Tensor) -> str:
   return em.ty(t.shape) if dt == "fp16" else em.ty_dt(t.shape, dt)
 
 
+def cache_root() -> Path:
+  """Persistent content-addressed build/compile cache (default ~/Models/.aneforge-cache, override
+  ANEFORGE_CACHE_DIR) -- replaces per-compile $TMPDIR mkdtemp dirs, which leaked and re-emitted every call."""
+  root = os.environ.get("ANEFORGE_CACHE_DIR") or os.path.join(os.path.expanduser("~"), "Models", ".aneforge-cache")
+  p = Path(root); p.mkdir(parents=True, exist_ok=True)
+  return p
+
+
 def _emit_program_dir(em, inputs, out_var, out_shape, build_dir):
-  """Write one e5rt program (MIL + weights) to a dir; return it."""
+  """Write one e5rt program (MIL + weights) to a dir. Without an explicit `build_dir` it's content-addressed
+  under `cache_root()`: identical graph+weights is written and compiled ONCE, reused on every later compile."""
   sig = ", ".join(f"{_sig_ty(em, t)} {t._name}" for t in inputs)
   mil = (f"program(1.3)\n{_BUILD_INFO}\n{{\n    func main<ios18>({sig}) {{\n"
      + "\n".join(em.lines) + f"\n    }} -> ({out_var});\n}}\n")
-  d = Path(build_dir) if build_dir else Path(tempfile.mkdtemp(prefix="aneforge_"))
+  weights = em.blob.build()
+  if build_dir:
+    d = Path(build_dir)
+  else:
+    key = hashlib.sha256(mil.encode() + weights).hexdigest()[:24]
+    d = cache_root() / key
+    if (d / "model.mil").is_file() and (d / "weights.bin").is_file():
+      return d                                   # reuse: identical program already emitted (cache/ compiled too)
   d.mkdir(parents=True, exist_ok=True)
   (d / "model.mil").write_text(mil)
-  (d / "weights.bin").write_bytes(em.blob.build())
+  (d / "weights.bin").write_bytes(weights)
   return d
 
 
