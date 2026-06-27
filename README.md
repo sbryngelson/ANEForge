@@ -174,6 +174,19 @@ Pretrained models, each fused into one ANE program:
 Trained from scratch on the engine: an MLP, a CNN (CIFAR-10 to 71%), a transformer block, a LLaMA-style block, and a character language model.
 Operator coverage is tracked op by op across M1 to M5 in the [op catalog](docs/op-catalog.md), the exhaustive native-MIL-op x device table; [capabilities](docs/capabilities.md) has the dtype matrix and the known limits.
 
+## Language models
+
+Decoder LLMs run on the ANE from Hugging Face weights or GGUF — prefill plus resident-KV-cache decode, auto-segmented past the ~2 GB single-program ceiling:
+
+| Model                  | What runs                          | Measured                          |
+| ---------------------- | ---------------------------------- | --------------------------------- |
+| Qwen3-0.6B / 8B        | dense decode, matches HF logits    | ~75 / ~7.5 tok/s decode           |
+| Qwen3-8B + 0.6B draft  | speculative decoding, exact        | 2.28x (7.4 -> 16.8 tok/s)         |
+| Qwen1.5-MoE-A2.7B      | sparse MoE, full model on pure ANE | coherent text, ~2 tok/s (int8)    |
+| Qwen3.5 hybrid         | DeltaNet + gated attention         | fp16-safe (cosine 0.999999)       |
+
+Speculative verify is near-free on the ANE (`verify(K) ≈ verify(1)`, decode is latency-bound); MoE decode at 30B scale is weight-bandwidth-bound. Full writeup in the [LLMs guide](docs/llm.md).
+
 ## Verify
 
 The correctness corpus compiles and runs every op and kernel on the ANE, and serves as a reproducibility test:

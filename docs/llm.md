@@ -1,7 +1,8 @@
 # LLMs on the ANE
 
-ANEForge runs a Llama/Qwen-class decoder on the Apple Neural Engine — prefill and KV-cache
-decode, from Hugging Face weights, as fused ANE programs.
+ANEForge runs decoder LLMs on the Apple Neural Engine — prefill and KV-cache decode, from Hugging
+Face weights or GGUF, as fused ANE programs. Beyond dense Llama/Qwen, it runs sparse Mixture-of-Experts
+and hybrid DeltaNet+attention models, with quantization and exact speculative decoding (sections below).
 
 Prefill (processing the prompt) is compute-bound: a stack of matmuls over all prompt tokens at
 once, which is the ANE's efficient regime. Decode (one token at a time) is memory-bound; it
@@ -41,6 +42,22 @@ On Qwen3-0.6B: ~8,600 prompt-tok/s prefill, ~75 tok/s decode. On Qwen3-8B (36 la
 `examples/llm_chat.py` is an interactive streaming chat; `examples/llm_prefill.py` is a benchmark
 (prompt-tok/s, and `--energy` for ANE joules/token via `powermetrics`).
 
+## Speculative decoding
+
+A small *draft* model proposes K tokens; the large *target* verifies all K in a single forward. This
+is a natural fit for the ANE: decode is latency-bound, so `verify(K) ≈ verify(1)` — measured 1.05× for
+K=5 on Qwen3-8B — and the draft's proposals are checked almost for free. The output is **exact**: the
+same tokens plain greedy decode would produce.
+
+```python
+from aneforge.speculative import spec_generate
+out = spec_generate(target, draft, prompt_ids, max_new_tokens=40)   # target, draft = af.load_llm(...)
+```
+
+Measured 2.28× on Qwen3-8B with a Qwen3-0.6B draft (7.4 → 16.8 tok/s), using a tiled on-ANE lm_head.
+Profiling one round: ~64% is the target verify (a single 8B forward — the irreducible floor), ~36% the
+draft, and ~0 orchestration overhead. `examples/spec_chat.py` is an interactive speculative chat.
+
 ## Quantized weights
 
 `compress="int8"` quantizes the ANE matmul weights to per-channel int8 (`"int4"` = 4-bit LUT),
@@ -58,6 +75,40 @@ the tradeoffs are narrow:
   compute), which this option does not yet do.
 
 Pass `--int8` to the examples to try it (best on small models).
+
+## Mixture-of-Experts
+
+Sparse MoE decoders run from a GGUF — Qwen3-MoE (e.g. 30B-A3B) and Qwen2-MoE (e.g. Qwen1.5-MoE-A2.7B):
+
+```python
+from aneforge.moe import load_gguf
+model = load_gguf("Qwen1.5-MoE-A2.7B-Chat.Q4_K_M.gguf", compress="int8")
+```
+
+The router and *every* expert run on the ANE: a softmax over the experts, a top-k mask, then one
+batched matmul over all experts weighted by the top-k (non-selected experts contribute 0). The top-k
+mask is built from `amax` + `select` rather than the native `topk` op, which is a graph cut that won't
+compose across layers. Qwen2-MoE's shared expert and QKV biases are detected from the weights. The
+math matches HF `Qwen3MoeForCausalLM` (cosine >0.99), and the full 24-layer Qwen1.5-MoE-A2.7B decodes
+coherently end-to-end on the ANE at int8 (~2 tok/s). `examples/moe_chat.py` is an interactive MoE chat.
+
+Unlike the dense 8B, MoE decode at 30B scale is **weight-bandwidth-bound**: ~13.5 ms per MoE layer
+(~89 GB/s), because each token reads all of the experts' weights. So here int8 *does* help (~1.3×), and
+the experts' sparsity (4–8 of 60–128 active) is the real lever — but exploiting it needs a host-side
+FFN split (measured ~4.6× in a prototype), not the dense on-ANE path. The 30B-A3B is currently gated
+only by compile-time RAM on a 52 GB machine (it fits and runs on more).
+
+## Hybrid models (Qwen3.5)
+
+Qwen3.5 / Qwen3-Next interleave gated **DeltaNet** (linear-attention) layers with gated full-attention
+layers. Both mixers run on the ANE: DeltaNet carries a resident causal-conv state and a recurrent
+`[heads, dk, dv]` state across decode steps (a decay-first recurrence), validated fp16-safe on-device
+(cosine 0.999999 over 512 tokens). A per-layer plan (`LayerSpec`) names the mixer for each layer, so
+the runner stays architecture-agnostic — it dispatches on the plan, not the weight shapes.
+
+Caveat: llama.cpp **permutes** the DeltaNet weights in its GGUF export, so reconstructing the model
+from a Qwen3.5 GGUF is wrong. The forward is validated against the original safetensors (cosine 1.0 vs
+transformers), not the GGUF.
 
 ## What's inside
 
@@ -82,4 +133,7 @@ before RoPE), and a large vocab — the layers run on the ANE; the lm_head proje
 
 ## Scope
 
-Llama/Qwen-class decoders (RMSNorm + RoPE + GQA + SwiGLU). Static prompt length per compiled graph.
+Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), sparse **Mixture-of-Experts**
+(Qwen3-MoE, Qwen2-MoE), and **hybrid** DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
+KV-cache decode, automatic segmentation past the ~2 GB program ceiling, int8/int4 weights, and exact
+speculative decoding. Static prompt length per compiled graph; the lm_head projection runs on host.
