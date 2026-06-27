@@ -805,18 +805,16 @@ def _sig_ty(em, t: Tensor) -> str:
 
 
 def cache_root() -> Path:
-  """Persistent, content-addressed build/compile cache. Defaults under ~/Models so models, weights, and
-  compiled programs live together and are REUSED across runs/sessions (set ANEFORGE_CACHE_DIR to override).
-  Replaces per-compile $TMPDIR mkdtemp dirs, which leaked and forced a full re-emit on every compile."""
+  """Persistent content-addressed build/compile cache (default ~/Models/.aneforge-cache, override
+  ANEFORGE_CACHE_DIR) -- replaces per-compile $TMPDIR mkdtemp dirs, which leaked and re-emitted every call."""
   root = os.environ.get("ANEFORGE_CACHE_DIR") or os.path.join(os.path.expanduser("~"), "Models", ".aneforge-cache")
   p = Path(root); p.mkdir(parents=True, exist_ok=True)
   return p
 
 
 def _emit_program_dir(em, inputs, out_var, out_shape, build_dir):
-  """Write one e5rt program (MIL + weights) to a dir; return it. With no explicit `build_dir`, the dir is
-  content-addressed under `cache_root()`: an identical graph+weights is written (and later compiled) exactly
-  ONCE and reused on every subsequent compile -- no temp dirs piling up, no re-writing big weight blobs."""
+  """Write one e5rt program (MIL + weights) to a dir. Without an explicit `build_dir` it's content-addressed
+  under `cache_root()`: identical graph+weights is written and compiled ONCE, reused on every later compile."""
   sig = ", ".join(f"{_sig_ty(em, t)} {t._name}" for t in inputs)
   mil = (f"program(1.3)\n{_BUILD_INFO}\n{{\n    func main<ios18>({sig}) {{\n"
      + "\n".join(em.lines) + f"\n    }} -> ({out_var});\n}}\n")

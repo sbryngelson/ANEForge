@@ -327,9 +327,8 @@ def _cfg_from_hf(c) -> LlamaConfig:
                      head_dim=int(getattr(c, "head_dim", 0) or 0))
 
 
-# Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, state_dict) -> (cfg, weights)).
-# First match wins; the dense Llama/Qwen path is the fallback. New architectures (MoE, hybrid) append here
-# from their own module (e.g. aneforge.moe) so the loader stays arch-agnostic.
+# Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, sd) -> (cfg, weights)); first match
+# wins, dense Llama/Qwen is the fallback. New archs append here (e.g. aneforge.moe) so the loader stays generic.
 ADAPTERS: list = []
 
 

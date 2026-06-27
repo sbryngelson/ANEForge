@@ -1,12 +1,11 @@
-"""Interactive chat with a Qwen Mixture-of-Experts model decoding ENTIRELY on the Apple Neural Engine -- no
-host/CPU FFN. Loads a GGUF (Qwen3-MoE e.g. 30B-A3B, or Qwen2-MoE e.g. Qwen1.5-MoE-A2.7B), dequantizes each
-tensor to int8, and runs the full model as a segmented ANE decode (one MoE layer per program). The first run
-compiles the chunks (cached under ~/Models/.aneforge-cache), so later runs start fast.
+"""Interactive chat with a Qwen Mixture-of-Experts model decoding ENTIRELY on the ANE (no host FFN). Loads a
+GGUF (Qwen3-MoE e.g. 30B-A3B, or Qwen2-MoE e.g. Qwen1.5-MoE-A2.7B) at int8 and runs the full model as a
+segmented decode (one MoE layer per program); the first run compiles the chunks (cached under ~/Models).
 
 Run: python3 examples/moe_chat.py [gguf-path] [tokenizer-path]
   e.g. python3 examples/moe_chat.py ~/Models/Qwen1.5-MoE-A2.7B-GGUF/Qwen1.5-MoE-A2.7B-Chat.Q4_K_M.gguf
-With no gguf-path it picks the smallest *MoE* GGUF under ~/Models. The tokenizer is read from the GGUF itself
-(so the chat template + special tokens match the model); pass a 2nd arg to override with an HF tokenizer dir."""
+No gguf-path picks the smallest MoE GGUF under ~/Models; the tokenizer is read from the GGUF (matching chat
+template), overridable with a 2nd arg."""
 import glob
 import os
 import sys
