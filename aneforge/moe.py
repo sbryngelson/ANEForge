@@ -63,6 +63,9 @@ def _moe(h, w, cfg, ls):
   act = (gate.silu() * up).transpose([1, 0, 2])                      # [E, T, ffn]
   out = act.bmm_weight(w["wdown_exps"])                             # [E,T,ffn] @ [E,ffn,dim] -> [E,T,dim] (quantizable)
   combined = (out * gate_w.transpose([1, 0]).reshape(E, T, 1)).sum([0]).reshape(T, dim)   # weight + combine
+  if "wgate_sh" in w:                                                # Qwen2-MoE shared expert: always-on, sigmoid-gated
+    sh = (hn.linear(w["wgate_sh"]).silu() * hn.linear(w["wup_sh"])).linear(w["wdown_sh"])   # [T, dim]
+    combined = combined + sh * hn.linear(w["shared_gate"]).sigmoid()                        # gate [T,1] broadcasts
   return h + combined                                                          # residual -> [T, dim]
 
 
@@ -132,7 +135,9 @@ class _LazyLayers:
 
 
 def load_gguf(path: str, n_layers: int | None = None, compress: str | None = None) -> "llm.LlamaPrefill":
-  """Load a Qwen3-MoE GGUF (e.g. Qwen3-30B-A3B Q4_K_M) for ANE inference, dequantizing each tensor to fp16.
+  """Load a Qwen-MoE GGUF (Qwen3-MoE e.g. 30B-A3B, or Qwen2-MoE e.g. Qwen1.5-MoE-A2.7B) for ANE inference,
+  dequantizing each tensor to fp16. Architecture features are detected from the tensors: QK-norm (Qwen3),
+  QKV biases + a shared expert (Qwen2), GQA, head_dim.
 
   GGUF stores weights transposed-and-reversed; the `gguf` reader already returns them in PyTorch [out, in]
   order, so the only re-layout is ffn_down_exps [E, dim, ffn] -> [E, ffn, dim] for the batched matmul.
@@ -144,24 +149,32 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
   r = gguf.GGUFReader(path)
   meta = {f.name: f for f in r.fields.values()}
   arch = next(k.split(".")[0] for k in meta if k.endswith(".block_count"))
-  sc = lambda key: meta[arch + "." + key].parts[meta[arch + "." + key].data[-1]][0]
+  def sc(key, default=None):
+    f = meta.get(arch + "." + key)
+    return f.parts[f.data[-1]][0] if f is not None else default
   tn = {t.name: t for t in r.tensors}
+  has = lambda name: name in tn
 
   def get(name, dtype: np.typing.DTypeLike = np.float16):   # dequantize -> fp16 (halves resident memory)
     t = tn[name]; d = np.asarray(t.data)
     if t.tensor_type != gguf.GGMLQuantizationType.F32:
       d = dequantize(d, t.tensor_type)
     return d.astype(dtype)
+  opt = lambda name: get(name) if has(name) else None       # optional tensor -> array or None
 
-  n_total = int(sc("block_count")); n = n_total if n_layers is None else min(n_layers, n_total)
-  E, k = int(sc("expert_count")), int(sc("expert_used_count"))
-  dim, vocab = int(sc("embedding_length")), tn["token_embd.weight"].data.shape[0]
+  n_total = int(sc("block_count", 0)); n = n_total if n_layers is None else min(n_layers, n_total)
+  E, k = int(sc("expert_count", 0)), int(sc("expert_used_count", 0))
+  dim, vocab = int(sc("embedding_length", 0)), int(tn["token_embd.weight"].data.shape[0])
+  heads = int(sc("attention.head_count", 0))
+  moe_ffn = int(tn["blk.0.ffn_gate_exps.weight"].shape[1])   # GGUF [dim, ffn, E] -> ffn (no metadata key on Qwen1.5)
+  qk = has("blk.0.attn_q_norm.weight")                       # Qwen3 has QK-norm; Qwen2 (Qwen1.5-MoE) does not
+  shared = has("blk.0.ffn_gate_shexp.weight")                # Qwen2-MoE shared expert
   cfg = llm.LlamaConfig(
-    dim=dim, n_layers=n, n_heads=int(sc("attention.head_count")), n_kv_heads=int(sc("attention.head_count_kv")),
-    ffn_dim=int(sc("expert_feed_forward_length")), vocab=int(vocab), rope_base=float(sc("rope.freq_base")),
-    norm_eps=float(sc("attention.layer_norm_rms_epsilon")), head_dim=int(sc("attention.key_length")),
-    layers=[llm.LayerSpec(mixer="attention", mlp="moe", qk_norm=True) for _ in range(n)],
-    extra={"n_experts": E, "n_experts_per_tok": k, "norm_topk_prob": True})
+    dim=dim, n_layers=n, n_heads=heads, n_kv_heads=int(sc("attention.head_count_kv", heads)),
+    ffn_dim=moe_ffn, vocab=vocab, rope_base=float(sc("rope.freq_base", 10000.0)),
+    norm_eps=float(sc("attention.layer_norm_rms_epsilon", 1e-6)), head_dim=int(sc("attention.key_length") or dim // heads),
+    layers=[llm.LayerSpec(mixer="attention", mlp="moe", qk_norm=qk) for _ in range(n)],
+    extra={"n_experts": E, "n_experts_per_tok": k, "norm_topk_prob": arch != "qwen2moe"})  # Qwen1.5-MoE doesn't renorm
   import mmap as _mmap
   def _drop_mmap():                                        # release the GGUF's resident pages (keeps warmup peak low)
     mm = getattr(r.data, "_mmap", None)
@@ -173,11 +186,17 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     b = f"blk.{L}."
     d = {
       "wq": get(b + "attn_q.weight"), "wk": get(b + "attn_k.weight"), "wv": get(b + "attn_v.weight"),
-      "wo": get(b + "attn_output.weight"), "q_norm": get(b + "attn_q_norm.weight"),
-      "k_norm": get(b + "attn_k_norm.weight"), "attn_norm": get(b + "attn_norm.weight"),
+      "wo": get(b + "attn_output.weight"), "attn_norm": get(b + "attn_norm.weight"),
       "mlp_norm": get(b + "ffn_norm.weight"), "router": get(b + "ffn_gate_inp.weight"),
       "wgate_exps": get(b + "ffn_gate_exps.weight"), "wup_exps": get(b + "ffn_up_exps.weight"),
       "wdown_exps": np.ascontiguousarray(get(b + "ffn_down_exps.weight").transpose(0, 2, 1))}  # [E,dim,ffn]->[E,ffn,dim]
+    for key, nm in (("q_norm", "attn_q_norm.weight"), ("k_norm", "attn_k_norm.weight"),
+                    ("q_bias", "attn_q.bias"), ("k_bias", "attn_k.bias"), ("v_bias", "attn_v.bias")):
+      v = opt(b + nm)                                       # Qwen3 QK-norm / Qwen2 QKV biases -- only if present
+      if v is not None: d[key] = v
+    if shared:                                              # Qwen2-MoE shared expert (SwiGLU FFN + sigmoid gate)
+      d["wgate_sh"] = get(b + "ffn_gate_shexp.weight"); d["wup_sh"] = get(b + "ffn_up_shexp.weight")
+      d["wdown_sh"] = get(b + "ffn_down_shexp.weight"); d["shared_gate"] = get(b + "ffn_gate_inp_shexp.weight").reshape(1, dim)
     _drop_mmap()                                           # this layer's GGUF pages are now copied into fp16; release them
     return d
 

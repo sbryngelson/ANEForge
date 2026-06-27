@@ -27,7 +27,7 @@ def _ref(h, w, cfg, ffn):
   idx = np.argsort(-probs, axis=1)[:, :k]
   gw = np.zeros_like(probs)
   for t in range(h.shape[0]): gw[t, idx[t]] = probs[t, idx[t]]
-  gw /= gw.sum(1, keepdims=True)
+  if cfg.extra.get("norm_topk_prob", True): gw /= gw.sum(1, keepdims=True)
   silu = lambda x: x / (1.0 + np.exp(-x))
   out = np.zeros((h.shape[0], cfg.dim))
   for ex in range(E):
@@ -52,6 +52,22 @@ def test_moe_matches_numpy_reference():  # dense ANE MoE == exact top-k routing 
     ref = _ref(h, w, cfg, ffn)
     cos = float((got.ravel() @ ref.ravel()) / (np.linalg.norm(got) * np.linalg.norm(ref) + 1e-9))
     assert cos > 0.99, f"T={T}: dense MoE diverged from top-k reference (cos {cos:.4f})"
+
+
+@requires_ane
+def test_moe_shared_expert_matches_numpy():  # Qwen2-MoE: routed top-k + always-on sigmoid-gated shared expert
+  cfg = _cfg(dim=32, E=8, k=2); cfg.extra["norm_topk_prob"] = False; ffn, sh = 16, 24
+  w = _weights(cfg, ffn); rng = np.random.default_rng(1); R = lambda *s: (rng.standard_normal(s) / np.sqrt(s[-1])).astype(np.float32)
+  w |= {"wgate_sh": R(sh, cfg.dim), "wup_sh": R(sh, cfg.dim), "wdown_sh": R(cfg.dim, sh), "shared_gate": R(1, cfg.dim)}
+  silu = lambda x: x / (1.0 + np.exp(-x)); sig = lambda x: 1.0 / (1.0 + np.exp(-x))
+  for T in (1, 5):
+    h = (np.random.default_rng(T).standard_normal((T, cfg.dim)) * 0.5).astype(np.float32)
+    got = np.asarray(af.compile(_moe(af.input((T, cfg.dim)), w, cfg, LayerSpec(mlp="moe")))(h.astype(np.float16))).astype(np.float32)
+    hn = h / np.sqrt((h ** 2).mean(-1, keepdims=True) + cfg.norm_eps) * w["mlp_norm"]
+    ref = _ref(h, w, cfg, ffn)                                  # routed part (norm_topk_prob=False)
+    ref = ref + (silu(hn @ w["wgate_sh"].T) * (hn @ w["wup_sh"].T)) @ w["wdown_sh"].T * sig(hn @ w["shared_gate"].T)
+    cos = float((got.ravel() @ ref.ravel()) / (np.linalg.norm(got) * np.linalg.norm(ref) + 1e-9))
+    assert cos > 0.99, f"T={T}: shared-expert MoE diverged from reference (cos {cos:.4f})"
 
 
 @requires_ane

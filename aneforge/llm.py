@@ -81,7 +81,8 @@ def _attn_prefill(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin)
   causal attention -> o_proj, with the residual."""
   H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dh, x.shape[0]
   xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
-  q = xn.linear(w["wq"]).reshape(S, H, dh); k = xn.linear(w["wk"]).reshape(S, KV, dh); v = xn.linear(w["wv"]).reshape(S, KV, dh)
+  q = xn.linear(w["wq"], w.get("q_bias")).reshape(S, H, dh)        # QKV biases (Qwen2): None when absent
+  k = xn.linear(w["wk"], w.get("k_bias")).reshape(S, KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(S, KV, dh)
   if ls.qk_norm:                                   # Qwen3 QK-norm: per-head RMSNorm over head_dim before RoPE
     q = q.reshape(S * H, dh).rms_norm(w["q_norm"], cfg.norm_eps).reshape(S, H, dh)
     k = k.reshape(S * KV, dh).rms_norm(w["k_norm"], cfg.norm_eps).reshape(S, KV, dh)
@@ -121,7 +122,8 @@ def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict,
   Kin = _input((KV, M, dh)); Vin = _input((KV, M, dh))
   oh, inv, mask, cosp, sinp = ctx["oh"], ctx["inv"], ctx["mask"], ctx["cosp"], ctx["sinp"]
   xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
-  q = xn.linear(w["wq"]).reshape(H, dh); k = xn.linear(w["wk"]).reshape(KV, dh); v = xn.linear(w["wv"]).reshape(KV, dh)
+  q = xn.linear(w["wq"], w.get("q_bias")).reshape(H, dh)           # QKV biases (Qwen2): None when absent
+  k = xn.linear(w["wk"], w.get("k_bias")).reshape(KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(KV, dh)
   if ls.qk_norm:
     q = q.rms_norm(w["q_norm"], cfg.norm_eps); k = k.rms_norm(w["k_norm"], cfg.norm_eps)
   q = rope(q.reshape(H, 1, dh), cosp, sinp)        # [H, 1, dh]
