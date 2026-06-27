@@ -183,7 +183,7 @@ Decoder LLMs run on the ANE from Hugging Face weights or GGUF — prefill plus r
 | Qwen3-0.6B / 8B        | dense decode, matches HF logits    | ~75 / ~7.5 tok/s decode           |
 | Qwen3-8B + 0.6B draft  | speculative decoding, exact        | 2.28x (7.4 -> 16.8 tok/s)         |
 | Qwen1.5-MoE-A2.7B      | sparse MoE, full model on pure ANE | coherent text, ~2 tok/s (int8)    |
-| Qwen3.5 hybrid         | DeltaNet + gated attention         | fp16-safe (cosine 0.999999)       |
+| Qwen3.5-27B hybrid     | 48 DeltaNet + 16 attn on pure ANE  | coherent, matches llama.cpp (1.0) |
 
 Speculative verify is near-free on the ANE (`verify(K) ≈ verify(1)`, decode is latency-bound); MoE decode at 30B scale is weight-bandwidth-bound. Full writeup in the [LLMs guide](docs/llm.md).
 

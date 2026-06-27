@@ -102,13 +102,25 @@ only by compile-time RAM on a 52 GB machine (it fits and runs on more).
 
 Qwen3.5 / Qwen3-Next interleave gated **DeltaNet** (linear-attention) layers with gated full-attention
 layers. Both mixers run on the ANE: DeltaNet carries a resident causal-conv state and a recurrent
-`[heads, dk, dv]` state across decode steps (a decay-first recurrence), validated fp16-safe on-device
-(cosine 0.999999 over 512 tokens). A per-layer plan (`LayerSpec`) names the mixer for each layer, so
-the runner stays architecture-agnostic — it dispatches on the plan, not the weight shapes.
+`[heads, dk, dv]` state across decode steps (a decay-first recurrence); attention carries the usual
+resident KV cache. A per-layer plan (`LayerSpec`) names the mixer for each layer, so the runner stays
+architecture-agnostic — it dispatches on the plan, not the weight shapes.
 
-Caveat: llama.cpp **permutes** the DeltaNet weights in its GGUF export, so reconstructing the model
-from a Qwen3.5 GGUF is wrong. The forward is validated against the original safetensors (cosine 1.0 vs
-transformers), not the GGUF.
+The real **Qwen3.5-27B** (64 layers, 48 DeltaNet + 16 attention) decodes coherently end-to-end on a pure
+ANE from its GGUF at int8 — no host fallback:
+
+```python
+from aneforge.qwen35 import load_gguf
+m = load_gguf("~/Models/Qwen3.5-27B-GGUF/Qwen3.5-27B-Q4_K_M.gguf", compress="int8")
+m.warmup(512)                       # compiles the segmented decode (cached under ~/Models)
+print(m.generate(prompt_ids, max_new_tokens=64))
+```
+
+`examples/qwen35_chat.py` is an interactive chat over this loader. The forward matches llama.cpp's logits
+exactly (correlation 1.0 at every position). Two details are specific to the GGUF: the DeltaNet GQA
+key/query heads tile onto the value heads (`ggml_repeat`, not `repeat_interleave` — they disagree, and the
+GGUF is baked for tiling), and the residual stream is scaled by a constant to keep fp16 from overflowing on
+this model's large deep-layer activations (exact, since every read goes through a scale-invariant RMSNorm).
 
 ## What's inside
 
