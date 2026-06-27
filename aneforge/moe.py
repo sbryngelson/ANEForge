@@ -61,7 +61,7 @@ def _moe(h, w, cfg, ls):
   gate = _experts_gate(hn, w["wgate_exps"], E, ffn, dim, T)          # [T, E, ffn] (tiled over experts)
   up = _experts_gate(hn, w["wup_exps"], E, ffn, dim, T)
   act = (gate.silu() * up).transpose([1, 0, 2])                      # [E, T, ffn]
-  out = act @ _const(np.ascontiguousarray(w["wdown_exps"]))          # [E,T,ffn] @ [E,ffn,dim] -> [E, T, dim]
+  out = act.bmm_weight(w["wdown_exps"])                             # [E,T,ffn] @ [E,ffn,dim] -> [E,T,dim] (quantizable)
   combined = (out * gate_w.transpose([1, 0]).reshape(E, T, 1)).sum([0]).reshape(T, dim)   # weight + combine
   return h + combined                                                          # residual -> [T, dim]
 
@@ -162,15 +162,24 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     norm_eps=float(sc("attention.layer_norm_rms_epsilon")), head_dim=int(sc("attention.key_length")),
     layers=[llm.LayerSpec(mixer="attention", mlp="moe", qk_norm=True) for _ in range(n)],
     extra={"n_experts": E, "n_experts_per_tok": k, "norm_topk_prob": True})
+  import mmap as _mmap
+  def _drop_mmap():                                        # release the GGUF's resident pages (keeps warmup peak low)
+    mm = getattr(r.data, "_mmap", None)
+    if mm is not None:
+      try: mm.madvise(_mmap.MADV_DONTNEED)
+      except (AttributeError, OSError): pass
+
   def layer(L):                                            # materialize one layer's fp16 weights on demand
     b = f"blk.{L}."
-    return {
+    d = {
       "wq": get(b + "attn_q.weight"), "wk": get(b + "attn_k.weight"), "wv": get(b + "attn_v.weight"),
       "wo": get(b + "attn_output.weight"), "q_norm": get(b + "attn_q_norm.weight"),
       "k_norm": get(b + "attn_k_norm.weight"), "attn_norm": get(b + "attn_norm.weight"),
       "mlp_norm": get(b + "ffn_norm.weight"), "router": get(b + "ffn_gate_inp.weight"),
       "wgate_exps": get(b + "ffn_gate_exps.weight"), "wup_exps": get(b + "ffn_up_exps.weight"),
       "wdown_exps": np.ascontiguousarray(get(b + "ffn_down_exps.weight").transpose(0, 2, 1))}  # [E,dim,ffn]->[E,ffn,dim]
+    _drop_mmap()                                           # this layer's GGUF pages are now copied into fp16; release them
+    return d
 
   # embed (host gather) and lm_head (host matmul) stay fp32: numpy has no BLAS for fp16, so an fp16 lm_head
   # at vocab 151936 makes per-token logits pathologically slow. Layers are LAZY (_LazyLayers): the decoder

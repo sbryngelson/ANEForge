@@ -320,6 +320,14 @@ def _e_bmm(em, t, n, s):
       f'x = {s[0]}, y = {s[1]})[name = string("{n}")];')
 
 
+@op("bmm_w")
+def _e_bmm_w(em, t, n, s):
+  # batched matmul x @ W with a baked, quantizable weight W [B, K, N] (per-batch int8 scale via em.weight).
+  w = em.weight(f"{n}_w", t.attrs["wt"], allow_int8=True, int8=t.attrs.get("int8"), allow_int4=True)
+  em.line(f'{em.ty(t.shape)} {n} = matmul(transpose_x = bool(false), transpose_y = bool(false), '
+      f'x = {s[0]}, y = {w})[name = string("{n}")];')
+
+
 # shared const/param preambles for the conv & pool emitters.
 def _const_pt(em, n):
   em.line(f'string {n}_pt = const()[name = string("{n}_pt"), val = string("custom")];')

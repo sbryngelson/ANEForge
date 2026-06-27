@@ -176,6 +176,15 @@ class Tensor:
     return Tensor(self.shape[:-1] + (W.shape[1],), "matmul", [self],
            {"wt": np.ascontiguousarray(W.T)})
 
+  def bmm_weight(self, W) -> "Tensor":
+    """Batched matmul `self @ W` where `W` [B, K, N] is a baked, QUANTIZABLE weight (unlike `@` with a
+    `_const`, whose operand stays fp16). `self` [B, M, K] -> [B, M, N]. Used for per-expert projections so
+    `compress=` shrinks them (per-batch int8 scale)."""
+    W = np.asarray(W); _check_dtype(W, "bmm_weight")
+    if W.ndim != 3 or self.shape[-1] != W.shape[-2]:
+      raise ValueError(f"bmm_weight: x{self.shape} @ W{W.shape} shape mismatch")
+    return Tensor(self.shape[:-1] + (W.shape[-1],), "bmm_w", [self], {"wt": np.ascontiguousarray(W)})
+
   def linear(self, W, bias=None) -> "Tensor":
     """`x @ W.T (+ bias)`. `W` is [out, in] (PyTorch convention)."""
     W = np.asarray(W); _check_dtype(W, "linear weight")
