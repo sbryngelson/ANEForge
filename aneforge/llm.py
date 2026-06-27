@@ -228,6 +228,8 @@ class LlamaPrefill:
       for k, t in ctx.items():
         if id(t) in inm: p[k] = inm[id(t)]                      # only ports the chunk's mixers actually use
       chunks.append({"net": net, "p": p})
+      if hasattr(self.w["layers"], "free"):                    # streamed weights: free this chunk's fp16 now it's baked
+        for li in grp: self.w["layers"].free(li)
     cos_t, sin_t = rope_tables(M, dh, cfg.rope_base)
     self._dec = {"M": M, "chunks": chunks, "cos": cos_t, "sin": sin_t}
     return self._dec

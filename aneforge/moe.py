@@ -115,6 +115,22 @@ def _moe_adapter(c, sd) -> tuple[LlamaConfig, dict]:
 llm.ADAPTERS.append((lambda c: bool(getattr(c, "num_experts", 0)), _moe_adapter))
 
 
+class _LazyLayers:
+  """Per-layer weights materialized on demand and freed once a decode chunk has baked them, so the full model
+  never holds every layer's fp16 at once (48L fp16 ~60GB > RAM). `LlamaPrefill._decoder` calls `free(i)` after
+  each chunk compiles; re-materialization (e.g. recompiling for a new context length) just re-reads the GGUF."""
+  def __init__(self, materialize, n: int):
+    self._mk = materialize; self._n = n; self._cache: dict = {}
+
+  def __len__(self) -> int: return self._n
+
+  def __getitem__(self, i: int) -> dict:
+    if i not in self._cache: self._cache[i] = self._mk(i)
+    return self._cache[i]
+
+  def free(self, i: int) -> None: self._cache.pop(i, None)
+
+
 def load_gguf(path: str, n_layers: int | None = None, compress: str | None = None) -> "llm.LlamaPrefill":
   """Load a Qwen3-MoE GGUF (e.g. Qwen3-30B-A3B Q4_K_M) for ANE inference, dequantizing each tensor to fp16.
 
@@ -146,17 +162,19 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     norm_eps=float(sc("attention.layer_norm_rms_epsilon")), head_dim=int(sc("attention.key_length")),
     layers=[llm.LayerSpec(mixer="attention", mlp="moe", qk_norm=True) for _ in range(n)],
     extra={"n_experts": E, "n_experts_per_tok": k, "norm_topk_prob": True})
-  # embed (host gather) and lm_head (host matmul) stay fp32: numpy has no BLAS for fp16, so an fp16 lm_head
-  # at vocab 151936 makes per-token logits pathologically slow.
-  w = {"embed": get("token_embd.weight", np.float32), "final_norm": get("output_norm.weight"),
-       "lm_head": get("output.weight", np.float32), "layers": []}
-  for L in range(n):
+  def layer(L):                                            # materialize one layer's fp16 weights on demand
     b = f"blk.{L}."
-    w["layers"].append({
+    return {
       "wq": get(b + "attn_q.weight"), "wk": get(b + "attn_k.weight"), "wv": get(b + "attn_v.weight"),
       "wo": get(b + "attn_output.weight"), "q_norm": get(b + "attn_q_norm.weight"),
       "k_norm": get(b + "attn_k_norm.weight"), "attn_norm": get(b + "attn_norm.weight"),
       "mlp_norm": get(b + "ffn_norm.weight"), "router": get(b + "ffn_gate_inp.weight"),
       "wgate_exps": get(b + "ffn_gate_exps.weight"), "wup_exps": get(b + "ffn_up_exps.weight"),
-      "wdown_exps": np.ascontiguousarray(get(b + "ffn_down_exps.weight").transpose(0, 2, 1))})  # [E,dim,ffn]->[E,ffn,dim]
+      "wdown_exps": np.ascontiguousarray(get(b + "ffn_down_exps.weight").transpose(0, 2, 1))}  # [E,dim,ffn]->[E,ffn,dim]
+
+  # embed (host gather) and lm_head (host matmul) stay fp32: numpy has no BLAS for fp16, so an fp16 lm_head
+  # at vocab 151936 makes per-token logits pathologically slow. Layers are LAZY (_LazyLayers): the decoder
+  # frees each layer's fp16 after its chunk bakes, so the full 48L (~60GB fp16) never resides all at once.
+  w = {"embed": get("token_embd.weight", np.float32), "final_norm": get("output_norm.weight"),
+       "lm_head": get("output.weight", np.float32), "layers": _LazyLayers(layer, n)}
   return llm.LlamaPrefill(cfg, w, compress=compress)
