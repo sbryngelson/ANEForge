@@ -54,12 +54,14 @@ bench = [
     "mlx>=0.31",
     "torch",
 ]
-# Pretrained model loaders (aneforge.models.load / load_resnet18) and the
-# diffusion examples. Imported lazily; only install if you use them.
+# Pretrained model loaders (aneforge.models.load / load_resnet18), the LLM/MoE GGUF
+# loader (aneforge.moe.load_gguf needs gguf), and the diffusion examples. Imported
+# lazily; only install if you use them.
 models = [
     "torch",
     "torchvision",
     "transformers",
+    "gguf",
 ]
 # ONNX model import (aneforge.onnx.load_onnx / onnx_to_tensor). Imported lazily; the
 # core package stays numpy-only. Only install if you import ONNX models.
