@@ -10,7 +10,6 @@ import numpy as np
 
 from .graph import input as _input, _const, concat as _concat
 from . import llm
-from .llm import _repeat_kv3
 
 
 def _rotate_matrix(dh: int, rotary_dim: int, interleaved: bool) -> np.ndarray:
@@ -42,9 +41,11 @@ def _gated_attn_decode(x, w, cfg, ls, ctx, M):
   q = (q * cosp + (q @ P) * sinp).reshape((H, 1, dh))           # matmul-rope (interleaved partial)
   k = (k * cosp + (k @ P) * sinp).reshape((KV, 1, dh))
   Kout = Kin * inv + k * oh; Vout = Vin * inv + v.reshape((KV, 1, dh)) * oh
-  Kr, Vr = _repeat_kv3(Kout, H // KV), _repeat_kv3(Vout, H // KV)
-  sc = ((q @ Kr.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)
-  a = (sc @ Vr).reshape((1, H * dh)) * gate.sigmoid()
+  # GQA via grouped matmul over the KV groups (query head h -> group h // g3), NOT by repeating the cache to
+  # [H, M, dh]: that path flattens to [KV, M*dh], and M*dh exceeds the ANE 65536 per-op dim cap at dh=256.
+  qg2 = q.reshape((KV, H // KV, dh))
+  sc = ((qg2 @ Kout.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)  # [KV, g3, M]
+  a = (sc @ Vout).reshape((1, H * dh)) * gate.sigmoid()         # [KV,g3,M] @ [KV,M,dh] -> [KV,g3,dh] -> [1, H*dh]
   return x + a.linear(w["wo"]), [(Kout, Kin), (Vout, Vin)]
 
 
