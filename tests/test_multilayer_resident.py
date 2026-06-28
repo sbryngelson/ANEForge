@@ -3,7 +3,7 @@ import os, sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-requires_ane = pytest.mark.skipif(os.environ.get("ANEFORGE_NO_ANE") == "1", reason="needs ANE")
+from _helpers import requires_ane   # skips when the ANE dylib is absent (not only when ANEFORGE_NO_ANE is set)
 
 
 @requires_ane

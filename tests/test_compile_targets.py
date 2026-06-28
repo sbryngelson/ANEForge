@@ -3,8 +3,10 @@ import numpy as np
 import pytest
 
 import aneforge as af
+from _helpers import requires_ane
 
 
+@requires_ane
 def test_compile_decomposes_sin_for_h13_and_runs():
   # h13 lacks native sin -> compile substitutes the special.py polynomial; runs on M5
   xv = np.linspace(-1.0, 1.0, 64).astype(np.float16).reshape(1, 64)
@@ -13,6 +15,7 @@ def test_compile_decomposes_sin_for_h13_and_runs():
   assert np.abs(out - np.sin(xv.astype(np.float32))).max() < 3e-3
 
 
+@requires_ane
 def test_compile_decomposes_cos_for_h13_and_runs():
   xv = np.linspace(-1.0, 1.0, 64).astype(np.float16).reshape(1, 64)
   net = af.compile(af.input((1, 64)).cos(), target="h13")
@@ -33,6 +36,7 @@ def test_compile_rejects_below_mil_floor():
     af.compile(af.input((1, 64)).relu(), target="h11")
 
 
+@requires_ane
 def test_compile_default_target_is_native_noop_on_m5():
   # no target -> host M5: sin native, no rewrite
   xv = np.linspace(-1.0, 1.0, 64).astype(np.float16).reshape(1, 64)

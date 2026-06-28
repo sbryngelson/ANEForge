@@ -1,6 +1,16 @@
 import numpy as np
+import pytest
 from _helpers import requires_ane
 from aneforge import _blob
+
+
+@pytest.fixture
+def mkdir(tmp_path):
+  """A factory for fresh build dirs that are auto-removed with the pytest tmp_path (no /tmp leak)."""
+  n = [0]
+  def _new():
+    n[0] += 1; d = tmp_path / f"d{n[0]}"; d.mkdir(); return str(d)
+  return _new
 
 
 def _dequant_lut4(packed: bytes, lut: bytes, out: int, inn: int) -> np.ndarray:
@@ -123,13 +133,12 @@ def test_int4_matmul_runs_on_ane_and_is_close():
 
 
 @requires_ane
-def test_int4_weights_are_smaller():
+def test_int4_weights_are_smaller(mkdir):
   """The int4 program's weights.bin is markedly smaller than the fp16 one."""
   import aneforge as af
   from pathlib import Path
-  import tempfile
   W = np.random.default_rng(5).standard_normal((512, 256)).astype(np.float32)   # [IN, OUT]
-  d16, d4 = tempfile.mkdtemp(), tempfile.mkdtemp()
+  d16, d4 = mkdir(), mkdir()
   af.compile(af.input((1, 512)) @ W, compress=None, build_dir=d16).release()
   af.compile(af.input((1, 512)) @ W, compress="int4", compress_atol=0.5, build_dir=d4).release()
   s16 = Path(d16, "weights.bin").stat().st_size
@@ -138,14 +147,13 @@ def test_int4_weights_are_smaller():
 
 
 @requires_ane
-def test_compress_none_is_byte_identical_weights():
+def test_compress_none_is_byte_identical_weights(mkdir):
   """compress=None must produce the SAME weights.bin as the historical default."""
   import aneforge as af
   from pathlib import Path
-  import tempfile
   rng = np.random.default_rng(6)
   W = rng.standard_normal((128, 64)).astype(np.float32)        # [IN, OUT]
-  da, db = tempfile.mkdtemp(), tempfile.mkdtemp()
+  da, db = mkdir(), mkdir()
   af.compile(af.input((1, 128)) @ W, build_dir=da).release()                 # historical
   af.compile(af.input((1, 128)) @ W, compress=None, build_dir=db).release()  # explicit off
   assert Path(da, "weights.bin").read_bytes() == Path(db, "weights.bin").read_bytes()
@@ -153,16 +161,15 @@ def test_compress_none_is_byte_identical_weights():
 
 
 @requires_ane
-def test_int4_conv_runs_on_ane_and_is_close():
+def test_int4_conv_runs_on_ane_and_is_close(mkdir):
   import aneforge as af
   from pathlib import Path
-  import tempfile
   rng = np.random.default_rng(7)
   W = rng.standard_normal((16, 8, 3, 3)).astype(np.float32)     # flat inner = 8*3*3 = 72 (even)
   x = rng.standard_normal((1, 8, 16, 16)).astype(np.float32)
   base = af.compile(af.conv(af.input((1, 8, 16, 16)), W, pad=1), compress=None)
   ref = base(x); base.release()
-  d = tempfile.mkdtemp()
+  d = mkdir()
   net = af.compile(af.conv(af.input((1, 8, 16, 16)), W, pad=1),
                    compress="int4", compress_atol=0.6, build_dir=d)
   got = net(x); net.release()
@@ -209,16 +216,15 @@ def test_weight_sparse_falls_back_when_dense():
 
 
 @requires_ane
-def test_sparse_matmul_runs_on_ane_and_is_close():
+def test_sparse_matmul_runs_on_ane_and_is_close(mkdir):
   import aneforge as af
   from pathlib import Path
-  import tempfile
   rng = np.random.default_rng(12)
   W = rng.standard_normal((256, 128)).astype(np.float32)       # [IN, OUT]
   W[np.abs(W) < 1.0] = 0.0                                     # ~68% zeros
   x = rng.standard_normal((1, 256)).astype(np.float32)
   ref = (x @ W).astype(np.float32)
-  d = tempfile.mkdtemp()
+  d = mkdir()
   net = af.compile(af.input((1, 256)) @ W, compress="sparse", build_dir=d)
   got = net(x)
   cos = float((got.ravel() @ ref.ravel()) /
@@ -268,11 +274,10 @@ def test_auto_falls_to_int8_then_fp16():
 
 
 @requires_ane
-def test_auto_none_byte_identical():
+def test_auto_none_byte_identical(mkdir):
   """compress="auto" picking fp16 does not regress; compress=None stays byte-identical to default."""
   import aneforge as af
   from pathlib import Path
-  import tempfile
   rng = np.random.default_rng(22)
   # rms_norm gamma: forced to fp16 (allow_int8=False, no int4/sparse)
   g = rng.standard_normal((16,)).astype(np.float32)
@@ -287,7 +292,7 @@ def test_auto_none_byte_identical():
 
   # byte-identity of compress=None vs historical default
   W = rng.standard_normal((128, 64)).astype(np.float32)
-  da, db = tempfile.mkdtemp(), tempfile.mkdtemp()
+  da, db = mkdir(), mkdir()
   af.compile(af.input((1, 128)) @ W, build_dir=da).release()
   af.compile(af.input((1, 128)) @ W, compress=None, build_dir=db).release()
   assert Path(da, "weights.bin").read_bytes() == Path(db, "weights.bin").read_bytes()
@@ -364,16 +369,15 @@ def test_explicit_modes_not_filtered_by_family():
 
 
 @requires_ane
-def test_auto_target_h13_compiles_native_stream():
+def test_auto_target_h13_compiles_native_stream(mkdir):
   """End-to-end: compile(compress='auto', target='h13') -> sparse-eligible weight comes out sparse, runs."""
   import aneforge as af
   from pathlib import Path
-  import tempfile
   rng = np.random.default_rng(31)
   W = rng.standard_normal((256, 128)).astype(np.float32)
   W[np.abs(W) < 1.0] = 0.0                                     # ~68% zeros
   x = rng.standard_normal((1, 256)).astype(np.float32)
-  d = tempfile.mkdtemp()
+  d = mkdir()
   net = af.compile(af.input((1, 256)) @ W, compress="auto", compress_atol=0.5,
                    target="h13", build_dir=d)
   mil = Path(d, "model.mil").read_bytes()
@@ -389,17 +393,16 @@ def test_auto_target_h13_compiles_native_stream():
 
 # Feature 2 - conv-sparse (allow_sparse on conv); 4-D mask unverified on device
 @requires_ane
-def test_sparse_conv_runs_on_ane():
+def test_sparse_conv_runs_on_ane(mkdir):
   import aneforge as af
   from pathlib import Path
-  import tempfile
   rng = np.random.default_rng(24)
   W = rng.standard_normal((16, 8, 3, 3)).astype(np.float32)    # flat inner = 72 (even)
   W[np.abs(W) < 1.0] = 0.0                                     # ~68% zeros
   x = rng.standard_normal((1, 8, 16, 16)).astype(np.float32)
   base = af.compile(af.conv(af.input((1, 8, 16, 16)), W, pad=1), compress=None)
   ref = base(x); base.release()
-  d = tempfile.mkdtemp()
+  d = mkdir()
   net = af.compile(af.conv(af.input((1, 8, 16, 16)), W, pad=1),
                    compress="sparse", build_dir=d)
   got = net(x); net.release()
@@ -451,15 +454,14 @@ def test_weight_blockwise_falls_back_when_disallowed():
 
 
 @requires_ane
-def test_blockwise_matmul_runs_on_ane_and_is_close():
+def test_blockwise_matmul_runs_on_ane_and_is_close(mkdir):
   import aneforge as af
   from pathlib import Path
-  import tempfile
   rng = np.random.default_rng(34)
   W = rng.standard_normal((256, 128)).astype(np.float32)       # [IN, OUT]
   x = rng.standard_normal((1, 256)).astype(np.float32)
   ref = (x @ W).astype(np.float32)
-  d = tempfile.mkdtemp()
+  d = mkdir()
   net = af.compile(af.input((1, 256)) @ W, compress="blockwise",
                    block_size=32, compress_atol=0.5, build_dir=d)
   got = net(x)
@@ -471,13 +473,12 @@ def test_blockwise_matmul_runs_on_ane_and_is_close():
 
 
 @requires_ane
-def test_blockwise_weights_are_smaller():
+def test_blockwise_weights_are_smaller(mkdir):
   """The blockwise program's weights.bin is smaller than fp16 (int8 data + tiny scales)."""
   import aneforge as af
   from pathlib import Path
-  import tempfile
   W = np.random.default_rng(35).standard_normal((512, 256)).astype(np.float32)   # [IN, OUT]
-  d16, db = tempfile.mkdtemp(), tempfile.mkdtemp()
+  d16, db = mkdir(), mkdir()
   af.compile(af.input((1, 512)) @ W, compress=None, build_dir=d16).release()
   af.compile(af.input((1, 512)) @ W, compress="blockwise", block_size=32,
              compress_atol=0.5, build_dir=db).release()
@@ -487,13 +488,12 @@ def test_blockwise_weights_are_smaller():
 
 
 @requires_ane
-def test_blockwise_compress_none_unaffected():
+def test_blockwise_compress_none_unaffected(mkdir):
   """Adding compress='blockwise' must not perturb the compress=None default."""
   import aneforge as af
   from pathlib import Path
-  import tempfile
   W = np.random.default_rng(36).standard_normal((128, 64)).astype(np.float32)
-  da, db = tempfile.mkdtemp(), tempfile.mkdtemp()
+  da, db = mkdir(), mkdir()
   af.compile(af.input((1, 128)) @ W, build_dir=da).release()
   af.compile(af.input((1, 128)) @ W, compress=None, build_dir=db).release()
   assert Path(da, "weights.bin").read_bytes() == Path(db, "weights.bin").read_bytes()

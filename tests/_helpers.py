@@ -23,6 +23,24 @@ def onehot_select(t: af.Tensor, i: int, w: int | None = None) -> af.Tensor:
   return t @ sel.astype(np.float16)
 
 
+def make_random_llama_model(cfg, compress=None, seed=0):
+  """A dense Llama-style LlamaPrefill with reproducible random weights (1/sqrt(fan-in) scaled). Shared by the
+  decode and speculative tests so the weight layout stays in one place."""
+  from aneforge.llm import LlamaPrefill, _weights_from_state_dict
+  rng = np.random.default_rng(seed); dh = cfg.dh
+  R = lambda *s: (rng.standard_normal(s) / np.sqrt(s[-1])).astype(np.float32)
+  sd = {"model.embed_tokens.weight": R(cfg.vocab, cfg.dim), "model.norm.weight": np.ones(cfg.dim, np.float32),
+        "lm_head.weight": R(cfg.vocab, cfg.dim)}
+  for L in range(cfg.n_layers):
+    p = f"model.layers.{L}."
+    for nm, sh in [("self_attn.q_proj", (cfg.n_heads * dh, cfg.dim)), ("self_attn.k_proj", (cfg.n_kv_heads * dh, cfg.dim)),
+                   ("self_attn.v_proj", (cfg.n_kv_heads * dh, cfg.dim)), ("self_attn.o_proj", (cfg.dim, cfg.n_heads * dh)),
+                   ("mlp.gate_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.up_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.down_proj", (cfg.dim, cfg.ffn_dim))]:
+      sd[p + nm + ".weight"] = R(*sh)
+    sd[p + "input_layernorm.weight"] = np.ones(cfg.dim, np.float32); sd[p + "post_attention_layernorm.weight"] = np.ones(cfg.dim, np.float32)
+  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), compress=compress)
+
+
 def ane_available() -> bool:
   """True iff the ANE/e5rt dispatch dylib can be located (device tests can run)."""
   try:
