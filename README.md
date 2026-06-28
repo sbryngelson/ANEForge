@@ -33,6 +33,7 @@ private `aned` stack CoreML, MPSGraph, and Espresso use internally. From there:
 - A CNN trains from scratch on CIFAR-10 to 71%, on a chip Apple ships for inference only.
 - **Hardware layers CoreML can't reach.** `af.sdpa` drives the engine's fused-attention layer directly, the one Apple's compiler decomposes and never emits; 18 other native layers (`argmax`, `topk`, `sort`, geometry) come the same way.
 - **The engine, never a fallback.** A pretrained ResNet-18 runs end-to-end in 0.33 ms, matching the reference to cosine 1.0000, at a fraction of the GPU's energy (table below).
+- **LLMs run on the engine.** Prefill and KV-cache decode for Llama/Qwen, exact speculative decoding, Mixture-of-Experts from GGUF, and the hybrid Qwen3.5-27B (DeltaNet + attention), decoding end to end on a pure ANE.
 - **Cross-compilation for chips you don't own.** Lower and gate a graph for any of 28 ANE targets (M1-M5) from one machine, and estimate its latency without running it.
 
 ```python

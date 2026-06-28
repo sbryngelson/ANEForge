@@ -228,12 +228,16 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
   <section id="what">
     <div class="wrap">
       <span class="label">What it does</span>
-      <h2 style="margin-top:10px">Training, native layers, compression, and arbitrary workloads.</h2>
+      <h2 style="margin-top:10px">Training, LLMs, native layers, compression, and more.</h2>
       <p class="sub">Apple exposes the Neural Engine only through CoreML, and only for inference. ANEForge dispatches through the same private <code>aned</code> stack that CoreML uses internally, from a normal user process.</p>
       <div class="caps">
         <div class="cap">
           <h4>Training runs on the engine <em>CIFAR-10 → 71%</em></h4>
           <p>The forward pass, backward pass, and Adam update all compile to ANE programs, so a model trains end to end on the engine.</p>
+        </div>
+        <div class="cap">
+          <h4>LLMs on the engine <em>27B on a pure ANE</em></h4>
+          <p>Prefill and KV-cache decode for Llama/Qwen, exact speculative decoding, Mixture-of-Experts from GGUF, and the hybrid Qwen3.5-27B (DeltaNet + attention), decoding end to end on the engine.</p>
         </div>
         <div class="cap">
           <h4>Layers CoreML can’t reach <em>+19 bridge ops</em></h4>
@@ -246,6 +250,10 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
         <div class="cap">
           <h4>Run arbitrary workloads <em>FFT, BLAS</em></h4>
           <p>Not just neural nets. FFTs, linear algebra, and fluid sims compile straight to the engine.</p>
+        </div>
+        <div class="cap">
+          <h4>Cross-compile across silicon <em>28 targets</em></h4>
+          <p>Lower and gate a graph for any M1 to M5 ANE from one machine, and estimate its latency without running it.</p>
         </div>
       </div>
     </div>
