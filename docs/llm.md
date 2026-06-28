@@ -116,11 +116,20 @@ m.warmup(512)                       # compiles the segmented decode (cached unde
 print(m.generate(prompt_ids, max_new_tokens=64))
 ```
 
-`examples/qwen35_chat.py` is an interactive chat over this loader. The forward matches llama.cpp's logits
-exactly (correlation 1.0 at every position). Two details are specific to the GGUF: the DeltaNet GQA
-key/query heads tile onto the value heads (`ggml_repeat`, not `repeat_interleave` — they disagree, and the
-GGUF is baked for tiling), and the residual stream is scaled by a constant to keep fp16 from overflowing on
-this model's large deep-layer activations (exact, since every read goes through a scale-invariant RMSNorm).
+`examples/qwen35_chat.py` is an interactive chat over this loader. Two details are specific to the GGUF:
+the DeltaNet GQA key/query heads tile onto the value heads (`ggml_repeat`, not `repeat_interleave` — they
+disagree, and the GGUF is baked for tiling), and the residual stream is scaled by a constant to keep fp16
+from overflowing on this model's large deep-layer activations (exact, since every read goes through a
+scale-invariant RMSNorm).
+
+**Fidelity caveat.** The loader was validated by an **fp32 reference forward** that matches llama.cpp's
+logits exactly (correlation 1.0 at every position). The on-device decode, however, runs **int8 weights in
+fp16 compute**, and at 27B that is *coherent but lower-fidelity* than llama.cpp's fp32-accumulated Q4 —
+answers to harder prompts come out shallower. The cause is the fp16 compute, not the weights (per-channel
+int8 weights alone cost ~0.0001 of logit correlation); this model's large activation outliers make it
+fp16-precision-bound at this depth. No quantization setting closes the gap: `compress="blockwise"` adds
+per-block scales but only marginally helps and compiles far slower (Apple's ANE compiler is slow on the
+per-block ops). Treat on-ANE 27B decode as a working proof, not a llama.cpp-quality chat endpoint.
 
 ## What's inside
 
