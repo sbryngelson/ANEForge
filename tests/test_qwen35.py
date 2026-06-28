@@ -38,7 +38,7 @@ def test_gated_deltanet_decode_matches_transformers():
     outs[t] = np.asarray(net.prog.read_output(om[h])).reshape(D)
   delta = outs - xs                                                 # strip the residual -> out_proj(deltanet)
   cos = float(delta.ravel() @ ref.ravel() / (np.linalg.norm(delta) * np.linalg.norm(ref)))
-  assert cos > 0.95, f"gated_deltanet decode vs transformers: cosine {cos}"
+  assert cos > 0.96, f"gated_deltanet decode vs transformers: cosine {cos}"   # ~0.972 here: fp16 recurrence noise at tiny T=6 (the real model hits 0.999999 at 512 tok)
 
 
 @requires_ane
@@ -85,7 +85,7 @@ def test_gated_attention_decode_matches_transformers():
     outs[t] = np.asarray(net.prog.read_output(om[h])).reshape(D)
   delta = outs - xs
   cos_ = float(delta.ravel() @ ref.ravel() / (np.linalg.norm(delta) * np.linalg.norm(ref)))
-  assert cos_ > 0.95, f"gated_attention decode vs transformers: cosine {cos_}"
+  assert cos_ > 0.99, f"gated_attention decode vs transformers: cosine {cos_}"
 
 
 @requires_ane
@@ -122,4 +122,4 @@ def test_qwen35_hybrid_model_matches_transformers():
       pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
     outs[pos] = h.reshape(cfg.dim).astype(np.float32)
   cos = float((outs.ravel() @ ref.ravel()) / (np.linalg.norm(outs) * np.linalg.norm(ref)))
-  assert cos > 0.95, f"qwen3.5 hybrid model vs transformers: cosine {cos}"
+  assert cos > 0.99, f"qwen3.5 hybrid model vs transformers: cosine {cos}"

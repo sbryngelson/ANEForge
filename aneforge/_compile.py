@@ -75,6 +75,7 @@ class _Emitter:
       self._auto_streams = frozenset({"int4", "int8", "sparse", "blockwise"})
     self.blob = BlobWriter()
     self.lines: list[str] = []
+    self._split_cache: dict = {}       # (src, num_splits, axis) -> emitted part names, so split is emitted once
 
   def line(self, text: str) -> None:
     self.lines.append("        " + text)
@@ -529,15 +530,15 @@ def _e_split(em, t, n, s):
   # emit the N-output split once; later split nodes alias its ports by name.
   ns, ax, which = t.attrs["num_splits"], t.attrs["axis"], t.attrs["which"]
   src = s[0]
-  key = f"_split_{src}_{ns}_{ax}"
-  names = getattr(em, key, None)
+  key = (src, ns, ax)
+  names = em._split_cache.get(key)
   if names is None:
     names = [f"{n}_part{i}" for i in range(ns)]
     decl = ", ".join(f"{em.ty(t.shape)} {names[i]}" for i in range(ns))
     em.line(f'int32 {n}_ns = const()[name = string("{n}_ns"), val = int32({ns})];')
     em.line(f'int32 {n}_ax = const()[name = string("{n}_ax"), val = int32({ax})];')
     em.line(f'{decl} = split(axis = {n}_ax, num_splits = {n}_ns, x = {src})[name = string("{n}_split")];')
-    setattr(em, key, names)
+    em._split_cache[key] = names
   t._name = names[which]
 
 

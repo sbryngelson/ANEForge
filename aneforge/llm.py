@@ -104,8 +104,9 @@ def _attn_prefill(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin)
   return x + a.linear(w["wo"])
 
 
-def _swiglu_prefill(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
-  """SwiGLU MLP with its residual: `h + down(silu(gate(norm(h))) * up(norm(h)))`."""
+def _swiglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
+  """SwiGLU MLP with its residual: `h + down(silu(gate(norm(h))) * up(norm(h)))`. Stateless and
+  shape-agnostic, so one builder serves both prefill [S,dim] and decode [1,dim]."""
   hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
   return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"])
 
@@ -145,15 +146,10 @@ def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict,
   return x + a.linear(w["wo"]), [(Kout, Kin), (Vout, Vin)]
 
 
-def _swiglu_decode(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
-  hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
-  return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"])
-
-
 PREFILL_MIXERS = {"attention": _attn_prefill}
-PREFILL_MLPS = {"swiglu": _swiglu_prefill}
+PREFILL_MLPS = {"swiglu": _swiglu}
 DECODE_MIXERS = {"attention": _attn_decode}
-DECODE_MLPS = {"swiglu": _swiglu_decode}
+DECODE_MLPS = {"swiglu": _swiglu}
 # Per-position decode inputs a mixer may read from `ctx` (created per chunk, shared across its layers).
 _DECODE_CTX = ("oh", "inv", "mask", "cosp", "sinp")
 

@@ -123,44 +123,23 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
   tensor to fp16. Arch features are detected from the tensors (QK-norm, QKV biases + shared expert, GQA,
   head_dim). The reader returns PyTorch [out,in] order, so the only re-layout is ffn_down_exps -> [E,ffn,dim].
   `n_layers` truncates the model (the full 30B is ~60GB fp16 > RAM); layers load lazily and free after baking."""
-  import gguf
-  from gguf.quants import dequantize
-  r = gguf.GGUFReader(path)
-  meta = {f.name: f for f in r.fields.values()}
-  arch = next(k.split(".")[0] for k in meta if k.endswith(".block_count"))
-  def sc(key, default=None):
-    f = meta.get(arch + "." + key)
-    return f.parts[f.data[-1]][0] if f is not None else default
-  tn = {t.name: t for t in r.tensors}
-  has = lambda name: name in tn
-
-  def get(name, dtype: np.typing.DTypeLike = np.float16):    # dequantize -> fp16 (halves resident memory)
-    t = tn[name]; d = np.asarray(t.data)
-    if t.tensor_type != gguf.GGMLQuantizationType.F32:
-      d = dequantize(d, t.tensor_type)
-    return d.astype(dtype)
-  opt = lambda name: get(name) if has(name) else None
+  from ._gguf import GGUFView
+  gg = GGUFView(path); sc, get, tn, arch = gg.sc, gg.get, gg.tn, gg.arch
+  opt = lambda name: get(name) if gg.has(name) else None     # weight if present, else None (optional tensors)
 
   n_total = int(sc("block_count", 0)); n = n_total if n_layers is None else min(n_layers, n_total)
   E, k = int(sc("expert_count", 0)), int(sc("expert_used_count", 0))
   dim, vocab = int(sc("embedding_length", 0)), int(tn["token_embd.weight"].data.shape[0])
   heads = int(sc("attention.head_count", 0))
   moe_ffn = int(tn["blk.0.ffn_gate_exps.weight"].shape[1])   # GGUF [dim, ffn, E] -> ffn (no metadata key on Qwen1.5)
-  qk = has("blk.0.attn_q_norm.weight")                       # Qwen3 has QK-norm; Qwen2 doesn't
-  shared = has("blk.0.ffn_gate_shexp.weight")                # Qwen2-MoE shared expert
+  qk = gg.has("blk.0.attn_q_norm.weight")                    # Qwen3 has QK-norm; Qwen2 doesn't
+  shared = gg.has("blk.0.ffn_gate_shexp.weight")             # Qwen2-MoE shared expert
   cfg = llm.LlamaConfig(
     dim=dim, n_layers=n, n_heads=heads, n_kv_heads=int(sc("attention.head_count_kv", heads)),
     ffn_dim=moe_ffn, vocab=vocab, rope_base=float(sc("rope.freq_base", 10000.0)),
     norm_eps=float(sc("attention.layer_norm_rms_epsilon", 1e-6)), head_dim=int(sc("attention.key_length") or dim // heads),
     layers=[llm.LayerSpec(mixer="attention", mlp="moe", qk_norm=qk) for _ in range(n)],
     extra={"n_experts": E, "n_experts_per_tok": k, "norm_topk_prob": arch != "qwen2moe"})  # Qwen1.5 doesn't renorm
-
-  import mmap as _mmap
-  def _drop_mmap():                                          # release the GGUF's resident pages (low warmup peak)
-    mm = getattr(r.data, "_mmap", None)
-    if mm is not None:
-      try: mm.madvise(_mmap.MADV_DONTNEED)
-      except (AttributeError, OSError): pass
 
   def layer(L):                                             # materialize one layer's fp16 weights on demand
     b = f"blk.{L}."
@@ -176,7 +155,7 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     if shared:                                               # Qwen2-MoE shared expert (SwiGLU FFN + sigmoid gate)
       d["wgate_sh"] = get(b + "ffn_gate_shexp.weight"); d["wup_sh"] = get(b + "ffn_up_shexp.weight")
       d["wdown_sh"] = get(b + "ffn_down_shexp.weight"); d["shared_gate"] = get(b + "ffn_gate_inp_shexp.weight").reshape(1, dim)
-    _drop_mmap()
+    gg.drop_pages()
     return d
 
   # embed (host gather) and lm_head (host matmul) stay fp32: numpy has no fp16 BLAS, so an fp16 lm_head at

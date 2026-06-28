@@ -542,11 +542,12 @@ def conv2d(x: Tensor, weight: Tensor, stride: int = 1, pad: int = 0) -> Tensor:
   if Cin_w != Cin:
     raise ValueError(f"conv2d: weight Cin {Cin_w} != input Cin {Cin}")
   if pad:
-    # in-graph zero padding: concat zero-constant borders onto H then W.
-    zh = graph.input((N, Cin, pad, W)); zh.attrs["value"] = np.zeros((N, Cin, pad, W), np.float32)
+    # in-graph zero padding: concat baked zero borders onto H then W. const_array (not graph.input), so a
+    # standalone compile(conv2d(...)) bakes them instead of exposing phantom zero-pad input ports.
+    zh = graph._const(np.zeros((N, Cin, pad, W), np.float16))
     x = graph.concat([zh, x, zh], axis=2)            # [N, Cin, H+2pad, W]
     H = H + 2 * pad
-    zw = graph.input((N, Cin, H, pad)); zw.attrs["value"] = np.zeros((N, Cin, H, pad), np.float32)
+    zw = graph._const(np.zeros((N, Cin, H, pad), np.float16))
     x = graph.concat([zw, x, zw], axis=3)            # [N, Cin, H+2pad, W+2pad]
     W = W + 2 * pad
   Hout, Wout = H - kH + 1, W - kW + 1

@@ -81,15 +81,20 @@ def _load_cache() -> dict:
   p = _cache_path()
   if p.exists():
     try: return json.loads(p.read_text())
-    except Exception: return {}
+    except Exception as e:
+      warnings.warn(f"autotune cache unreadable, ignoring it: {e}")     # a truncated file must not poison every run
+      return {}
   return {}
 
 
 def _save_cache(cache: dict) -> None:
+  p = _cache_path()
   try:
-    _cache_path().write_text(json.dumps(cache, indent=2, sort_keys=True))
-  except Exception:
-    pass
+    tmp = p.with_suffix(".json.tmp")                                    # write-then-rename: a crash can't truncate the cache
+    tmp.write_text(json.dumps(cache, indent=2, sort_keys=True))
+    os.replace(tmp, p)
+  except Exception as e:
+    warnings.warn(f"autotune cache not saved: {e}")
 
 
 # attention query-tile autotune
@@ -314,7 +319,8 @@ def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5
   try:
     variant_out, int8 = _apply_variant(out, cfg)
     net = _raw_compile(variant_out, int8=int8, opt=0, _check_precision=False)
-  except Exception:
+  except Exception as e:                                   # a variant the ANE rejects is expected; an emitter bug is not
+    if os.environ.get("ANEFORGE_TUNE_DEBUG"): warnings.warn(f"[tune] variant compile failed: {e!r}")
     return float("inf"), None
   try:
     res = None

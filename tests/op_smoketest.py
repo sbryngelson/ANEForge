@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root -> import aneforge
+sys.path.insert(0, str(Path(__file__).resolve().parent))      # tests/ -> import _helpers
 import aneforge as af
+from _helpers import requires_ane
 
 
 def check(name, build, ref, *ins, tol=0.02):
@@ -19,7 +21,7 @@ def check(name, build, ref, *ins, tol=0.02):
   return relerr < tol
 
 
-def main():
+def _run_all():
   rng = np.random.default_rng(0)
   x = rng.standard_normal((4, 8)).astype(np.float16)
   xp = (np.abs(rng.standard_normal((4, 8))) + 0.5).astype(np.float16)  # positive domain
@@ -85,8 +87,14 @@ def main():
   ok.append(check("batch_norm", lambda: af.batch_norm(af.input((1, 4, 8, 8)), g, b, m, v, eps=1e-3), bn_ref, img))
 
   print(f"\n{sum(ok)}/{len(ok)} ops correct on the ANE")
-  sys.exit(0 if all(ok) else 1)
+  return ok
+
+
+@requires_ane
+def test_op_smoketest():   # pytest entry: every one-op graph compiles + matches numpy on the ANE
+  ok = _run_all()
+  assert all(ok), f"only {sum(ok)}/{len(ok)} ops correct on the ANE"
 
 
 if __name__ == "__main__":
-  main()
+  sys.exit(0 if all(_run_all()) else 1)

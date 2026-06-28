@@ -1,7 +1,7 @@
 import numpy as np
 import aneforge as af
 from aneforge.llm import LlamaConfig, LlamaPrefill, prefill_block, rope, rope_tables, _weights_from_state_dict, _cfg_from_hf
-from _helpers import requires_ane
+from _helpers import requires_ane, make_random_llama_model as _random_model
 
 
 def test_rope_tables_shape():
@@ -33,25 +33,16 @@ def test_rope_matches_numpy():
   cos_sim = float(got.ravel() @ ref.ravel() / (np.linalg.norm(got) * np.linalg.norm(ref) + 1e-9))
   assert cos_sim > 0.999, f"RoPE vs reference cosine={cos_sim}"
 
-def _random_model(cfg, compress=None):
-  rng = np.random.default_rng(0); dh = cfg.dh
-  R = lambda *s: (rng.standard_normal(s) / np.sqrt(s[-1])).astype(np.float32)
-  sd = {"model.embed_tokens.weight": R(cfg.vocab, cfg.dim), "model.norm.weight": np.ones(cfg.dim, np.float32),
-        "lm_head.weight": R(cfg.vocab, cfg.dim)}
-  for L in range(cfg.n_layers):
-    p = f"model.layers.{L}."
-    for nm, sh in [("self_attn.q_proj", (cfg.n_heads * dh, cfg.dim)), ("self_attn.k_proj", (cfg.n_kv_heads * dh, cfg.dim)),
-                   ("self_attn.v_proj", (cfg.n_kv_heads * dh, cfg.dim)), ("self_attn.o_proj", (cfg.dim, cfg.n_heads * dh)),
-                   ("mlp.gate_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.up_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.down_proj", (cfg.dim, cfg.ffn_dim))]:
-      sd[p + nm + ".weight"] = R(*sh)
-    sd[p + "input_layernorm.weight"] = np.ones(cfg.dim, np.float32); sd[p + "post_attention_layernorm.weight"] = np.ones(cfg.dim, np.float32)
-  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), compress=compress)
-
 @requires_ane
-def test_generate_runs():  # the decode loop produces the requested number of valid tokens
+def test_generate_matches_prefill_argmax():  # decode step 0 must equal the prefill argmax (catches a broken KV-cache step)
   cfg = LlamaConfig(dim=64, n_layers=2, n_heads=4, n_kv_heads=2, ffn_dim=128, vocab=48)
-  out = _random_model(cfg).generate([1, 2, 3], max_new_tokens=5)
+  m = _random_model(cfg); prompt = [1, 2, 3]
+  first = m.generate(prompt, max_new_tokens=1)[0]
+  ref = int(np.asarray(m.prefill(prompt)).ravel().argmax())   # P(next | prompt) via the independent prefill program
+  assert first == ref, f"decode first token {first} != prefill argmax {ref}"
+  out = m.generate(prompt, max_new_tokens=5)
   assert len(out) == 5 and all(0 <= t < cfg.vocab for t in out)
+  assert m.generate(prompt, max_new_tokens=5) == out          # greedy is deterministic
 
 @requires_ane
 def test_int8_decode_matches_fp16():  # int8-quantized ANE weights stay faithful to fp16 (prefill + decode both run)
