@@ -51,6 +51,19 @@ def _colour_showwarning(message, category, filename, lineno, file=None, line=Non
 warnings.showwarning = _colour_showwarning
 
 
+def encode_chat(tok, prompt):
+    """Apply a chat template (no 'thinking' block) and return the prompt token ids. Tolerates tokenizers
+    without the enable_thinking kwarg and unwraps BatchEncoding / nested [[ids]] outputs."""
+    msgs = [{"role": "user", "content": prompt}]
+    try:
+        r = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False)
+    except TypeError:                                    # tokenizers without the enable_thinking kwarg
+        r = tok.apply_chat_template(msgs, add_generation_prompt=True)
+    if isinstance(r, dict) or hasattr(r, "input_ids"): r = r["input_ids"]   # BatchEncoding -> ids
+    if r and isinstance(r[0], (list, tuple)): r = r[0]                       # [[ids]] -> [ids]
+    return [int(t) for t in r]
+
+
 def relerr(a, b):
     """L2 relative error of `a` against the reference `b`."""
     a = np.asarray(a, np.float64).ravel()

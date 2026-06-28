@@ -22,18 +22,6 @@ def _cached_06b():
     return hits[0] if hits else None
 
 
-def _encode(tok, prompt):
-    """Apply the chat template (no 'thinking' block); returns a list of token ids."""
-    msgs = [{"role": "user", "content": prompt}]
-    try:
-        r = tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False)
-    except TypeError:                                    # tokenizers without the enable_thinking kwarg
-        r = tok.apply_chat_template(msgs, add_generation_prompt=True)
-    if isinstance(r, dict) or hasattr(r, "input_ids"): r = r["input_ids"]   # BatchEncoding -> ids
-    if r and isinstance(r[0], (list, tuple)): r = r[0]                       # [[ids]] -> [ids]
-    return [int(t) for t in r]
-
-
 def main():
     if len(sys.argv) < 2:
         print("usage: python3 examples/spec_chat.py <target-model> [draft-model]"); return 1
@@ -47,7 +35,7 @@ def main():
     tok = AutoTokenizer.from_pretrained(target_path)
     print(f"target {target.cfg.n_layers}L dim {target.cfg.dim}; draft {draft.cfg.n_layers}L. Speculative decode on the ANE.")
     print("compiling the verifier (one-time; minutes for a big target) ...", end="", flush=True)
-    spec_generate(target, draft, _encode(tok, "hi"), max_new_tokens=1, max_len=MAX_LEN)   # build + cache the verifier
+    spec_generate(target, draft, _common.encode_chat(tok, "hi"), max_new_tokens=1, max_len=MAX_LEN)   # build + cache the verifier
     print(" done.")
     print("type a message (Ctrl-D or 'exit' to quit). replies stream; speculative is exact (== greedy decode).\n")
 
@@ -58,16 +46,19 @@ def main():
             print(); break
         if not prompt: continue
         if prompt in ("exit", "quit"): break
-        ids = _encode(tok, prompt)
+        ids = _common.encode_chat(tok, prompt)
         if len(ids) >= MAX_LEN - 16:
             print("ane> (prompt too long for the demo context)\n"); continue
         print("ane> ", end="", flush=True)
-        n = [0]; t0 = time.perf_counter()
+        count = 0
+        def on_tok(t):
+            nonlocal count; count += 1
+            print(tok.decode([t]), end="", flush=True)
+        t0 = time.perf_counter()
         spec_generate(target, draft, ids, max_new_tokens=MAX_LEN - len(ids) - 1, max_len=MAX_LEN,
-                      eos_id=tok.eos_token_id, n_draft=4,
-                      on_token=lambda t: (n.__setitem__(0, n[0] + 1), print(tok.decode([t]), end="", flush=True)))
+                      eos_id=tok.eos_token_id, n_draft=4, on_token=on_tok)
         dt = time.perf_counter() - t0
-        print(f"\n   [{n[0]} tokens, {n[0] / dt:.1f} tok/s -- speculative, identical to greedy]\n")
+        print(f"\n   [{count} tokens, {count / dt:.1f} tok/s -- speculative, identical to greedy]\n")
     return 0
 
 
