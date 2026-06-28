@@ -132,22 +132,9 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
   ~54GB > RAM). `resid_scale` shrinks the residual by S so this 27B's deep-layer outliers stay under fp16's
   65504; exact, since scaling `embed` + the residual-writing projections (wo, out_proj, wdown) by 1/S cancels
   in the scale-invariant rms_norm every read goes through."""
-  import gguf
-  import mmap as _mmap
-  from gguf.quants import dequantize
+  from ._gguf import GGUFView
   from .moe import _LazyLayers
-  r = gguf.GGUFReader(path)
-  meta = {f.name: f for f in r.fields.values()}
-  arch = next(k.split(".")[0] for k in meta if k.endswith(".block_count"))
-  def sc(key, default=None):
-    f = meta.get(arch + "." + key)
-    return f.parts[f.data[-1]][0] if f is not None else default
-  tn = {t.name: t for t in r.tensors}
-  def get(name, dtype: np.typing.DTypeLike = np.float16):       # dequantize -> fp16 (halves resident memory)
-    t = tn[name]; d = np.asarray(t.data)
-    if t.tensor_type != gguf.GGMLQuantizationType.F32:
-      d = dequantize(d, t.tensor_type)
-    return d.astype(dtype)
+  v = GGUFView(path); sc, get, tn = v.sc, v.get, v.tn
 
   n_total = int(sc("block_count", 0)); n = n_total if n_layers is None else min(n_layers, n_total)
   dim, heads = int(sc("embedding_length", 0)), int(sc("attention.head_count", 0))
@@ -161,15 +148,9 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     head_dim=int(sc("attention.key_length", 0)), rotary_dim=int(sc("rope.dimension_count", 0)),
     layers=[llm.LayerSpec(mixer="gated_attention" if is_attn(L) else "gated_deltanet") for L in range(n)],
     extra={"nk": nk, "nv": nv, "dk": dk, "dv": dv, "conv_k": conv_k, "gqa_repeat": "tile"})  # GGUF: ggml_repeat tiles
-  gm = lambda key, d: (meta[key].parts[meta[key].data[-1]][0] if key in meta else d)   # the model's own
-  cfg.extra["sampling"] = {"temperature": float(gm("general.sampling.temp", 0.0)),     # recommended sampling
-                           "top_p": float(gm("general.sampling.top_p", 1.0)), "top_k": int(gm("general.sampling.top_k", 0))}
-
-  def _drop_mmap():                                             # release the GGUF's resident pages (low warmup peak)
-    mm = getattr(r.data, "_mmap", None)
-    if mm is not None:
-      try: mm.madvise(_mmap.MADV_DONTNEED)
-      except (AttributeError, OSError): pass
+  cfg.extra["sampling"] = {"temperature": float(v.field("general.sampling.temp", 0.0)),   # the model's own
+                           "top_p": float(v.field("general.sampling.top_p", 1.0)),         # recommended sampling
+                           "top_k": int(v.field("general.sampling.top_k", 0))}
 
   S = np.float16(1.0 / resid_scale)                            # residual-writing projections carry the 1/S factor
   def layer(L):                                                # materialize one hybrid layer's fp16 weights
@@ -185,7 +166,7 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
             "conv1d": get(b + "ssm_conv1d.weight", np.float32), "neg_exp_A": get(b + "ssm_a", np.float32),
             "dt_bias": get(b + "ssm_dt.bias", np.float32), "ssm_norm": get(b + "ssm_norm.weight"),
             "out_proj": get(b + "ssm_out.weight") * S}
-    _drop_mmap()
+    v.drop_pages()
     return d
 
   # embed: host gather, fp16 (saves ~2.5GB at vocab ~248k; cast to fp16 anyway) and *S to match the residual.

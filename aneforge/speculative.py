@@ -13,7 +13,7 @@ import numpy as np
 
 from .graph import input as _input, concat as _cat, _const
 from . import _compile
-from .llm import rope_tables, _repeat_kv3
+from .llm import rope_tables, _repeat_kv3, _DECODE_CTX
 
 f16 = np.float16
 
@@ -45,6 +45,11 @@ def _build_verifier(m, M, Kq):
   """Build (cached on `m`) the segmented Kq-token verify program for context length `M`, mirroring the decode
   chunking so each chunk's KV cache stays resident via `share_buffer` and the hidden chains chunk -> chunk."""
   cfg = m.cfg; KV, dh, D = cfg.n_kv_heads, cfg.dh, cfg.dim
+  if cfg.layers:                                          # the verify block is hardcoded for dense attention + SwiGLU
+    assert all(ls.mixer == "attention" and ls.mlp == "swiglu" for ls in cfg.layers), \
+      "spec_generate target must be a dense attention + SwiGLU model (got a non-dense layer plan)"
+  assert not cfg.rope_interleaved and cfg.rotary_dim in (0, dh), \
+    "spec_generate verifier assumes full neox RoPE (rotary_dim == head_dim)"
   groups = m._layer_chunks(); chunks = []
   for gi, grp in enumerate(groups):
     x = _input((Kq, D)); place = _input((KV, M, Kq)); invc = _input((1, M, 1)); mask = _input((1, Kq, M))
@@ -61,7 +66,7 @@ def _build_verifier(m, M, Kq):
     p = {"x": inm[id(x)], "place": inm[id(place)], "invc": inm[id(invc)], "mask": inm[id(mask)],
          "cosp": inm[id(cosp)], "sinp": inm[id(sinp)], "h": om[h], "states": {inm[id(t)]: t.shape for t in Kin + Vin}}
     chunks.append({"net": net, "p": p})
-  cos_t, sin_t = rope_tables(M, dh, cfg.rope_base)        # dense full RoPE (speculative target is a dense model)
+  cos_t, sin_t = rope_tables(M, dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved)  # match the decode tables
   return {"M": M, "Kq": Kq, "chunks": chunks, "cos": cos_t, "sin": sin_t, "lmhead": _build_lm_head(m, Kq)}
 
 
@@ -109,10 +114,11 @@ def _draft_step(draft, d, tok, pos):
   invv = np.ones((1, M, 1), f16); invv[0, pos, 0] = 0.0
   mv = np.full((1, 1, M), -1e4, f16); mv[..., :pos + 1] = 0.0
   h = np.asarray(draft.w["embed"][tok])[None].astype(f16)
+  vals = {"oh": ohv, "inv": invv, "mask": mv, "cosp": d["cos"][pos][None], "sinp": d["sin"][pos][None]}
   for c in d["chunks"]:
     p = c["p"]; pr = c["net"].prog; pr.set_input(p["x"], h)
-    for kk, vv in (("oh", ohv), ("inv", invv), ("mask", mv), ("cosp", d["cos"][pos][None]), ("sinp", d["sin"][pos][None])):
-      if kk in p: pr.set_input(p[kk], vv)
+    for kk in _DECODE_CTX:
+      if kk in p: pr.set_input(p[kk], vals[kk])
     pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
   return int((h.reshape(cfg.dim).astype(np.float32) @ np.asarray(draft.w["lm_head"]).T).argmax())
 
