@@ -197,6 +197,22 @@ class LlamaPrefill:
   def _logits(self, hidden_row):
     return hidden_row @ np.asarray(self.w["lm_head"]).T    # host lm_head (vocab can exceed the ANE per-op dim limit)
 
+  @staticmethod
+  def _sample(logits, temperature, top_p, top_k):
+    """Pick a token id from `logits`. `temperature <= 0` is greedy argmax (default); otherwise scale by
+    temperature, truncate to the top-k logits and the nucleus (smallest set with cumulative prob >= top_p),
+    then sample. Pure greedy can loop on models tuned for sampling, so chat demos pass the model's defaults."""
+    if temperature <= 0.0: return int(np.argmax(logits))
+    lg = logits.astype(np.float64) / temperature
+    if top_k and 0 < top_k < lg.size:
+      lg[lg < np.partition(lg, -top_k)[-top_k]] = -np.inf
+    p = np.exp(lg - lg.max()); p /= p.sum()
+    if 0.0 < top_p < 1.0:
+      order = np.argsort(p)[::-1]; cum = np.cumsum(p[order])
+      keep = order[:int(np.searchsorted(cum, top_p)) + 1]      # include the token that crosses top_p
+      m = np.zeros_like(p); m[keep] = p[keep]; p = m / m.sum()
+    return int(np.random.choice(p.size, p=p))
+
   def prefill(self, token_ids):
     """Prefill `token_ids` and return the next-token logits [1, vocab] (the transformer runs on the ANE)."""
     return self._logits(self._hidden(token_ids)[-1])[None]
@@ -251,11 +267,12 @@ class LlamaPrefill:
     `generate` streams immediately. Returns self."""
     self._decoder(int(max_len)); return self
 
-  def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None):
-    """Greedy autoregressive generation with a resident KV-cache. The decode program (compiled once and
-    cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each step
-    feeds only the token embedding + a position one-hot. `on_token(id)` is called per token (streaming).
-    Returns the generated token ids."""
+  def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None,
+               temperature=0.0, top_p=1.0, top_k=0):
+    """Autoregressive generation with a resident KV-cache. The decode program (compiled once and cached) runs
+    all layers for one token attending to caches that stay on the ANE across steps, so each step feeds only the
+    token embedding + a position one-hot. `on_token(id)` is called per token (streaming). Greedy by default
+    (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
     cfg = self.cfg; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
     d = self._decoder(M); chunks = d["chunks"]
@@ -279,7 +296,7 @@ class LlamaPrefill:
     cur = prompt[-1]; pos = len(prompt) - 1; out = []
     for _ in range(max_new_tokens):                            # decode
       if pos >= M - 1: break                                   # cache full
-      nxt = int(self._logits(step(cur, pos)).argmax()); out.append(nxt)
+      nxt = self._sample(self._logits(step(cur, pos)), temperature, top_p, top_k); out.append(nxt)
       if nxt == eos_id: break
       if on_token is not None: on_token(nxt)                   # stream the token
       cur = nxt; pos += 1

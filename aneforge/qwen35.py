@@ -166,6 +166,9 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     head_dim=int(sc("attention.key_length", 0)), rotary_dim=int(sc("rope.dimension_count", 0)),
     layers=[llm.LayerSpec(mixer="gated_attention" if is_attn(L) else "gated_deltanet") for L in range(n)],
     extra={"nk": nk, "nv": nv, "dk": dk, "dv": dv, "conv_k": conv_k, "gqa_repeat": "tile"})  # GGUF: ggml_repeat tiles
+  gm = lambda key, d: (meta[key].parts[meta[key].data[-1]][0] if key in meta else d)   # the model's own
+  cfg.extra["sampling"] = {"temperature": float(gm("general.sampling.temp", 0.0)),     # recommended sampling
+                           "top_p": float(gm("general.sampling.top_p", 1.0)), "top_k": int(gm("general.sampling.top_k", 0))}
 
   def _drop_mmap():                                             # release the GGUF's resident pages (low warmup peak)
     mm = getattr(r.data, "_mmap", None)
@@ -190,8 +193,9 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     _drop_mmap()
     return d
 
-  # embed (host gather) and lm_head (host matmul) stay fp32: numpy has no fp16 BLAS, so an fp16 lm_head at
-  # vocab ~248k makes per-token logits pathologically slow. embed carries 1/S to match the scaled residual.
-  w = {"embed": get("token_embd.weight", np.float32) / resid_scale, "final_norm": get("output_norm.weight"),
+  # embed is a host gather -> keep it fp16 (cast to fp16 for the ANE anyway; saves ~2.5GB resident at vocab
+  # ~248k). lm_head stays fp32: numpy has no fp16 BLAS, so an fp16 host matmul at this vocab is pathologically
+  # slow. Both embed (×1/S, to match the scaled residual) and the residual init carry the resid_scale factor.
+  w = {"embed": (get("token_embd.weight", np.float16) * S), "final_norm": get("output_norm.weight"),
        "lm_head": get("output.weight", np.float32), "layers": _LazyLayers(layer, n)}
   return llm.LlamaPrefill(cfg, w, compress=compress)

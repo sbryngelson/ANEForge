@@ -62,6 +62,8 @@ def main():
   m.warmup(MAX_LEN)
   imend = tok.convert_tokens_to_ids("<|im_end|>")           # ChatML turn-end (cleaner stop than eos_token_id)
   eos = imend if isinstance(imend, int) and imend >= 0 else tok.eos_token_id
+  samp = m.cfg.extra.get("sampling", {})                    # the model's own recommended sampling (from the GGUF);
+  if not samp.get("temperature"): samp = {"temperature": 0.6, "top_p": 0.95, "top_k": 20}  # greedy loops, so sample
   print(" done.")
   print("type a message (Ctrl-D or 'exit' to quit). full hybrid model, decoding on the ANE.\n")
 
@@ -78,6 +80,7 @@ def main():
     print("ane> ", end="", flush=True)
     n = [0]; t0 = time.perf_counter()
     m.generate(ids, max_new_tokens=MAX_LEN - len(ids) - 1, max_len=MAX_LEN, eos_id=eos,
+               temperature=samp["temperature"], top_p=samp.get("top_p", 1.0), top_k=samp.get("top_k", 0),
                on_token=lambda t: (n.__setitem__(0, n[0] + 1), print(tok.decode([t]), end="", flush=True)))
     dt = time.perf_counter() - t0
     print(f"\n   [{n[0]} tokens, {n[0] / dt:.1f} tok/s on the ANE]\n")
