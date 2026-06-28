@@ -51,8 +51,8 @@ def main():
   tokdir = sys.argv[2] if len(sys.argv) > 2 else _tokenizer_dir(gguf)
   if not tokdir:
     print(f"no tokenizer found next to {gguf}; pass a tokenizer dir (with tokenizer.json) as the 2nd arg"); return 1
-  compress = os.environ.get("ANEFORGE_COMPRESS", "int8")    # "blockwise" = per-block int8 scales, higher fidelity than
-  print(f"loading {os.path.basename(gguf)} ({compress}, ANE) ...")   # plain per-channel int8 (~same memory, ~6% scale overhead)
+  compress = os.environ.get("ANEFORGE_COMPRESS", "int8")    # "blockwise" = per-block int8 scales (~same memory)
+  print(f"loading {os.path.basename(gguf)} ({compress}, ANE) ...")
   m = load_gguf(gguf, compress=compress)
   m._chunk_bytes = 1.0e9                          # a couple of hybrid layers per program (under the ~2GB ANE ceiling)
   from transformers import AutoTokenizer

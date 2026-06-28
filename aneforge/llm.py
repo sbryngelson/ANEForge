@@ -199,9 +199,8 @@ class LlamaPrefill:
 
   @staticmethod
   def _sample(logits, temperature, top_p, top_k):
-    """Pick a token id from `logits`. `temperature <= 0` is greedy argmax (default); otherwise scale by
-    temperature, truncate to the top-k logits and the nucleus (smallest set with cumulative prob >= top_p),
-    then sample. Pure greedy can loop on models tuned for sampling, so chat demos pass the model's defaults."""
+    """Greedy argmax when `temperature <= 0` (default); else temperature-scale, keep the top-k logits and the
+    top-p nucleus, and sample. Greedy can loop on sampling-tuned models, so chat demos pass the model's params."""
     if temperature <= 0.0: return int(np.argmax(logits))
     lg = logits.astype(np.float64) / temperature
     if top_k and 0 < top_k < lg.size:

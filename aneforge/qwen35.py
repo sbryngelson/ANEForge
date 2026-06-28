@@ -41,8 +41,8 @@ def _gated_attn_decode(x, w, cfg, ls, ctx, M):
   q = (q * cosp + (q @ P) * sinp).reshape((H, 1, dh))           # matmul-rope (interleaved partial)
   k = (k * cosp + (k @ P) * sinp).reshape((KV, 1, dh))
   Kout = Kin * inv + k * oh; Vout = Vin * inv + v.reshape((KV, 1, dh)) * oh
-  # GQA via grouped matmul over the KV groups (query head h -> group h // g3), NOT by repeating the cache to
-  # [H, M, dh]: that path flattens to [KV, M*dh], and M*dh exceeds the ANE 65536 per-op dim cap at dh=256.
+  # GQA by grouped matmul over KV groups (head h -> group h//g3); repeating to [H,M,dh] flattens to [KV, M*dh],
+  # over the ANE 65536 per-op cap at dh=256.
   qg2 = q.reshape((KV, H // KV, dh))
   sc = ((qg2 @ Kout.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)  # [KV, g3, M]
   a = (sc @ Vout).reshape((1, H * dh)) * gate.sigmoid()         # [KV,g3,M] @ [KV,M,dh] -> [KV,g3,dh] -> [1, H*dh]
@@ -69,8 +69,8 @@ def _deltanet_decode(x, w, cfg, ls, ctx, M):
   v = conv.slice_by_size([0, 2 * kd], [1, vd]).reshape((nv, dv))
   beta = b.sigmoid().reshape((nv, 1, 1))
   gt = ((a + _const(w["dt_bias"])).softplus() * _const(w["neg_exp_A"])).exp().reshape((nv, 1, 1))  # exp(-exp(A_log)*softplus(a+dt))
-  # GQA k/q heads -> v heads. GGUF/llama.cpp uses ggml_repeat (tile: v-head h -> k-head h%nk); transformers
-  # uses repeat_interleave (h//g3). The two disagree, and tile is what the GGUF weights are baked for.
+  # GQA k/q -> v heads: GGUF/llama.cpp tiles (v-head h -> k-head h%nk via ggml_repeat); transformers
+  # interleaves (h//g3). They disagree; the GGUF is baked for tiling.
   eye = np.eye(nk, dtype=np.float32)
   rep = _const(np.tile(eye, (g3, 1)) if e.get("gqa_repeat") == "tile" else np.repeat(eye, g3, 0))
   q = (rep @ q).l2_norm(-1, 1e-6) * (dk ** -0.5); k = (rep @ k).l2_norm(-1, 1e-6)
@@ -125,18 +125,13 @@ def adapt(c, sd, prefix: str = ""):
 
 def load_gguf(path: str, n_layers: int | None = None, compress: str | None = None,
               resid_scale: float = 32.0) -> "llm.LlamaPrefill":
-  """Load a Qwen3.5 / Qwen3-Next hybrid GGUF (arch `qwen35`) for pure-ANE decode, dequantizing each tensor to
-  fp16. The hybrid plan (a `gated_attention` layer every `full_attention_interval`, `gated_deltanet` else) and
-  the DeltaNet dims (nk/nv/dk/dv/conv_k) are read from the GGUF metadata. The reader's `.data` is PyTorch
-  [out,in] order, so projections need no transpose. Unlike the HF `adapt`, the GGUF already bakes the (1+w)
-  RMSNorms and stores `ssm_a = -exp(A_log)`, so both are used as-is. Layers stream + free like the MoE loader
-  (64 layers fp16 ~54GB > RAM).
-
-  `resid_scale` shrinks the residual stream by a constant S to keep it in fp16 range: this 27B's deep-layer
-  activation outliers exceed fp16's 65504 max and overflow to inf (llama.cpp dodges it with fp32 activations).
-  Every read of the residual goes through a scale-invariant rms_norm (each sublayer input + the final norm),
-  so scaling `embed` and every residual-writing projection (wo, out_proj, wdown) by 1/S leaves the logits
-  unchanged while keeping the hidden state ~S smaller."""
+  """Load a Qwen3.5 / Qwen3-Next hybrid GGUF (arch `qwen35`) for pure-ANE decode. The per-layer plan
+  (`gated_attention` every `full_attention_interval`, else `gated_deltanet`) and the DeltaNet dims come from
+  the metadata; tensors dequantize to fp16 in [out,in] order (no transpose). Unlike the HF `adapt`, the GGUF
+  bakes the (1+w) RMSNorms and stores `ssm_a = -exp(A_log)`, both used as-is. Layers stream + free (64L fp16
+  ~54GB > RAM). `resid_scale` shrinks the residual by S so this 27B's deep-layer outliers stay under fp16's
+  65504; exact, since scaling `embed` + the residual-writing projections (wo, out_proj, wdown) by 1/S cancels
+  in the scale-invariant rms_norm every read goes through."""
   import gguf
   import mmap as _mmap
   from gguf.quants import dequantize
@@ -193,9 +188,8 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
     _drop_mmap()
     return d
 
-  # embed is a host gather -> keep it fp16 (cast to fp16 for the ANE anyway; saves ~2.5GB resident at vocab
-  # ~248k). lm_head stays fp32: numpy has no fp16 BLAS, so an fp16 host matmul at this vocab is pathologically
-  # slow. Both embed (x1/S, to match the scaled residual) and the residual init carry the resid_scale factor.
+  # embed: host gather, fp16 (saves ~2.5GB at vocab ~248k; cast to fp16 anyway) and *S to match the residual.
+  # lm_head: fp32 (numpy has no fp16 BLAS, so an fp16 host matmul at this vocab is slow).
   w = {"embed": (get("token_embd.weight", np.float16) * S), "final_norm": get("output_norm.weight"),
        "lm_head": get("output.weight", np.float32), "layers": _LazyLayers(layer, n)}
   return llm.LlamaPrefill(cfg, w, compress=compress)
