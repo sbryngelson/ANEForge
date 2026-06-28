@@ -195,7 +195,7 @@ def load_gguf(path: str, n_layers: int | None = None, compress: str | None = Non
 
   # embed is a host gather -> keep it fp16 (cast to fp16 for the ANE anyway; saves ~2.5GB resident at vocab
   # ~248k). lm_head stays fp32: numpy has no fp16 BLAS, so an fp16 host matmul at this vocab is pathologically
-  # slow. Both embed (×1/S, to match the scaled residual) and the residual init carry the resid_scale factor.
+  # slow. Both embed (x1/S, to match the scaled residual) and the residual init carry the resid_scale factor.
   w = {"embed": (get("token_embd.weight", np.float16) * S), "final_norm": get("output_norm.weight"),
        "lm_head": get("output.weight", np.float32), "layers": _LazyLayers(layer, n)}
   return llm.LlamaPrefill(cfg, w, compress=compress)

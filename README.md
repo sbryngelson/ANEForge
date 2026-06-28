@@ -176,7 +176,7 @@ Operator coverage is tracked op by op across M1 to M5 in the [op catalog](docs/o
 
 ## Language models
 
-Decoder LLMs run on the ANE from Hugging Face weights or GGUF — prefill plus resident-KV-cache decode, auto-segmented past the ~2 GB single-program ceiling:
+Decoder LLMs run on the ANE from Hugging Face weights or GGUF - prefill plus resident-KV-cache decode, auto-segmented past the ~2 GB single-program ceiling:
 
 | Model                  | What runs                          | Measured                          |
 | ---------------------- | ---------------------------------- | --------------------------------- |
@@ -185,7 +185,7 @@ Decoder LLMs run on the ANE from Hugging Face weights or GGUF — prefill plus r
 | Qwen1.5-MoE-A2.7B      | sparse MoE, full model on pure ANE | coherent text, ~2 tok/s (int8)    |
 | Qwen3.5-27B hybrid     | 48 DeltaNet + 16 attn on pure ANE  | coherent int8 (fp16-bound vs llama.cpp) |
 
-Speculative verify is near-free on the ANE (`verify(K) ≈ verify(1)`, decode is latency-bound); MoE decode at 30B scale is weight-bandwidth-bound. Full writeup in the [LLMs guide](docs/llm.md).
+Speculative verify is near-free on the ANE (`verify(K) ~ verify(1)`, decode is latency-bound); MoE decode at 30B scale is weight-bandwidth-bound. Full writeup in the [LLMs guide](docs/llm.md).
 
 ## Verify
 

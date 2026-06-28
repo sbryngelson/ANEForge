@@ -4,7 +4,7 @@ programs. Matches HF logits; see `docs/llm.md`.
 
 The runner is model-agnostic: a `LlamaConfig` carries a per-layer plan (`LayerSpec`) naming a token-mixer
 and an MLP from the builder registries below, so supporting a new architecture is an *adapter* that emits
-the plan + canonical weights — not new branches in the hot path."""
+the plan + canonical weights - not new branches in the hot path."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 import numpy as np
@@ -76,8 +76,8 @@ def _repeat_kv(k: Tensor, g: int) -> Tensor:
 
 
 def _causal_attn(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
-  """Causal self-attention on q,k,v [1,H,S,dh] as the decomposed `softmax(q@kᵀ·scale + causal_mask)@v`.
-  For prefill this stays in ONE fused program (compute-bound big matmuls — what the ANE excels at);
+  """Causal self-attention on q,k,v [1,H,S,dh] as the decomposed `softmax(q@k^T*scale + causal_mask)@v`.
+  For prefill this stays in ONE fused program (compute-bound big matmuls - what the ANE excels at);
   the native fused-attention layer is avoided here because its per-layer graph cut dominates prefill cost."""
   S, dh = q.shape[2], q.shape[3]
   mask = np.triu(np.full((S, S), -1e4, np.float16), 1)     # causal: keys after the query are masked out
