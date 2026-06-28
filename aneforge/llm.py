@@ -4,7 +4,7 @@ programs. Matches HF logits; see `docs/llm.md`.
 
 The runner is model-agnostic: a `LlamaConfig` carries a per-layer plan (`LayerSpec`) naming a token-mixer
 and an MLP from the builder registries below, so supporting a new architecture is an *adapter* that emits
-the plan + canonical weights — not new branches in the hot path."""
+the plan + canonical weights - not new branches in the hot path."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 import numpy as np
@@ -76,8 +76,8 @@ def _repeat_kv(k: Tensor, g: int) -> Tensor:
 
 
 def _causal_attn(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
-  """Causal self-attention on q,k,v [1,H,S,dh] as the decomposed `softmax(q@kᵀ·scale + causal_mask)@v`.
-  For prefill this stays in ONE fused program (compute-bound big matmuls — what the ANE excels at);
+  """Causal self-attention on q,k,v [1,H,S,dh] as the decomposed `softmax(q@k^T*scale + causal_mask)@v`.
+  For prefill this stays in ONE fused program (compute-bound big matmuls - what the ANE excels at);
   the native fused-attention layer is avoided here because its per-layer graph cut dominates prefill cost."""
   S, dh = q.shape[2], q.shape[3]
   mask = np.triu(np.full((S, S), -1e4, np.float16), 1)     # causal: keys after the query are masked out
@@ -197,6 +197,21 @@ class LlamaPrefill:
   def _logits(self, hidden_row):
     return hidden_row @ np.asarray(self.w["lm_head"]).T    # host lm_head (vocab can exceed the ANE per-op dim limit)
 
+  @staticmethod
+  def _sample(logits, temperature, top_p, top_k):
+    """Greedy argmax when `temperature <= 0` (default); else temperature-scale, keep the top-k logits and the
+    top-p nucleus, and sample. Greedy can loop on sampling-tuned models, so chat demos pass the model's params."""
+    if temperature <= 0.0: return int(np.argmax(logits))
+    lg = logits.astype(np.float64) / temperature
+    if top_k and 0 < top_k < lg.size:
+      lg[lg < np.partition(lg, -top_k)[-top_k]] = -np.inf
+    p = np.exp(lg - lg.max()); p /= p.sum()
+    if 0.0 < top_p < 1.0:
+      order = np.argsort(p)[::-1]; cum = np.cumsum(p[order])
+      keep = order[:int(np.searchsorted(cum, top_p)) + 1]      # include the token that crosses top_p
+      m = np.zeros_like(p); m[keep] = p[keep]; p = m / m.sum()
+    return int(np.random.choice(p.size, p=p))
+
   def prefill(self, token_ids):
     """Prefill `token_ids` and return the next-token logits [1, vocab] (the transformer runs on the ANE)."""
     return self._logits(self._hidden(token_ids)[-1])[None]
@@ -251,11 +266,12 @@ class LlamaPrefill:
     `generate` streams immediately. Returns self."""
     self._decoder(int(max_len)); return self
 
-  def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None):
-    """Greedy autoregressive generation with a resident KV-cache. The decode program (compiled once and
-    cached) runs all layers for one token attending to caches that stay on the ANE across steps, so each step
-    feeds only the token embedding + a position one-hot. `on_token(id)` is called per token (streaming).
-    Returns the generated token ids."""
+  def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None,
+               temperature=0.0, top_p=1.0, top_k=0):
+    """Autoregressive generation with a resident KV-cache. The decode program (compiled once and cached) runs
+    all layers for one token attending to caches that stay on the ANE across steps, so each step feeds only the
+    token embedding + a position one-hot. `on_token(id)` is called per token (streaming). Greedy by default
+    (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
     cfg = self.cfg; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
     d = self._decoder(M); chunks = d["chunks"]
@@ -279,7 +295,7 @@ class LlamaPrefill:
     cur = prompt[-1]; pos = len(prompt) - 1; out = []
     for _ in range(max_new_tokens):                            # decode
       if pos >= M - 1: break                                   # cache full
-      nxt = int(self._logits(step(cur, pos)).argmax()); out.append(nxt)
+      nxt = self._sample(self._logits(step(cur, pos)), temperature, top_p, top_k); out.append(nxt)
       if nxt == eos_id: break
       if on_token is not None: on_token(nxt)                   # stream the token
       cur = nxt; pos += 1

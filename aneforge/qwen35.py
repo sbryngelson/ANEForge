@@ -10,7 +10,6 @@ import numpy as np
 
 from .graph import input as _input, _const, concat as _concat
 from . import llm
-from .llm import _repeat_kv3
 
 
 def _rotate_matrix(dh: int, rotary_dim: int, interleaved: bool) -> np.ndarray:
@@ -42,9 +41,11 @@ def _gated_attn_decode(x, w, cfg, ls, ctx, M):
   q = (q * cosp + (q @ P) * sinp).reshape((H, 1, dh))           # matmul-rope (interleaved partial)
   k = (k * cosp + (k @ P) * sinp).reshape((KV, 1, dh))
   Kout = Kin * inv + k * oh; Vout = Vin * inv + v.reshape((KV, 1, dh)) * oh
-  Kr, Vr = _repeat_kv3(Kout, H // KV), _repeat_kv3(Vout, H // KV)
-  sc = ((q @ Kr.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)
-  a = (sc @ Vr).reshape((1, H * dh)) * gate.sigmoid()
+  # GQA by grouped matmul over KV groups (head h -> group h//g3); repeating to [H,M,dh] flattens to [KV, M*dh],
+  # over the ANE 65536 per-op cap at dh=256.
+  qg2 = q.reshape((KV, H // KV, dh))
+  sc = ((qg2 @ Kout.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)  # [KV, g3, M]
+  a = (sc @ Vout).reshape((1, H * dh)) * gate.sigmoid()         # [KV,g3,M] @ [KV,M,dh] -> [KV,g3,dh] -> [1, H*dh]
   return x + a.linear(w["wo"]), [(Kout, Kin), (Vout, Vin)]
 
 
@@ -68,7 +69,10 @@ def _deltanet_decode(x, w, cfg, ls, ctx, M):
   v = conv.slice_by_size([0, 2 * kd], [1, vd]).reshape((nv, dv))
   beta = b.sigmoid().reshape((nv, 1, 1))
   gt = ((a + _const(w["dt_bias"])).softplus() * _const(w["neg_exp_A"])).exp().reshape((nv, 1, 1))  # exp(-exp(A_log)*softplus(a+dt))
-  rep = _const(np.repeat(np.eye(nk, dtype=np.float32), g3, 0))   # GQA: nk -> nv heads
+  # GQA k/q -> v heads: GGUF/llama.cpp tiles (v-head h -> k-head h%nk via ggml_repeat); transformers
+  # interleaves (h//g3). They disagree; the GGUF is baked for tiling.
+  eye = np.eye(nk, dtype=np.float32)
+  rep = _const(np.tile(eye, (g3, 1)) if e.get("gqa_repeat") == "tile" else np.repeat(eye, g3, 0))
   q = (rep @ q).l2_norm(-1, 1e-6) * (dk ** -0.5); k = (rep @ k).l2_norm(-1, 1e-6)
   q = q.reshape((nv, 1, dk)); k = k.reshape((nv, 1, dk)); v = v.reshape((nv, 1, dv))
   S1 = S * gt                                                    # decay first (transformers/qwen3.5)
@@ -117,3 +121,75 @@ def adapt(c, sd, prefix: str = ""):
              "dt_bias": g(d + "dt_bias"), "ssm_norm": g(d + "norm.weight"), "out_proj": g(d + "out_proj.weight")}
     w["layers"].append(lw)
   return cfg, w
+
+
+def load_gguf(path: str, n_layers: int | None = None, compress: str | None = None,
+              resid_scale: float = 32.0) -> "llm.LlamaPrefill":
+  """Load a Qwen3.5 / Qwen3-Next hybrid GGUF (arch `qwen35`) for pure-ANE decode. The per-layer plan
+  (`gated_attention` every `full_attention_interval`, else `gated_deltanet`) and the DeltaNet dims come from
+  the metadata; tensors dequantize to fp16 in [out,in] order (no transpose). Unlike the HF `adapt`, the GGUF
+  bakes the (1+w) RMSNorms and stores `ssm_a = -exp(A_log)`, both used as-is. Layers stream + free (64L fp16
+  ~54GB > RAM). `resid_scale` shrinks the residual by S so this 27B's deep-layer outliers stay under fp16's
+  65504; exact, since scaling `embed` + the residual-writing projections (wo, out_proj, wdown) by 1/S cancels
+  in the scale-invariant rms_norm every read goes through."""
+  import gguf
+  import mmap as _mmap
+  from gguf.quants import dequantize
+  from .moe import _LazyLayers
+  r = gguf.GGUFReader(path)
+  meta = {f.name: f for f in r.fields.values()}
+  arch = next(k.split(".")[0] for k in meta if k.endswith(".block_count"))
+  def sc(key, default=None):
+    f = meta.get(arch + "." + key)
+    return f.parts[f.data[-1]][0] if f is not None else default
+  tn = {t.name: t for t in r.tensors}
+  def get(name, dtype: np.typing.DTypeLike = np.float16):       # dequantize -> fp16 (halves resident memory)
+    t = tn[name]; d = np.asarray(t.data)
+    if t.tensor_type != gguf.GGMLQuantizationType.F32:
+      d = dequantize(d, t.tensor_type)
+    return d.astype(dtype)
+
+  n_total = int(sc("block_count", 0)); n = n_total if n_layers is None else min(n_layers, n_total)
+  dim, heads = int(sc("embedding_length", 0)), int(sc("attention.head_count", 0))
+  interval = int(sc("full_attention_interval", 4)); is_attn = lambda L: (L + 1) % interval == 0
+  nk, dk, conv_k = int(sc("ssm.group_count", 0)), int(sc("ssm.state_size", 0)), int(sc("ssm.conv_kernel", 0))
+  nv = int(tn["blk.0.ssm_a"].data.shape[0]); dv = int(sc("ssm.inner_size", 0)) // nv
+  cfg = llm.LlamaConfig(
+    dim=dim, n_layers=n, n_heads=heads, n_kv_heads=int(sc("attention.head_count_kv", heads)),
+    ffn_dim=int(sc("feed_forward_length", 0)), vocab=int(tn["token_embd.weight"].data.shape[0]),
+    rope_base=float(sc("rope.freq_base", 1e4)), norm_eps=float(sc("attention.layer_norm_rms_epsilon", 1e-6)),
+    head_dim=int(sc("attention.key_length", 0)), rotary_dim=int(sc("rope.dimension_count", 0)),
+    layers=[llm.LayerSpec(mixer="gated_attention" if is_attn(L) else "gated_deltanet") for L in range(n)],
+    extra={"nk": nk, "nv": nv, "dk": dk, "dv": dv, "conv_k": conv_k, "gqa_repeat": "tile"})  # GGUF: ggml_repeat tiles
+  gm = lambda key, d: (meta[key].parts[meta[key].data[-1]][0] if key in meta else d)   # the model's own
+  cfg.extra["sampling"] = {"temperature": float(gm("general.sampling.temp", 0.0)),     # recommended sampling
+                           "top_p": float(gm("general.sampling.top_p", 1.0)), "top_k": int(gm("general.sampling.top_k", 0))}
+
+  def _drop_mmap():                                             # release the GGUF's resident pages (low warmup peak)
+    mm = getattr(r.data, "_mmap", None)
+    if mm is not None:
+      try: mm.madvise(_mmap.MADV_DONTNEED)
+      except (AttributeError, OSError): pass
+
+  S = np.float16(1.0 / resid_scale)                            # residual-writing projections carry the 1/S factor
+  def layer(L):                                                # materialize one hybrid layer's fp16 weights
+    b = f"blk.{L}."
+    d = {"in_norm": get(b + "attn_norm.weight"), "mlp_norm": get(b + "post_attention_norm.weight"),
+         "wgate": get(b + "ffn_gate.weight"), "wup": get(b + "ffn_up.weight"), "wdown": get(b + "ffn_down.weight") * S}
+    if is_attn(L):
+      d |= {"wq": get(b + "attn_q.weight"), "wk": get(b + "attn_k.weight"), "wv": get(b + "attn_v.weight"),
+            "wo": get(b + "attn_output.weight") * S, "q_norm": get(b + "attn_q_norm.weight"), "k_norm": get(b + "attn_k_norm.weight")}
+    else:                                                       # GGUF: norms baked (1+w), ssm_a = -exp(A_log), conv1d [CD,K]
+      d |= {"in_proj_qkv": get(b + "attn_qkv.weight"), "in_proj_z": get(b + "attn_gate.weight"),
+            "in_proj_a": get(b + "ssm_alpha.weight"), "in_proj_b": get(b + "ssm_beta.weight"),
+            "conv1d": get(b + "ssm_conv1d.weight", np.float32), "neg_exp_A": get(b + "ssm_a", np.float32),
+            "dt_bias": get(b + "ssm_dt.bias", np.float32), "ssm_norm": get(b + "ssm_norm.weight"),
+            "out_proj": get(b + "ssm_out.weight") * S}
+    _drop_mmap()
+    return d
+
+  # embed: host gather, fp16 (saves ~2.5GB at vocab ~248k; cast to fp16 anyway) and *S to match the residual.
+  # lm_head: fp32 (numpy has no fp16 BLAS, so an fp16 host matmul at this vocab is slow).
+  w = {"embed": (get("token_embd.weight", np.float16) * S), "final_norm": get("output_norm.weight"),
+       "lm_head": get("output.weight", np.float32), "layers": _LazyLayers(layer, n)}
+  return llm.LlamaPrefill(cfg, w, compress=compress)
