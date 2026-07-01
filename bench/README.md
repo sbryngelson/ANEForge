@@ -29,3 +29,9 @@ CPU baseline (`pip install -e ".[bench]"`). The power-reading scripts call
 | `below_ridge_fusion.py` | fusion AI-lever demo: a memory-bound block crosses the weight ridge when fused |
 | `decode_int8_accuracy.py` | int8 decode accuracy: token agreement, top-5 overlap, logit relerr, softmax KL |
 | `real_models_fp16.py` | fp16-vs-fp16 GPU/ANE energy for ResNet-18, ViT-B/16, MiniLM |
+
+## `mlperf/` - MLPerf-style measurement
+
+[`mlperf/`](mlperf/) is a self-contained, LoadGen-shaped harness (SUT / QSL / SingleStream + Offline
+scenarios) for running MLPerf Inference workloads on the ANE - the on-ramp to an official MLCommons
+submission. First workload is ResNet-50. See [`mlperf/README.md`](mlperf/README.md).
