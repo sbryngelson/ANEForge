@@ -64,7 +64,8 @@ def main():
     ap = argparse.ArgumentParser(description="MLPerf-lite ResNet-50 on the ANE")
     ap.add_argument("--onnx", default=None, help="ResNet-50 ONNX path (default: export torchvision)")
     ap.add_argument("--scenario", default="both", choices=("single", "offline", "both"))
-    ap.add_argument("--count", type=int, default=256, help="queries (SingleStream) / samples (Offline)")
+    ap.add_argument("--count", type=int, default=256, help="min queries (SingleStream) / samples (Offline)")
+    ap.add_argument("--min-duration", type=float, default=0.0, help="min run seconds (600 for an official run)")
     ap.add_argument("--warmup", type=int, default=16)
     ap.add_argument("--int8", action="store_true", help="int8 ANE weights")
     ap.add_argument("--int4", action="store_true", help="int4 ANE weights")
@@ -93,7 +94,8 @@ def main():
 
     scenarios = ("single", "offline") if args.scenario == "both" else (args.scenario,)
     for sc in scenarios:
-        r = (lg.run_single_stream if sc == "single" else lg.run_offline)(sut, qsl, count=args.count, warmup=args.warmup)
+        r = (lg.run_single_stream if sc == "single" else lg.run_offline)(
+            sut, qsl, count=args.count, warmup=args.warmup, min_duration_s=args.min_duration)
         print(r.summary(), flush=True)
         results.append(r.to_dict())
 

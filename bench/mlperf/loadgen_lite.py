@@ -102,39 +102,46 @@ def _cycle(n, count):
     return [i % n for i in range(count)]
 
 
-def run_single_stream(sut, qsl, count=1024, warmup=16, clock=time.perf_counter):
-    """SingleStream: issue one sample, wait for it, record its latency; repeat `count` times. MLPerf metric is
-    the 90th-percentile latency. Warmup queries are discarded (first-call compile/allocation)."""
-    order = _cycle(qsl.count, warmup + count)
-    for i in order[:warmup]:
+def run_single_stream(sut, qsl, count=1024, warmup=16, min_duration_s=0.0, clock=time.perf_counter):
+    """SingleStream: one sample at a time, record each latency; keep issuing until BOTH >= `count` queries and
+    >= `min_duration_s` seconds are met (MLPerf metric: p90 latency). An official run needs 1024 queries and
+    600 s; `min_duration_s` reaches the time floor regardless of per-query speed. Warmup queries are discarded."""
+    for i in _cycle(qsl.count, warmup):
         sut.issue(qsl, [i])
     lat = []
+    idx = 0
     t_start = clock()
-    for i in order[warmup:]:
+    while True:
         t0 = clock()
-        sut.issue(qsl, [i])
+        sut.issue(qsl, [idx % qsl.count])
         lat.append((clock() - t0) * 1e3)
+        idx += 1
+        if idx >= count and (clock() - t_start) >= min_duration_s:
+            break
     wall = clock() - t_start
-    official = count >= _OFFICIAL_MIN_QUERIES and wall >= _OFFICIAL_MIN_DURATION_S
-    return Result("SingleStream", sut.name, count, count, lat, wall, official)
+    official = idx >= _OFFICIAL_MIN_QUERIES and wall >= _OFFICIAL_MIN_DURATION_S
+    return Result("SingleStream", sut.name, idx, idx, lat, wall, official)
 
 
-def run_offline(sut, qsl, count=None, warmup=16, batch=1, clock=time.perf_counter):
-    """Offline: hand the SUT the whole query set and measure total wall time; MLPerf metric is throughput
-    (samples/s). `batch` groups indices per `issue` (the ANE runs a fixed batch-1 program, so batch=1 -- a
-    latency-bound engine's Offline rate then tracks its SingleStream rate, which is itself the honest finding)."""
+def run_offline(sut, qsl, count=None, warmup=16, batch=1, min_duration_s=0.0, clock=time.perf_counter):
+    """Offline: issue the query set and measure total wall time; MLPerf metric is throughput (samples/s). Keeps
+    issuing until BOTH >= `count` samples and >= `min_duration_s` seconds. `batch` groups indices per `issue`
+    (the ANE runs a fixed batch-1 program, so batch=1 -- a latency-bound engine's Offline rate then tracks its
+    SingleStream rate, which is itself the honest finding)."""
     n = qsl.count if count is None else int(count)
-    order = _cycle(qsl.count, n)
-    for i in order[:min(warmup, n)]:
+    for i in _cycle(qsl.count, min(warmup, n)):
         sut.issue(qsl, [i])
-    queries = 0
+    samples = queries = 0
     t0 = clock()
-    for s in range(0, n, batch):
-        sut.issue(qsl, order[s:s + batch])
+    while True:
+        sut.issue(qsl, [(samples + j) % qsl.count for j in range(batch)])
+        samples += batch
         queries += 1
+        if samples >= n and (clock() - t0) >= min_duration_s:
+            break
     wall = clock() - t0
-    official = n >= _OFFICIAL_MIN_QUERIES and wall >= _OFFICIAL_MIN_DURATION_S
-    return Result("Offline", sut.name, queries, n, [], wall, official)
+    official = samples >= _OFFICIAL_MIN_QUERIES and wall >= _OFFICIAL_MIN_DURATION_S
+    return Result("Offline", sut.name, queries, samples, [], wall, official)
 
 
 def run_llm_decode(sut, prompt_ids, gen_len=64, warmup=1, clock=time.perf_counter):
