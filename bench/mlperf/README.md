@@ -48,7 +48,7 @@ Methodology-only numbers (short runs; not an audited submission), to show the sh
 
 | Run | Result |
 | --- | --- |
-| ResNet-50 fp16, SingleStream | p90 latency ~0.77 ms (~1310 img/s) |
+| ResNet-50 fp16, SingleStream (official length: 785,720 queries / 600 s, `official: true`) | p90 latency 0.776 ms (~1310 img/s) |
 | ResNet-50, Offline | ~1310 samples/s (tracks SingleStream: latency-bound at batch 1) |
 | ResNet-50 fidelity vs onnxruntime fp32 | fp16: 100% top-1 agreement, logit cosine 1.00000; int8: 100%, cosine 0.998 |
 | Qwen3-0.6B decode, fp16 | TTFT ~520 ms, TPOT ~18.7 ms/token, ~37.7 tok/s |

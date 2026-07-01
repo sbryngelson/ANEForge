@@ -1,0 +1,22 @@
+{
+  "model": "resnet50",
+  "compress": "fp16",
+  "count": 1024,
+  "results": [
+    {
+      "scenario": "SingleStream",
+      "sut": "resnet50-ane-fp16",
+      "queries": 785720,
+      "samples": 785720,
+      "wall_s": 600.0003747920273,
+      "official": true,
+      "throughput_qps": 1309.532515329423,
+      "latency_ms": {
+        "p50": 0.761832925491035,
+        "p90": 0.7755000842735171,
+        "p99": 0.806041993200779,
+        "mean": 0.7635140804730852
+      }
+    }
+  ]
+}
