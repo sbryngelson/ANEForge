@@ -69,6 +69,29 @@ def test_qsl_cycles_when_count_exceeds_dataset():
   assert r.samples == 10 and sut.seen == 10     # 4-sample QSL sampled with replacement to 10 queries
 
 
+class _FakeLLMSUT(lg.SUT):
+  """A fake decode SUT: uses the injected clock so TTFT and every per-token gap are exactly `dt`."""
+  name = "fake-llm"
+  def decode(self, prompt_ids, gen_len, clock):
+    t0 = clock()
+    times = [clock() for _ in range(gen_len)]
+    ttft = times[0] - t0
+    per = [times[i] - times[i - 1] for i in range(1, len(times))]
+    return ttft, per, gen_len
+
+
+def test_llm_decode_metrics():
+  r = lg.run_llm_decode(_FakeLLMSUT(), [1, 2, 3, 4], gen_len=20, warmup=1, clock=_Clock(0.005))
+  assert r.scenario == "LLMDecode" and r.samples == 20
+  assert len(r.latencies_ms) == 19              # per-token gaps = gen_len - 1
+  assert abs(r.extra["ttft_ms"] - 5.0) < 1e-9   # dt = 5 ms
+  assert abs(r.p90_ms - 5.0) < 1e-9             # every TPOT == dt
+  assert r.extra["prompt_len"] == 4 and r.extra["gen_len"] == 20
+  import json
+  json.dumps(r.to_dict(), allow_nan=False)
+  assert "TTFT" in r.summary() and "tok/s" in r.summary()
+
+
 def test_result_to_dict_is_json_shaped():
   sut = _CountingSUT()
   r = lg.run_single_stream(sut, _qsl(8), count=8, warmup=0, clock=_Clock(0.001))

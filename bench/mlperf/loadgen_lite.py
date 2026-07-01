@@ -82,6 +82,10 @@ class Result:
             body = (f"  latency ms  p50={self.p50_ms:8.3f}  p90={self.p90_ms:8.3f}  p99={self.p99_ms:8.3f}"
                     f"  mean={self.mean_ms:8.3f}\n  metric (p90 latency) = {self.p90_ms:.3f} ms"
                     f"   [{self.throughput_qps:.1f} samples/s]")
+        elif self.scenario == "LLMDecode":
+            ttft = self.extra.get("ttft_ms", float("nan"))
+            body = (f"  TTFT={ttft:8.1f} ms   TPOT p50={self.p50_ms:6.2f} p90={self.p90_ms:6.2f} ms/token"
+                    f"   throughput = {self.throughput_qps:.1f} tok/s   ({self.samples} tokens)")
         else:
             body = f"  metric (throughput) = {self.throughput_qps:.1f} samples/s   [wall {self.wall_s:.2f} s]"
         return head + "\n" + body
@@ -131,3 +135,17 @@ def run_offline(sut, qsl, count=None, warmup=16, batch=1, clock=time.perf_counte
     wall = clock() - t0
     official = n >= _OFFICIAL_MIN_QUERIES and wall >= _OFFICIAL_MIN_DURATION_S
     return Result("Offline", sut.name, queries, n, [], wall, official)
+
+
+def run_llm_decode(sut, prompt_ids, gen_len=64, warmup=1, clock=time.perf_counter):
+    """LLM-decode scenario (the token-generation shape MLPerf uses for LLMs): greedily generate `gen_len`
+    tokens and report TTFT (time to first token, prefill + first decode), TPOT (per-output-token latency, as
+    the p50/p90 of `latencies_ms`), and output throughput (tokens/s). The SUT's `decode(prompt_ids, gen_len,
+    clock) -> (ttft_s, per_token_s, n_tokens)` owns the timing (it has the per-token callback)."""
+    for _ in range(warmup):
+        sut.decode(list(prompt_ids), max(4, gen_len // 8), clock)     # discarded: triggers compile / cache reset
+    ttft_s, per_token_s, ntok = sut.decode(list(prompt_ids), gen_len, clock)
+    per_token_ms = [d * 1e3 for d in per_token_s]
+    wall = ttft_s + sum(per_token_s)
+    return Result("LLMDecode", sut.name, 1, ntok, per_token_ms, wall, official=False,
+                  extra={"ttft_ms": ttft_s * 1e3, "prompt_len": len(prompt_ids), "gen_len": gen_len})

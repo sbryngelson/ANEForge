@@ -30,6 +30,36 @@ import resnet50 as rn          # noqa: E402
 _REF_TOP1 = 0.7646             # MLPerf reference ResNet-50 top-1 (Closed needs >= 99% of it)
 
 
+def _fidelity(args):
+    """Reference-fidelity: ANE fp16 and int8 vs onnxruntime fp32 on identical inputs. Top-1 agreement and mean
+    logit cosine bound quantization error -- the quantity the Closed division gates (>= 99% of reference)."""
+    import glob
+    src = args.images
+    paths = sorted(glob.glob(os.path.join(src, "*")) if os.path.isdir(src) else glob.glob(src))
+    paths = [p for p in paths if p.lower().endswith((".jpg", ".jpeg", ".png"))]
+    if not paths:
+        print(f"no .jpg/.png images under {src}"); return 1
+    onnx_path = rn.resolve_onnx(args.onnx)
+    qsl = rn.image_qsl(paths, count=args.count)
+    print(f"reference-fidelity vs onnxruntime fp32 over {qsl.count} real images "
+          f"({os.path.basename(onnx_path)}) ...", flush=True)
+    ref_p, ref_L = rn.onnx_logits(onnx_path, qsl)
+    rows = []
+    for compress in (None, "int8"):
+        sut = rn.build_sut(model_path=onnx_path, compress=compress)
+        p, L = rn.net_logits(sut.net, qsl)
+        top1, cos = rn.fidelity(ref_p, ref_L, p, L)
+        print(f"  {sut.name:22s}  top-1 agreement={top1 * 100:6.2f}%   mean logit cosine={cos:.5f}")
+        rows.append({"sut": sut.name, "top1_agreement": top1, "logit_cosine": cos})
+    out = args.out or os.path.join(Path(__file__).resolve().parent, "results", "resnet50_fidelity.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w") as f:
+        json.dump({"mode": "fidelity", "reference": "onnxruntime-fp32", "images": qsl.count, "rows": rows},
+                  f, indent=2, allow_nan=False)
+    print(f"\nwrote {out}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="MLPerf-lite ResNet-50 on the ANE")
     ap.add_argument("--onnx", default=None, help="ResNet-50 ONNX path (default: export torchvision)")
@@ -39,8 +69,12 @@ def main():
     ap.add_argument("--int8", action="store_true", help="int8 ANE weights")
     ap.add_argument("--int4", action="store_true", help="int4 ANE weights")
     ap.add_argument("--imagenet-val", default=None, help="ImageNet val dir (val/<wnid>/*.JPEG) -> top-1 accuracy")
+    ap.add_argument("--images", default=None, help="dir/glob of real images -> ANE-vs-onnxruntime fidelity (fp16 + int8)")
     ap.add_argument("--out", default=None, help="results JSON path")
     args = ap.parse_args()
+
+    if args.images:
+        return _fidelity(args)
 
     compress = "int8" if args.int8 else ("int4" if args.int4 else None)
     print(f"building ResNet-50 SUT ({compress or 'fp16'}, ANE) ...", flush=True)
