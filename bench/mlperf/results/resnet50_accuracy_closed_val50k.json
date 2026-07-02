@@ -4,17 +4,17 @@
   "preprocessing": "mlperf",
   "top1": {
     "fp16": {
-      "top1": 0.7616,
-      "agreement_vs_fp32": 0.9988,
-      "logit_cosine_vs_fp32": 0.9999991208922863
+      "top1": 0.76436,
+      "agreement_vs_fp32": 0.99898,
+      "logit_cosine_vs_fp32": 0.999999154099226
     },
     "int8": {
-      "top1": 0.76064,
-      "agreement_vs_fp32": 0.98154,
-      "logit_cosine_vs_fp32": 0.9994089859294891
+      "top1": 0.76366,
+      "agreement_vs_fp32": 0.98266,
+      "logit_cosine_vs_fp32": 0.9994333885896206
     },
     "onnxruntime_fp32": {
-      "top1": 0.76156
+      "top1": 0.76452
     },
     "n": 50000,
     "class_offset": 1
