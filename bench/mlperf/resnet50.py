@@ -105,7 +105,6 @@ def build_sut(model_path=None, compress=None, cache_dir=None, strip_logits=False
 def image_qsl(paths, count=None):
     """A QSL over a list of image files (each preprocessed to [1, 3, 224, 224] fp16). No labels -- for the
     reference-fidelity check (ANE vs onnxruntime on identical inputs)."""
-    from PIL import Image
     paths = list(paths)[:count] if count else list(paths)
     cache = {}
 
@@ -238,8 +237,7 @@ def imagenet_val_qsl(val_dir, val_map, count=None, pre=preprocess_mlperf, cache=
 def imagenet_qsl(val_dir, count=None):
     """A QSL over an ImageNet val directory laid out as `val/<wnid>/<image>.JPEG` (the standard torchvision
     ImageFolder layout). Returns (qsl, labels) where labels[i] is the ground-truth class index for sample i,
-    sorted-wnid order (the torchvision/ImageNet convention). Requires Pillow."""
-    from PIL import Image
+    sorted-wnid order (the torchvision/ImageNet convention)."""
     wnids = sorted(d for d in os.listdir(val_dir) if os.path.isdir(os.path.join(val_dir, d)))
     cls_of = {w: i for i, w in enumerate(wnids)}
     files, labels = [], []
