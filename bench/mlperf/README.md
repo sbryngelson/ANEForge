@@ -65,7 +65,7 @@ Methodology-only numbers (short runs; not an audited submission), to show the sh
 The int8 ResNet-50 preserving every prediction (cosine 0.998 vs fp32) is evidence the ANE clears the accuracy
 gate *for a normalized-input model*; the committed `results/*.json` carry the exact values.
 
-## Closed-division accuracy: the fp16 magnitude finding
+## Closed-division accuracy: the MLPerf reference model on the ANE
 
 `run_accuracy.py` runs the actual **MLPerf reference ResNet-50** (a TF export from Zenodo; the trailing ArgMax
 is stripped and the 1001-class background offset is auto-detected) with the **MLPerf preprocessing** (resize
@@ -73,38 +73,43 @@ is stripped and the 1001-class background offset is auto-detected) with the **ML
 
 ```bash
 curl -L -o ~/Models/mlperf/resnet50_v1_mlperf.onnx https://zenodo.org/record/2592612/files/resnet50_v1.onnx
-# 1000-image preview (imagenet-sample-images, one per class):
-PYTHONPATH=. python3 bench/mlperf/run_accuracy.py --sample-images ~/Models/mlperf/imagenet-sample-images
+PYTHONPATH=. python3 bench/mlperf/run_accuracy.py --preprocess mlperf \
+  --imagenet-val ~/Models/mlperf/val --val-map val_map.txt      # full ILSVRC-2012 val
 ```
 
-Result on the 1000-image preview (Apple M-series):
+### The precision fix (Conv->BN fold)
 
-| Path | top-1 | fidelity vs fp32 |
+Naively, the reference model lost ~10 points on the ANE (fp16 67.0% vs onnxruntime fp32 77.05% on val,
+logit cosine 0.917). This is **not** an accumulation limit: per the ANE guide's numerics chapter the engine
+reduces in a **wide fp32-class accumulator**, and the reference's convs are individually bit-exact on the ANE
+(the stem conv reads back at cosine 1.0). The loss was localized to the **one standalone `BatchNormalization`**
+(the stem; the other 52 layers already have BN folded into their conv). A standalone BN runs in the fp16
+datapath on the large pre-BN values (~1000s), and that rounding then amplifies through the network.
+
+The importer now **folds `Conv->BatchNorm` into the conv** (`aneforge/onnx.py`, exact) -- so the reference
+model computes the stem as a single wide-accumulator conv, with no standalone fp16 BN. Effect on the reference
+model with MLPerf preprocessing (real val):
+
+| Reference ResNet-50, MLPerf preprocessing | before fold | **after Conv->BN fold** |
 | --- | --- | --- |
-| onnxruntime fp32 (reference) | 91.5% | -- |
-| ANE fp16 | 78.7% | 82.9% agree, logit cosine 0.919 |
-| ANE int8 | 78.6% | 82.6% agree, logit cosine 0.919 |
+| ANE fp16 top-1 | 67.0% | **77.1%** (cosine 0.917 -> **0.99999** vs fp32) |
+| ANE int8 top-1 | 66.9% | **77.1%** |
+| onnxruntime fp32 | 77.05% | 77.05% |
 
-The ~13-point gap is **not** a bug and **not** the ANE being inaccurate: it is fp16 accumulation error
-compounding through the residual stream, seeded by the reference model's raw-scale preprocessing (inputs
-~+-150). Per-depth ANE-vs-fp32 cosine localizes it -- 0.977 after the stem, then compounding through the
-residual adds (0.92 at stage 1 -> 0.87 by the logits) at modest magnitudes (~20-65, no overflow). onnxruntime
-(and GPUs) accumulate conv/matmul in fp32; the ANE is an fp16 engine. int8 does not rescue it (it quantizes
-weights, not the fp16 activation math).
+**ANE fp16 now matches fp32 on the exact MLPerf reference model and clears the Closed-division gate**
+(>= 99% of the 76.46% reference = >= 75.70%). The fold is a general importer feature -- any TF-exported model
+with a standalone Conv->BN benefits.
 
-**The ANE is not the bottleneck -- input conditioning is.** With normalized preprocessing (`--preprocess torch`,
-`/255` + std, inputs ~+-2.6) the ANE is bit-faithful to fp32:
+### Open division (normalized-input model), full 50k val
 
-Full **50,000-image ILSVRC-2012 val** (torchvision ResNet-50 V2):
+A normalized-input model (torchvision ResNet-50 V2, `--preprocess torch`) is also fp32-faithful on the ANE,
+over all 50,000 val images:
 
 | Path | top-1 | fidelity vs fp32 |
 | --- | --- | --- |
 | onnxruntime fp32 | 80.32% | -- |
 | **ANE fp16** | **80.33%** | 99.9% agree, cosine 0.99999 |
 | ANE int8 | 80.22% | 98.2% agree, cosine 0.9962 |
-
-ANE fp16 matches fp32 to within noise over the whole val set; int8 costs 0.1 pt. (The 1000-image preview reads
-higher -- 92.1% -- because it is one curated image per class.)
 
 ### Full ImageNet-val run
 
@@ -122,10 +127,11 @@ PYTHONPATH=. python3 bench/mlperf/run_accuracy.py --preprocess torch --imagenet-
 
 The runner streams (one decode per image, no 50k cache). Sanity: onnxruntime fp32 should read ~76% top-1.
 
-So the two submission paths are: **Open division** -- normalized-input model, ANE matches fp32 today (done);
-**Closed division** -- the exact raw-input reference, which needs an activation-equalization fold (fold scales
-through consecutive conv layers, SmoothQuant-style, to keep fp16 intermediates well-conditioned) since the ANE
-cannot accumulate in fp32. That fold is the concrete next lever.
+Both submission paths now hold on the ANE: **Open division** (normalized-input model) and **Closed division**
+(the exact MLPerf reference model + preprocessing, via the Conv->BN fold) both reach fp32-level top-1. The
+remaining work for an official submission is packaging, not accuracy: run accuracy through LoadGen's
+AccuracyOnly mode (`mlperf_log_accuracy.json`), add `mlperf.conf`/`user.conf` + `system_description.json`, and
+pass the compliance tests and `submission-checker.py`.
 
 ## Layout
 
@@ -158,11 +164,9 @@ The Server scenario is intentionally omitted - it needs request concurrency the 
 
 1. Real `mlperf_loadgen` -- **done** (`loadgen_official.py`): the SUT/QSL map onto `lg.ConstructSUT` /
    `lg.ConstructQSL` and the run is driven by `StartTestWithLogSettings`; the workload code is unchanged.
-2. Accuracy -- **partially done** (`run_accuracy.py`): the MLPerf reference model + preprocessing run on the
-   ANE, but fp16 is magnitude-bound (see the finding above) and won't clear the Closed >= 99% gate on this
-   model. Closing it needs fp32 accumulation for the large-activation ops (an aneforge compiler feature), or an
-   Open-division submission with a normalized-input model. The full 50k ImageNet val run (LoadGen AccuracyOnly)
-   is the remaining measurement.
+2. Accuracy -- **done** (`run_accuracy.py`): the exact MLPerf reference model + preprocessing reach fp32-level
+   top-1 on the ANE and clear the Closed >= 99% gate, via the Conv->BN fold (see the section above). Remaining:
+   emit accuracy through LoadGen AccuracyOnly (`mlperf_log_accuracy.json`) rather than the direct top-1 scorer.
 3. Add the submission package: `mlperf.conf` / `user.conf`, `system_description.json`, and pass the
    compliance tests (TEST01 / TEST04 / TEST05) and `submission-checker.py`.
 4. Submit in an official Inference round (Edge, SingleStream + Offline) through an MLCommons member.
