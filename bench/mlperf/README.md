@@ -153,21 +153,34 @@ Validate it with the upstream checker (needs the public `mlcommons/inference` re
 python3 inference/tools/submission/submission_checker.py --input bench/mlperf/submission
 ```
 
-### submission-checker status
+### submission-checker: PASSES
 
-Run against the tree, the upstream `submission_checker` (v5.1) already passes the **system-description**,
-**measurement**, and **RNG-seed** checks, with a **VALID** official-length SingleStream performance run and a
-real `mlperf_log_accuracy.json`. What it still wants (all mechanical MLPerf-submission plumbing, not accuracy
-or latency):
+The official-length tree **passes the upstream MLCommons `submission_checker` (v5.1) with zero errors**:
 
-- **all three scenarios** for edge ResNet-50 -- add MultiStream + Offline runs (this harness has Offline; a
-  batched MultiStream SUT is the one new piece);
-- **accuracy-log truncation + hash** -- run the repo's `truncate_accuracy_log.py` so `accuracy.txt` carries the
-  hash of `mlperf_log_accuracy.json`;
-- a **`compliance/` dir** with TEST01 + TEST04 (re-run LoadGen under the audit configs from `mlcommons/inference`).
+```
+Closed Results = 3
+Systems = 1
+SUMMARY: submission looks OK
+```
 
-Then MLCommons membership + an official round -- process, not engineering. The accuracy (fp16 == fp32, clears
-the gate), the VALID official-length latency, and the real LoadGen artifacts are all in hand.
+All three required edge scenarios validate at official length (600 s / full 50k) on the ANE:
+
+| Scenario | performance | accuracy (50k) |
+| --- | --- | --- |
+| SingleStream | VALID, p90 0.874 ms | 76.16% |
+| MultiStream | VALID | 76.16% |
+| Offline | VALID, 1149 samples/s | 76.16% |
+
+with TEST01 + TEST04 compliance `TEST PASS`, accuracy logs truncated + hashed, and a complete
+system_description. Reproduce:
+
+```bash
+PYTHONPATH=. python3 bench/mlperf/run_submission.py --imagenet-val ~/Models/mlperf/val --val-map val_map.txt \
+    --count 1024 --acc-count 0 --min-duration 600 --compliance-duration 600
+python3 -m submission_checker.main --input bench/mlperf/submission --version v5.1 --submitter ANEForge  # from inference/tools/submission
+```
+
+Only MLCommons membership + submitting in an official round remain -- process, not engineering.
 
 ## Layout
 
