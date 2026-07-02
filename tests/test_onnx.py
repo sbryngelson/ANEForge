@@ -64,6 +64,22 @@ def test_conv_asymmetric_pad_builds():  # ONNX pads [top,left,bottom,right] -> p
   m = _model([n], [_vi("x", [1, 3, 10, 10])], [_vi("y", [1, 4, 10, 9])], inits=[w])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 10, 9) and out.op == "conv"
 
+def test_maxpool_asymmetric_pad_builds():  # TF SAME emits pool pads like [0,0,1,1] -> explicit pad, then valid pool
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[3, 3], strides=[2, 2], pads=[0, 0, 1, 1])
+  m = _model([n], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 4, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3, 4, 4) and out.op == "max_pool"
+
+@requires_ane
+def test_maxpool_asymmetric_pad_matches_onnxruntime():  # numerically matches ORT (pad cells never win the max)
+  import onnxruntime as ort, tempfile, os
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[3, 3], strides=[2, 2], pads=[0, 0, 1, 1])
+  m = _model([n], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 4, 4])])
+  p = os.path.join(tempfile.mkdtemp(), "m.onnx"); onnx.save(m, p)
+  x = np.random.default_rng(0).standard_normal((1, 3, 8, 8)).astype(np.float32)   # negative values -> pad must be -inf-ish
+  ref = np.asarray(ort.InferenceSession(p).run(None, {"x": x})[0])
+  got = np.asarray(af.load_onnx(p)(x.astype(np.float16))).astype(np.float32)
+  assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-2
+
 def test_dequantize_weight_conv_builds():  # int8 weight DequantizeLinear -> fp32 const fed to conv
   w8 = onnx.numpy_helper.from_array(np.ones((4, 3, 3, 3), np.int8), "w8")
   sc = onnx.numpy_helper.from_array(np.full(4, 0.1, np.float32), "sc")

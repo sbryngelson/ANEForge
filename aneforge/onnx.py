@@ -275,6 +275,33 @@ def _sympad(pads, op):                         # pads = [top,left,bottom,right];
   if len(set(p)) != 1: raise NotImplementedError(f"onnx {op}: asymmetric pads {p} not supported")
   return int(p[0])
 
+
+def _pad_hw(x, top, bottom, left, right, value):
+  """Explicitly pad an NCHW tensor by (top,bottom,left,right) with `value` -- for asymmetric pads the ANE
+  pool's scalar pad can't express (e.g. TF SAME emits [0,0,1,1]). Padding is a concat of const borders."""
+  from .graph import concat as _cat, _const
+  N, C, H, W = x.shape
+  if top or bottom:
+    parts = ([_const(np.full((N, C, top, W), value, np.float16))] if top else []) + [x] + \
+            ([_const(np.full((N, C, bottom, W), value, np.float16))] if bottom else [])
+    x = _cat(parts, axis=2); H += top + bottom
+  if left or right:
+    parts = ([_const(np.full((N, C, H, left), value, np.float16))] if left else []) + [x] + \
+            ([_const(np.full((N, C, H, right), value, np.float16))] if right else [])
+    x = _cat(parts, axis=3)
+  return x
+
+
+def _pool_pad(x, pads, op, value):
+  """(x, scalar_pad) for a pool: symmetric uniform pads pass through as a scalar; asymmetric pads are applied
+  explicitly to `x` with `value` so the pool then runs with pad=0. `value` is a large negative for max_pool
+  (pad cells never win the max); avg_pool with asymmetric pads is left unsupported (count_include_pad ambiguity)."""
+  if pads is None: return x, 0
+  p = [int(v) for v in pads]                    # [top, left, bottom, right]
+  if len(set(p)) == 1: return x, p[0]
+  if op != "MaxPool": raise NotImplementedError(f"onnx {op}: asymmetric pads {p} not supported")
+  return _pad_hw(x, p[0], p[2], p[1], p[3], value), 0
+
 def _pad4(pads):                               # ONNX conv pads=[top,left,bottom,right] -> scalar, or (top,bottom,left,right)
   if pads is None: return 0
   p = [int(v) for v in pads]
@@ -311,8 +338,9 @@ def _conv_h(node, ins, a, i):
 @onnx_op("MaxPool")
 def _maxpool(node, ins, a, i):
   if _uniform(a.get("dilations"), "MaxPool") != 1: raise NotImplementedError("ONNX MaxPool: dilations != 1 not supported")
-  return ins[0].max_pool(_uniform(a.get("kernel_shape"), "MaxPool"), _uniform(a.get("strides"), "MaxPool"),
-                         _sympad(a.get("pads"), "MaxPool"), ceil_mode=bool(int(a.get("ceil_mode", 0))))
+  x, pad = _pool_pad(ins[0], a.get("pads"), "MaxPool", -65504.0)   # -inf-ish const pad for asymmetric (TF SAME)
+  return x.max_pool(_uniform(a.get("kernel_shape"), "MaxPool"), _uniform(a.get("strides"), "MaxPool"),
+                    pad, ceil_mode=bool(int(a.get("ceil_mode", 0))))
 @onnx_op("AveragePool")
 def _avgpool(node, ins, a, i):
   return ins[0].avg_pool(_uniform(a.get("kernel_shape"), "AveragePool"), _uniform(a.get("strides"), "AveragePool"),
