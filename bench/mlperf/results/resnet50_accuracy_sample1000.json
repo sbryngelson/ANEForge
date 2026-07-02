@@ -1,0 +1,25 @@
+{
+  "model": "resnet50_v1_mlperf.onnx",
+  "images": 1000,
+  "preprocessing": "mlperf",
+  "top1": {
+    "fp16": {
+      "top1": 0.787,
+      "n": 1000,
+      "class_offset": 1,
+      "agreement_vs_fp32": 0.829,
+      "logit_cosine_vs_fp32": 0.919037938117981
+    },
+    "int8": {
+      "top1": 0.786,
+      "n": 1000,
+      "class_offset": 1,
+      "agreement_vs_fp32": 0.826,
+      "logit_cosine_vs_fp32": 0.9190270900726318
+    },
+    "onnxruntime_fp32": {
+      "top1": 0.915,
+      "n": 1000
+    }
+  }
+}

@@ -7,6 +7,7 @@ default so accuracy mode is meaningful). Pass your own MLPerf-provided ResNet-50
 the official model exactly.
 """
 from __future__ import annotations
+import glob
 import os
 
 import numpy as np
@@ -15,6 +16,7 @@ import loadgen_lite as lg
 
 _MEAN = np.array([0.485, 0.456, 0.406], np.float32).reshape(3, 1, 1)
 _STD = np.array([0.229, 0.224, 0.225], np.float32).reshape(3, 1, 1)
+_MEAN_MLPERF = np.array([123.68, 116.78, 103.94], np.float32).reshape(3, 1, 1)   # MLPerf ResNet-50 (mean-subtract only)
 
 
 def demo_onnx(path, pretrained=True):
@@ -32,8 +34,9 @@ class ResNet50SUT(lg.SUT):
     """Wrap a compiled ANE ResNet-50 as a SUT: one fp16 forward per sample, prediction = argmax of the logits."""
     name = "resnet50-ane-fp16"
 
-    def __init__(self, net, name=None):
+    def __init__(self, net, name=None, class_offset=0):
         self.net = net
+        self.class_offset = class_offset      # 1 for the 1001-class TF model (background at index 0)
         if name:
             self.name = name
 
@@ -42,7 +45,7 @@ class ResNet50SUT(lg.SUT):
         for i in indices:
             x = np.asarray(qsl.get(i), np.float16)
             logits = np.asarray(self.net(x)).astype(np.float32).ravel()
-            out.append(int(logits.argmax()))
+            out.append(int(logits.argmax()) - self.class_offset)
         return out
 
 
@@ -59,12 +62,44 @@ def resolve_onnx(model_path=None, cache_dir=None):
     return p
 
 
-def build_sut(model_path=None, compress=None, cache_dir=None):
-    """Compile a ResNet-50 to a single ANE program and return the SUT. `compress` ("int8"/"int4"/...) quantizes
-    the ANE weights."""
+def strip_to_logits(src, dst=None):
+    """Rewrite an ONNX classifier so its single output is the pre-argmax logits, with a static batch of 1 --
+    lets the ANE importer compile a model that bakes ArgMax/Softmax (e.g. the MLPerf reference ResNet-50, a TF
+    export). Returns `src` unchanged if there is no ArgMax node."""
+    import onnx
+    from onnx import helper, TensorProto, shape_inference
+    m = onnx.load(src)
+    argmax = next((n for n in m.graph.node if n.op_type == "ArgMax"), None)
+    if argmax is None:
+        return src
+    logits = argmax.input[0]
+    m.graph.input[0].type.tensor_type.shape.dim[0].dim_value = 1     # static batch (the importer needs it)
+    orig = list(m.graph.node)
+    prod = {o: n for n in orig for o in n.output}
+    keep, stack = set(), [logits]
+    while stack:                                                     # prune to the logits' dependency cone
+        t = stack.pop(); n = prod.get(t)
+        if n is not None and id(n) not in keep:
+            keep.add(id(n)); stack.extend(n.input)
+    del m.graph.node[:]; m.graph.node.extend(n for n in orig if id(n) in keep)
+    del m.graph.output[:]
+    m.graph.output.append(helper.make_tensor_value_info(logits, TensorProto.FLOAT, None))
+    m = shape_inference.infer_shapes(m)
+    dst = dst or (os.path.splitext(src)[0] + "_logits.onnx")
+    onnx.save(m, dst)
+    return dst
+
+
+def build_sut(model_path=None, compress=None, cache_dir=None, strip_logits=False):
+    """Compile a ResNet-50 to a single ANE program and return the SUT. `strip_logits` rewrites a model that
+    bakes ArgMax (the MLPerf reference) to output logits; the 1001-class background offset is auto-detected."""
     import aneforge as af
-    net = af.load_onnx(resolve_onnx(model_path, cache_dir), compress=compress)   # compress=None -> fp16
-    return ResNet50SUT(net, name="resnet50-ane-" + (compress or "fp16"))
+    path = resolve_onnx(model_path, cache_dir)
+    if strip_logits:
+        path = strip_to_logits(path)
+    net = af.load_onnx(path, compress=compress)                     # compress=None -> fp16
+    dim = int(np.asarray(net(np.zeros((1, 3, 224, 224), np.float16))).ravel().shape[0])
+    return ResNet50SUT(net, name="resnet50-ane-" + (compress or "fp16"), class_offset=1 if dim == 1001 else 0)
 
 
 def image_qsl(paths, count=None):
@@ -134,6 +169,56 @@ def _preprocess(img):
     a = np.asarray(im, np.float32).transpose(2, 0, 1) / 255.0
     a = (a - _MEAN) / _STD
     return a[None].astype(np.float16)
+
+
+def preprocess_mlperf(img):
+    """MLPerf ResNet-50 preprocessing: resize shortest side to 256, center-crop 224, subtract the per-channel
+    means [123.68, 116.78, 103.94] in RGB (no /255, no std). Returns a [1, 3, 224, 224] fp16 array."""
+    from PIL import Image
+    im = img.convert("RGB")
+    w, h = im.size
+    s = 256 / min(w, h)
+    bilinear = getattr(Image, "Resampling", Image).BILINEAR
+    im = im.resize((round(w * s), round(h * s)), bilinear)
+    w, h = im.size
+    left, top = (w - 224) // 2, (h - 224) // 2
+    im = im.crop((left, top, left + 224, top + 224))
+    a = np.asarray(im, np.float32).transpose(2, 0, 1) - _MEAN_MLPERF
+    return a[None].astype(np.float16)
+
+
+def _labeled_qsl(files, labels, pre, name):
+    """A labeled QSL over `files` with preprocessing `pre` (cached on demand)."""
+    from PIL import Image
+    cache = {}
+    def get(i):
+        if i not in cache:
+            cache[i] = pre(Image.open(files[i]))
+        return cache[i]
+    return lg.QSL(len(files), get, name=name), list(labels)
+
+
+def sample_images_qsl(img_dir, count=None, pre=preprocess_mlperf):
+    """A QSL over the imagenet-sample-images set (one image per class). Sorted filename order IS the ImageNet
+    class index, so labels[i] = i. Returns (qsl, labels)."""
+    files = sorted(glob.glob(os.path.join(img_dir, "*.JPEG")))
+    if count:
+        files = files[:count]
+    return _labeled_qsl(files, range(len(files)), pre, "imagenet-sample")
+
+
+def imagenet_val_qsl(val_dir, val_map, count=None, pre=preprocess_mlperf):
+    """A QSL over the flat ILSVRC2012 val set (ILSVRC2012_val_*.JPEG in one dir), labeled by `val_map` -- a file
+    of "<filename> <label>" lines (MLPerf's mapping to 0-999). Returns (qsl, labels)."""
+    files, labels = [], []
+    with open(val_map) as f:
+        for line in f:
+            p = line.split()
+            if len(p) >= 2:
+                files.append(os.path.join(val_dir, p[0])); labels.append(int(p[1]))
+    if count:
+        files, labels = files[:count], labels[:count]
+    return _labeled_qsl(files, labels, pre, "imagenet-val")
 
 
 def imagenet_qsl(val_dir, count=None):

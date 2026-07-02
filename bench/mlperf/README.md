@@ -62,8 +62,39 @@ Methodology-only numbers (short runs; not an audited submission), to show the sh
 | Qwen3-0.6B decode, fp16 | TTFT ~520 ms, TPOT ~18.7 ms/token, ~37.7 tok/s |
 | Qwen3-0.6B decode, int8 | TTFT ~460 ms, TPOT ~17.0 ms/token, ~41.7 tok/s |
 
-The int8 ResNet-50 preserving every prediction (cosine 0.998 vs fp32) is the evidence that the ANE clears the
-Closed-division accuracy gate (>= 99% of the reference); the committed `results/*.json` carry the exact values.
+The int8 ResNet-50 preserving every prediction (cosine 0.998 vs fp32) is evidence the ANE clears the accuracy
+gate *for a normalized-input model*; the committed `results/*.json` carry the exact values.
+
+## Closed-division accuracy: the fp16 magnitude finding
+
+`run_accuracy.py` runs the actual **MLPerf reference ResNet-50** (a TF export from Zenodo; the trailing ArgMax
+is stripped and the 1001-class background offset is auto-detected) with the **MLPerf preprocessing** (resize
+256 / center-crop 224 / per-channel mean subtraction, no `/255`, no std). Fetch the model once:
+
+```bash
+curl -L -o ~/Models/mlperf/resnet50_v1_mlperf.onnx https://zenodo.org/record/2592612/files/resnet50_v1.onnx
+# 1000-image preview (imagenet-sample-images, one per class):
+PYTHONPATH=. python3 bench/mlperf/run_accuracy.py --sample-images ~/Models/mlperf/imagenet-sample-images
+```
+
+Result on the 1000-image preview (Apple M-series):
+
+| Path | top-1 | fidelity vs fp32 |
+| --- | --- | --- |
+| onnxruntime fp32 (reference) | 91.5% | -- |
+| ANE fp16 | 78.7% | 82.9% agree, logit cosine 0.919 |
+| ANE int8 | 78.6% | 82.6% agree, logit cosine 0.919 |
+
+The ~13-point gap is **not** a bug: it is fp16 compute precision degrading with activation MAGNITUDE. MLPerf's
+reference preprocessing is raw-scale (inputs ~+-150, no normalization), which drives large internal
+activations; the ANE computes in fp16 and loses precision on them. The effect is monotonic in input scale --
+ANE-vs-fp32 logit cosine climbs 0.907 (raw ~150) -> 0.955 (x0.1) -> 0.984 (x0.02). A normalized-input model
+(the torchvision export above) does not hit this. int8 does not rescue it (it quantizes weights, not the fp16
+activation math). This mirrors the fp16-accumulation gap seen in the LLM work.
+
+Consequence for a Closed submission: naive fp16/int8 will not clear the >= 99%-of-reference gate on this model.
+Closing it needs higher-precision (fp32) accumulation for the large-activation ops -- an aneforge compiler
+feature -- or an Open-division submission with a normalized-input model. This is the concrete next lever.
 
 ## Layout
 
@@ -76,6 +107,7 @@ Closed-division accuracy gate (>= 99% of the reference); the committed `results/
 | `run_llm.py` | LLM CLI: build the decode SUT, run `run_llm_decode`, write results |
 | `loadgen_official.py` | REAL MLCommons LoadGen driver behind the same SUT/QSL (import-gated on `mlperf_loadgen`) |
 | `run_official.py` | ResNet-50 under real LoadGen + differential vs `loadgen_lite` |
+| `run_accuracy.py` | ResNet-50 top-1 with the MLPerf reference model + preprocessing (Closed accuracy path) |
 
 ## Scenarios
 
@@ -95,9 +127,11 @@ The Server scenario is intentionally omitted - it needs request concurrency the 
 
 1. Real `mlperf_loadgen` -- **done** (`loadgen_official.py`): the SUT/QSL map onto `lg.ConstructSUT` /
    `lg.ConstructQSL` and the run is driven by `StartTestWithLogSettings`; the workload code is unchanged.
-2. Validate accuracy in the **Open** division first (quantize freely), then tighten to **Closed** (exact
-   reference model + preprocessing, >= 99% of the reference top-1, i.e. >= 75.68%). Needs the MLPerf reference
-   ResNet-50 artifact + its preprocessing, and the full ImageNet val set in LoadGen AccuracyOnly mode.
+2. Accuracy -- **partially done** (`run_accuracy.py`): the MLPerf reference model + preprocessing run on the
+   ANE, but fp16 is magnitude-bound (see the finding above) and won't clear the Closed >= 99% gate on this
+   model. Closing it needs fp32 accumulation for the large-activation ops (an aneforge compiler feature), or an
+   Open-division submission with a normalized-input model. The full 50k ImageNet val run (LoadGen AccuracyOnly)
+   is the remaining measurement.
 3. Add the submission package: `mlperf.conf` / `user.conf`, `system_description.json`, and pass the
    compliance tests (TEST01 / TEST04 / TEST05) and `submission-checker.py`.
 4. Submit in an official Inference round (Edge, SingleStream + Offline) through an MLCommons member.

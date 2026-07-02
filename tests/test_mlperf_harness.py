@@ -121,6 +121,24 @@ def test_lite_tracks_real_loadgen():
   assert 0.7 < ratio < 1.4, f"lite p90 {r.p90_ms:.4f} vs loadgen {loadgen_p90_ms:.4f} ms (ratio {ratio:.3f})"
 
 
+def test_strip_to_logits_removes_argmax():
+  if importlib.util.find_spec("onnx") is None:
+    pytest.skip("onnx not installed")
+  import onnx, tempfile, os
+  from onnx import helper, TensorProto
+  import resnet50 as rn   # noqa: E402
+  W = onnx.numpy_helper.from_array(np.ones((4, 3), np.float32), "W")
+  nodes = [helper.make_node("MatMul", ["x", "W"], ["logits"]),
+           helper.make_node("ArgMax", ["logits"], ["cls"], axis=1)]
+  g = helper.make_graph(nodes, "g", [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])],
+                        [helper.make_tensor_value_info("cls", TensorProto.INT64, [1])], [W])
+  m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13)])
+  src = os.path.join(tempfile.mkdtemp(), "m.onnx"); onnx.save(m, src)
+  m2 = onnx.load(rn.strip_to_logits(src))
+  assert all(n.op_type != "ArgMax" for n in m2.graph.node)   # argmax pruned
+  assert m2.graph.output[0].name == "logits"                 # output is now the logits
+
+
 def test_result_to_dict_is_json_shaped():
   sut = _CountingSUT()
   r = lg.run_single_stream(sut, _qsl(8), count=8, warmup=0, clock=_Clock(0.001))
