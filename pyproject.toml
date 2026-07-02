@@ -75,6 +75,7 @@ mlperf = [
     "onnxruntime>=1.18",
     "torchvision",
     "pillow",
+    "opencv-python",   # exact MLPerf ResNet-50 preprocessing (cv2 INTER_AREA resize + decode)
 ]
 # Linting + test runner (CI and local dev). ruff is the linter; the corpus/pytest
 # suites need real ANE hardware to run.

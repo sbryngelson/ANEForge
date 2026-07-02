@@ -111,7 +111,7 @@ def image_qsl(paths, count=None):
 
     def get(i):
         if i not in cache:
-            cache[i] = _preprocess(Image.open(paths[i]))
+            cache[i] = _preprocess(paths[i])
         return cache[i]
 
     return lg.QSL(len(paths), get, name="images")
@@ -154,11 +154,11 @@ def synthetic_qsl(count=256, pool=256, seed=0):
     return lg.QSL(count, lambda i: data[i % pool], name="synthetic")
 
 
-def _preprocess(img):
-    """Standard ResNet eval transform: resize shortest side to 256, center-crop 224, scale to [0,1], normalize
-    by the ImageNet mean/std. Returns a [1, 3, 224, 224] fp16 array."""
+def _preprocess(src):
+    """Standard torchvision ResNet eval transform: resize shortest side to 256 (PIL bilinear), center-crop 224,
+    scale to [0,1], normalize by the ImageNet mean/std. Accepts a path or a PIL image. Returns [1,3,224,224] fp16."""
     from PIL import Image
-    im = img.convert("RGB")
+    im = (src if hasattr(src, "convert") else Image.open(src)).convert("RGB")
     w, h = im.size
     s = 256 / min(w, h)
     bilinear = getattr(Image, "Resampling", Image).BILINEAR   # Pillow >= 9.1 moved it under Resampling
@@ -171,19 +171,35 @@ def _preprocess(img):
     return a[None].astype(np.float16)
 
 
-def preprocess_mlperf(img):
-    """MLPerf ResNet-50 preprocessing: resize shortest side to 256, center-crop 224, subtract the per-channel
-    means [123.68, 116.78, 103.94] in RGB (no /255, no std). Returns a [1, 3, 224, 224] fp16 array."""
-    from PIL import Image
-    im = img.convert("RGB")
-    w, h = im.size
-    s = 256 / min(w, h)
-    bilinear = getattr(Image, "Resampling", Image).BILINEAR
-    im = im.resize((round(w * s), round(h * s)), bilinear)
-    w, h = im.size
-    left, top = (w - 224) // 2, (h - 224) // 2
-    im = im.crop((left, top, left + 224, top + 224))
-    a = np.asarray(im, np.float32).transpose(2, 0, 1) - _MEAN_MLPERF
+def _open_rgb(src):
+    """Load `src` (a file path or a PIL image) as an [H, W, 3] RGB uint8 array. Paths go through cv2.imread
+    (matching MLPerf's decode); a PIL image or a missing cv2 falls back to PIL."""
+    if not isinstance(src, (str, bytes, os.PathLike)):
+        return np.asarray(src.convert("RGB"))
+    try:
+        import cv2
+        return cv2.cvtColor(cv2.imread(str(src), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    except Exception:
+        from PIL import Image
+        return np.asarray(Image.open(src).convert("RGB"))
+
+
+def preprocess_mlperf(src):
+    """MLPerf ResNet-50 preprocessing (the reference `pre_process_vgg`): resize the shorter side to 256 with cv2
+    INTER_AREA (PIL bilinear fallback if cv2 is absent), center-crop 224, subtract the per-channel means
+    [123.68, 116.78, 103.94] in RGB (no /255, no std). Returns a [1, 3, 224, 224] fp16 array."""
+    a = _open_rgb(src)
+    h, w = a.shape[:2]
+    new = int(100.0 * 224 / 87.5)                        # 256 (MLPerf's 87.5% crop ratio)
+    nh, nw = (new, int(new * w / h)) if w >= h else (int(new * h / w), new)   # shorter side -> 256
+    try:
+        import cv2
+        a = cv2.resize(a, (nw, nh), interpolation=cv2.INTER_AREA)
+    except Exception:
+        from PIL import Image
+        a = np.asarray(Image.fromarray(a).resize((nw, nh), getattr(Image, "Resampling", Image).BILINEAR))
+    top, left = (nh - 224) // 2, (nw - 224) // 2
+    a = a[top:top + 224, left:left + 224].astype(np.float32).transpose(2, 0, 1) - _MEAN_MLPERF
     return a[None].astype(np.float16)
 
 
@@ -191,9 +207,8 @@ def _labeled_qsl(files, labels, pre, name, cache=False):
     """A labeled QSL over `files` with preprocessing `pre`. With `cache=True` the QSL preprocesses at LoadGen
     load time (untimed) and frees on unload -- bounded to the performance-sample window. `cache=False`
     re-decodes on each get (a large single-pass run; 50k cached fp16 tensors would be ~15GB)."""
-    from PIL import Image
     def get(i):
-        return pre(Image.open(files[i]))
+        return pre(files[i])
     return lg.QSL(len(files), get, name=name, cache=cache), list(labels)
 
 
@@ -237,7 +252,7 @@ def imagenet_qsl(val_dir, count=None):
 
     def get(i):
         if i not in cache:
-            cache[i] = _preprocess(Image.open(files[i]))
+            cache[i] = _preprocess(files[i])
         return cache[i]
 
     return lg.QSL(len(files), get, name="imagenet-val"), labels
