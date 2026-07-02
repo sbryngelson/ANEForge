@@ -22,13 +22,32 @@ import numpy as np
 class QSL:
     """Query Sample Library: the dataset the harness draws samples from. `get(index)` returns the model-ready
     features for one sample (already preprocessed, e.g. a [1, 3, 224, 224] fp16 array)."""
-    def __init__(self, count, get, name="qsl"):
+    def __init__(self, count, get, name="qsl", cache=False):
         self.count = int(count)
         self._get = get
         self.name = name
+        self._cache = {} if cache else None      # LoadGen load_query_samples preprocesses here (untimed)
 
     def get(self, index):
-        return self._get(int(index))
+        index = int(index)
+        if self._cache is None:
+            return self._get(index)
+        if index not in self._cache:
+            self._cache[index] = self._get(index)
+        return self._cache[index]
+
+    def load(self, indices):
+        """LoadGen load_query_samples: preprocess the requested samples into the cache (untimed), so a later
+        issue() times inference only. No-op for an uncached QSL."""
+        if self._cache is not None:
+            for i in indices:
+                self.get(i)
+
+    def unload(self, indices):
+        """LoadGen unload_query_samples: free those samples, bounding memory to the performance-sample window."""
+        if self._cache is not None:
+            for i in indices:
+                self._cache.pop(int(i), None)
 
 
 class SUT:

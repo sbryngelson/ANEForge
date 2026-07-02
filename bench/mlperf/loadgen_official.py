@@ -29,7 +29,8 @@ SEEDS = {
 
 
 def run(sut, qsl, scenario="SingleStream", mode="PerformanceOnly", outdir=None,
-        min_query_count=1024, min_duration_ms=0, expected_latency_ns=0, perf_sample_count=None, seeds=None):
+        min_query_count=1024, min_duration_ms=0, expected_latency_ns=0, perf_sample_count=None, seeds=None,
+        audit_config=None, samples_per_query=8, offline_qps=0.0):
     """Run our (sut, qsl) under real LoadGen and return the fields parsed from mlperf_log_summary.txt
     (valid, p90 latency ns, samples/s, ...). `scenario` in {SingleStream, Offline, ...}; `mode` in
     {PerformanceOnly, AccuracyOnly, ...}."""
@@ -45,24 +46,22 @@ def run(sut, qsl, scenario="SingleStream", mode="PerformanceOnly", outdir=None,
         settings.single_stream_expected_latency_ns = int(expected_latency_ns)   # scheduler hint; loadgen refines it
     if seeds:                                                                    # official per-round RNG seeds
         settings.qsl_rng_seed, settings.sample_index_rng_seed, settings.schedule_rng_seed = (int(s) for s in seeds)
+    if scenario == "MultiStream":
+        settings.multi_stream_samples_per_query = int(samples_per_query)
+    if scenario == "Offline" and offline_qps:
+        settings.offline_expected_qps = float(offline_qps)   # sizes the offline sample count over the duration
 
-    load = lambda samples: None          # our QSL.get materializes + caches on demand -> load/unload are no-ops
-    unload = lambda samples: None
     perf_count = int(perf_sample_count or min(qsl.count, 1024))
-    q = lg.ConstructQSL(qsl.count, perf_count, load, unload)
+    q = lg.ConstructQSL(qsl.count, perf_count, qsl.load, qsl.unload)   # preprocess at load time (untimed)
 
     import array
-    accuracy = mode == "AccuracyOnly"
     keepalive = []                       # response buffers must outlive QuerySamplesComplete
     def issue(query_samples):
         done = []
-        for s in query_samples:
-            pred = sut.issue(qsl, [s.index])[0]
-            if accuracy:                 # report the predicted class as int64 bytes -> mlperf_log_accuracy.json
-                buf = array.array("q", [int(pred)]); keepalive.append(buf)
-                bi = buf.buffer_info(); done.append(lg.QuerySampleResponse(s.id, bi[0], bi[1] * buf.itemsize))
-            else:
-                done.append(lg.QuerySampleResponse(s.id, 0, 0))  # PerformanceOnly: empty response (timing only)
+        for s in query_samples:          # always report the predicted class (int64) -- perf ignores it, accuracy
+            pred = sut.issue(qsl, [s.index])[0]   # + TEST01's sampled accuracy log need it
+            buf = array.array("q", [int(pred)]); keepalive.append(buf)
+            bi = buf.buffer_info(); done.append(lg.QuerySampleResponse(s.id, bi[0], bi[1] * buf.itemsize))
         lg.QuerySamplesComplete(done)
 
     s = lg.ConstructSUT(issue, lambda: None)
@@ -75,7 +74,18 @@ def run(sut, qsl, scenario="SingleStream", mode="PerformanceOnly", outdir=None,
     log_settings = lg.LogSettings()
     log_settings.log_output = log_out
 
-    lg.StartTestWithLogSettings(s, q, settings, log_settings)
+    # LoadGen auto-reads "audit.config" from the CWD -> run from outdir with the test's config placed there
+    cwd = os.getcwd()
+    if audit_config:
+        import shutil
+        shutil.copyfile(audit_config, os.path.join(outdir, "audit.config"))
+    try:
+        os.chdir(outdir)
+        lg.StartTestWithLogSettings(s, q, settings, log_settings)
+    finally:
+        os.chdir(cwd)
+    if audit_config and os.path.exists(os.path.join(outdir, "audit.config")):
+        os.remove(os.path.join(outdir, "audit.config"))     # don't leave it in the results dir
     lg.DestroySUT(s)
     lg.DestroyQSL(q)
     return parse_summary(os.path.join(outdir, "mlperf_log_summary.txt"))

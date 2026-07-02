@@ -187,18 +187,14 @@ def preprocess_mlperf(img):
     return a[None].astype(np.float16)
 
 
-def _labeled_qsl(files, labels, pre, name, cache=True):
-    """A labeled QSL over `files` with preprocessing `pre`. `cache=False` re-decodes on each get (bounded memory
-    for a large single-pass run; 50k cached fp16 tensors would be ~15GB)."""
+def _labeled_qsl(files, labels, pre, name, cache=False):
+    """A labeled QSL over `files` with preprocessing `pre`. With `cache=True` the QSL preprocesses at LoadGen
+    load time (untimed) and frees on unload -- bounded to the performance-sample window. `cache=False`
+    re-decodes on each get (a large single-pass run; 50k cached fp16 tensors would be ~15GB)."""
     from PIL import Image
-    store = {}
     def get(i):
-        if not cache:
-            return pre(Image.open(files[i]))
-        if i not in store:
-            store[i] = pre(Image.open(files[i]))
-        return store[i]
-    return lg.QSL(len(files), get, name=name), list(labels)
+        return pre(Image.open(files[i]))
+    return lg.QSL(len(files), get, name=name, cache=cache), list(labels)
 
 
 def sample_images_qsl(img_dir, count=None, pre=preprocess_mlperf):
@@ -210,7 +206,7 @@ def sample_images_qsl(img_dir, count=None, pre=preprocess_mlperf):
     return _labeled_qsl(files, range(len(files)), pre, "imagenet-sample")
 
 
-def imagenet_val_qsl(val_dir, val_map, count=None, pre=preprocess_mlperf):
+def imagenet_val_qsl(val_dir, val_map, count=None, pre=preprocess_mlperf, cache=False):
     """A QSL over the flat ILSVRC2012 val set (ILSVRC2012_val_*.JPEG in one dir), labeled by `val_map` -- a file
     of "<filename> <label>" lines (MLPerf's mapping to 0-999). Returns (qsl, labels)."""
     files, labels = [], []
@@ -221,7 +217,7 @@ def imagenet_val_qsl(val_dir, val_map, count=None, pre=preprocess_mlperf):
                 files.append(os.path.join(val_dir, p[0])); labels.append(int(p[1]))
     if count:
         files, labels = files[:count], labels[:count]
-    return _labeled_qsl(files, labels, pre, "imagenet-val", cache=False)   # 50k -> no cache (bounded memory)
+    return _labeled_qsl(files, labels, pre, "imagenet-val", cache=cache)
 
 
 def imagenet_qsl(val_dir, count=None):
