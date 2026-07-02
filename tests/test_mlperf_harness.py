@@ -139,6 +139,18 @@ def test_strip_to_logits_removes_argmax():
   assert m2.graph.output[0].name == "logits"                 # output is now the logits
 
 
+def test_score_accuracy_reads_loadgen_log(tmp_path):
+  # mlperf_log_accuracy.json entries -> top-1 (each data = hex of the int64 predicted class we reported)
+  import json
+  import loadgen_official as lgo   # noqa: E402
+  labels = [5, 7, 9, 2]
+  preds = [5, 7, 0, 2]            # 3/4 correct
+  entries = [{"qsl_idx": i, "data": int(p).to_bytes(8, "little", signed=True).hex()} for i, p in enumerate(preds)]
+  p = tmp_path / "mlperf_log_accuracy.json"; p.write_text(json.dumps(entries))
+  top1, n = lgo.score_accuracy(str(p), labels)
+  assert n == 4 and abs(top1 - 0.75) < 1e-9
+
+
 def test_result_to_dict_is_json_shaped():
   sut = _CountingSUT()
   r = lg.run_single_stream(sut, _qsl(8), count=8, warmup=0, clock=_Clock(0.001))

@@ -131,10 +131,30 @@ PYTHONPATH=. python3 bench/mlperf/run_accuracy.py --preprocess torch --imagenet-
 The runner streams (one decode per image, no 50k cache). Sanity: onnxruntime fp32 should read ~76% top-1.
 
 Both submission paths now hold on the ANE: **Open division** (normalized-input model) and **Closed division**
-(the exact MLPerf reference model + preprocessing, via the Conv->BN fold) both reach fp32-level top-1. The
-remaining work for an official submission is packaging, not accuracy: run accuracy through LoadGen's
-AccuracyOnly mode (`mlperf_log_accuracy.json`), add `mlperf.conf`/`user.conf` + `system_description.json`, and
-pass the compliance tests and `submission-checker.py`.
+(the exact MLPerf reference model + preprocessing, via the Conv->BN fold) both reach fp32-level top-1.
+
+## Assembling a submission
+
+`run_submission.py` produces the MLPerf submission directory (Closed, Edge, SingleStream) with the REAL LoadGen
+for both runs -- a PerformanceOnly run (`mlperf_log_summary.txt`, `Result is: VALID`) and an AccuracyOnly run
+(`mlperf_log_accuracy.json`, scored to `accuracy.txt`) -- plus `systems/<system>.json` (system_description),
+`measurements/.../{mlperf.conf,user.conf}`, and a `code/` pointer:
+
+```bash
+PYTHONPATH=. python3 bench/mlperf/run_submission.py \
+    --imagenet-val ~/Models/mlperf/val --val-map val_map.txt \
+    --count 1024 --min-duration 600            # official-length: 1024 queries AND 600s perf, full 50k accuracy
+```
+
+The tree is written under `bench/mlperf/submission/` (gitignored -- regenerate it; it carries LoadGen logs).
+Validate it with the upstream checker (needs the public `mlcommons/inference` repo, not auth-gated):
+
+```bash
+python3 inference/tools/submission/submission_checker.py --input bench/mlperf/submission
+```
+
+Still off the harness: the compliance tests (TEST01/04/05) and MLCommons membership + an official round. Those
+are process, not engineering -- the accuracy, the latency, and the real LoadGen artifacts are all in hand.
 
 ## Layout
 
@@ -148,6 +168,7 @@ pass the compliance tests and `submission-checker.py`.
 | `loadgen_official.py` | REAL MLCommons LoadGen driver behind the same SUT/QSL (import-gated on `mlperf_loadgen`) |
 | `run_official.py` | ResNet-50 under real LoadGen + differential vs `loadgen_lite` |
 | `run_accuracy.py` | ResNet-50 top-1 with the MLPerf reference model + preprocessing (Closed accuracy path) |
+| `run_submission.py` | assemble an MLPerf submission tree (real LoadGen perf + AccuracyOnly, configs, system_description) |
 
 ## Scenarios
 

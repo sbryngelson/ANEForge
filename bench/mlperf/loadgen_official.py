@@ -43,11 +43,18 @@ def run(sut, qsl, scenario="SingleStream", mode="PerformanceOnly", outdir=None,
     perf_count = int(perf_sample_count or min(qsl.count, 1024))
     q = lg.ConstructQSL(qsl.count, perf_count, load, unload)
 
+    import array
+    accuracy = mode == "AccuracyOnly"
+    keepalive = []                       # response buffers must outlive QuerySamplesComplete
     def issue(query_samples):
         done = []
         for s in query_samples:
-            sut.issue(qsl, [s.index])
-            done.append(lg.QuerySampleResponse(s.id, 0, 0))     # PerformanceOnly: empty response (timing only)
+            pred = sut.issue(qsl, [s.index])[0]
+            if accuracy:                 # report the predicted class as int64 bytes -> mlperf_log_accuracy.json
+                buf = array.array("q", [int(pred)]); keepalive.append(buf)
+                bi = buf.buffer_info(); done.append(lg.QuerySampleResponse(s.id, bi[0], bi[1] * buf.itemsize))
+            else:
+                done.append(lg.QuerySampleResponse(s.id, 0, 0))  # PerformanceOnly: empty response (timing only)
         lg.QuerySamplesComplete(done)
 
     s = lg.ConstructSUT(issue, lambda: None)
@@ -64,6 +71,19 @@ def run(sut, qsl, scenario="SingleStream", mode="PerformanceOnly", outdir=None,
     lg.DestroySUT(s)
     lg.DestroyQSL(q)
     return parse_summary(os.path.join(outdir, "mlperf_log_summary.txt"))
+
+
+def score_accuracy(accuracy_json, labels):
+    """Top-1 from LoadGen's mlperf_log_accuracy.json: each entry is {qsl_idx, data(hex of the int64 predicted
+    class we reported)}; compare to `labels[qsl_idx]`. Returns (top1, n) -- the MLPerf AccuracyOnly path."""
+    import json
+    entries = json.load(open(accuracy_json))
+    correct = 0
+    for e in entries:
+        pred = int.from_bytes(bytes.fromhex(e["data"])[:8], "little", signed=True)
+        correct += int(pred == labels[int(e["qsl_idx"])])
+    n = len(entries)
+    return (correct / n if n else float("nan")), n
 
 
 def _num(v):
