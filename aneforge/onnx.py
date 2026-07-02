@@ -39,10 +39,59 @@ def _shape(vi) -> tuple:
     else: raise ValueError(f"onnx: dynamic/symbolic dim in '{vi.name}' - static shapes only")
   return tuple(out)
 
+def _fold_conv_bn(m):
+  """Fold each `Conv -> BatchNormalization` into the Conv (exact: the BN becomes per-output-channel weight
+  scale + bias). This removes a standalone fp16 BN op, which on the ANE is the main precision loss for
+  TF-exported models: the Conv reduces in a wide fp32-class accumulator, but a following BN runs in the fp16
+  datapath on the large pre-BN values and its rounding then amplifies through the network. No-op unless the BN
+  directly follows a single-consumer Conv whose weight (and bias, if any) are initializers. Returns the count."""
+  from onnx import numpy_helper as nh
+  g = m.graph
+  init = {i.name: i for i in g.initializer}
+  producer = {o: n for n in g.node for o in n.output}
+  consumers: dict = {}
+  for n in g.node:
+    for inp in n.input:
+      consumers.setdefault(inp, []).append(n)
+  graph_outs = {o.name for o in g.output}
+  folded = 0
+  for bn in list(g.node):
+    if bn.op_type != "BatchNormalization":
+      continue
+    conv = producer.get(bn.input[0])
+    if conv is None or conv.op_type != "Conv" or bn.output[0] in graph_outs:
+      continue
+    if conv.output[0] in graph_outs or len(consumers.get(conv.output[0], [])) != 1:
+      continue                                              # conv feeds only this BN
+    if conv.input[1] not in init or any(bn.input[k] not in init for k in (1, 2, 3, 4)):
+      continue
+    if len(conv.input) > 2 and conv.input[2] not in init:  # dynamic conv bias -> skip
+      continue
+    W = nh.to_array(init[conv.input[1]])
+    gm, be, mean, var = (nh.to_array(init[bn.input[k]]) for k in (1, 2, 3, 4))
+    eps = next((a.f for a in bn.attribute if a.name == "epsilon"), 1e-5)
+    s = (gm / np.sqrt(var + eps)).astype(np.float32)
+    Wf = (W * s.reshape([-1] + [1] * (W.ndim - 1))).astype(W.dtype)
+    b0 = nh.to_array(init[conv.input[2]]) if len(conv.input) > 2 else 0.0
+    bf = (be + (b0 - mean) * s).astype(np.float32)
+    g.initializer.remove(init[conv.input[1]]); g.initializer.append(nh.from_array(Wf, conv.input[1]))
+    if len(conv.input) > 2:
+      g.initializer.remove(init[conv.input[2]]); g.initializer.append(nh.from_array(bf, conv.input[2]))
+    else:
+      bname = conv.output[0] + "_bnbias"; conv.input.append(bname); g.initializer.append(nh.from_array(bf, bname))
+    for n in consumers.get(bn.output[0], []):               # rewire BN's consumers to the conv output
+      for i, inp in enumerate(n.input):
+        if inp == bn.output[0]:
+          n.input[i] = conv.output[0]
+    g.node.remove(bn); folded += 1
+  return folded
+
+
 def _load(path):
-  """Load an ONNX model (or accept one in-memory) and run shape inference."""
+  """Load an ONNX model (or accept one in-memory), fold Conv->BN, and run shape inference."""
   import onnx
   m = path if hasattr(path, "graph") else onnx.load(path)
+  _fold_conv_bn(m)                                          # exact; removes standalone fp16 BN (ANE precision)
   return onnx.shape_inference.infer_shapes(m)
 
 _APPROX_RESIZE = False                          # opt-in: map a half-pixel Resize to the closest ANE bilinear
@@ -275,6 +324,33 @@ def _sympad(pads, op):                         # pads = [top,left,bottom,right];
   if len(set(p)) != 1: raise NotImplementedError(f"onnx {op}: asymmetric pads {p} not supported")
   return int(p[0])
 
+
+def _pad_hw(x, top, bottom, left, right, value):
+  """Explicitly pad an NCHW tensor by (top,bottom,left,right) with `value` -- for asymmetric pads the ANE
+  pool's scalar pad can't express (e.g. TF SAME emits [0,0,1,1]). Padding is a concat of const borders."""
+  from .graph import concat as _cat, _const
+  N, C, H, W = x.shape
+  if top or bottom:
+    parts = ([_const(np.full((N, C, top, W), value, np.float16))] if top else []) + [x] + \
+            ([_const(np.full((N, C, bottom, W), value, np.float16))] if bottom else [])
+    x = _cat(parts, axis=2); H += top + bottom
+  if left or right:
+    parts = ([_const(np.full((N, C, H, left), value, np.float16))] if left else []) + [x] + \
+            ([_const(np.full((N, C, H, right), value, np.float16))] if right else [])
+    x = _cat(parts, axis=3)
+  return x
+
+
+def _pool_pad(x, pads, op, value):
+  """(x, scalar_pad) for a pool: symmetric uniform pads pass through as a scalar; asymmetric pads are applied
+  explicitly to `x` with `value` so the pool then runs with pad=0. `value` is a large negative for max_pool
+  (pad cells never win the max); avg_pool with asymmetric pads is left unsupported (count_include_pad ambiguity)."""
+  if pads is None: return x, 0
+  p = [int(v) for v in pads]                    # [top, left, bottom, right]
+  if len(set(p)) == 1: return x, p[0]
+  if op != "MaxPool": raise NotImplementedError(f"onnx {op}: asymmetric pads {p} not supported")
+  return _pad_hw(x, p[0], p[2], p[1], p[3], value), 0
+
 def _pad4(pads):                               # ONNX conv pads=[top,left,bottom,right] -> scalar, or (top,bottom,left,right)
   if pads is None: return 0
   p = [int(v) for v in pads]
@@ -311,8 +387,9 @@ def _conv_h(node, ins, a, i):
 @onnx_op("MaxPool")
 def _maxpool(node, ins, a, i):
   if _uniform(a.get("dilations"), "MaxPool") != 1: raise NotImplementedError("ONNX MaxPool: dilations != 1 not supported")
-  return ins[0].max_pool(_uniform(a.get("kernel_shape"), "MaxPool"), _uniform(a.get("strides"), "MaxPool"),
-                         _sympad(a.get("pads"), "MaxPool"), ceil_mode=bool(int(a.get("ceil_mode", 0))))
+  x, pad = _pool_pad(ins[0], a.get("pads"), "MaxPool", -65504.0)   # -inf-ish const pad for asymmetric (TF SAME)
+  return x.max_pool(_uniform(a.get("kernel_shape"), "MaxPool"), _uniform(a.get("strides"), "MaxPool"),
+                    pad, ceil_mode=bool(int(a.get("ceil_mode", 0))))
 @onnx_op("AveragePool")
 def _avgpool(node, ins, a, i):
   return ins[0].avg_pool(_uniform(a.get("kernel_shape"), "AveragePool"), _uniform(a.get("strides"), "AveragePool"),

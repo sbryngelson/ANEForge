@@ -1,0 +1,25 @@
+{
+  "model": "torchvision-resnet50",
+  "images": 1000,
+  "preprocessing": "mlperf",
+  "top1": {
+    "fp16": {
+      "top1": 0.921,
+      "n": 1000,
+      "class_offset": 0,
+      "agreement_vs_fp32": 1.0,
+      "logit_cosine_vs_fp32": 0.9999940991401672
+    },
+    "int8": {
+      "top1": 0.92,
+      "n": 1000,
+      "class_offset": 0,
+      "agreement_vs_fp32": 0.994,
+      "logit_cosine_vs_fp32": 0.9962259531021118
+    },
+    "onnxruntime_fp32": {
+      "top1": 0.921,
+      "n": 1000
+    }
+  }
+}

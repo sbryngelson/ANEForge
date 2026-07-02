@@ -1,0 +1,24 @@
+{
+  "model": "qwen3-0.6b-ane-int8",
+  "compress": "int8",
+  "result": {
+    "scenario": "LLMDecode",
+    "sut": "qwen3-0.6b-ane-int8",
+    "queries": 1,
+    "samples": 64,
+    "wall_s": 1.5355634579900652,
+    "official": false,
+    "throughput_qps": 41.67851199309672,
+    "latency_ms": {
+      "p50": 17.016040976159275,
+      "p90": 17.15255002491176,
+      "p99": 19.117095982655883,
+      "mean": 17.090397493337235
+    },
+    "extra": {
+      "ttft_ms": 458.8684159098193,
+      "prompt_len": 32,
+      "gen_len": 64
+    }
+  }
+}

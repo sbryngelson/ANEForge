@@ -66,6 +66,17 @@ models = [
 # ONNX model import (aneforge.onnx.load_onnx / onnx_to_tensor). Imported lazily; the
 # core package stays numpy-only. Only install if you import ONNX models.
 onnx = ["onnx>=1.16"]
+# MLPerf-style benchmark harness (bench/mlperf/): the real MLCommons LoadGen driver plus
+# the ResNet-50 workload deps (ONNX import, onnxruntime reference, torchvision demo model,
+# Pillow preprocessing). loadgen is a C++ build if no wheel is available for your Python.
+mlperf = [
+    "mlcommons-loadgen",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    "torchvision",
+    "pillow",
+    "opencv-python",   # exact MLPerf ResNet-50 preprocessing (cv2 INTER_AREA resize + decode)
+]
 # Linting + test runner (CI and local dev). ruff is the linter; the corpus/pytest
 # suites need real ANE hardware to run.
 dev = [

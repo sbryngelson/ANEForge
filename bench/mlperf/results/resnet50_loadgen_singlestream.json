@@ -1,0 +1,31 @@
+{
+  "scenario": "SingleStream",
+  "compress": "fp16",
+  "loadgen": {
+    "summary_path": "/Users/spencer/Downloads/ANEForge-pub/bench/mlperf/results/loadgen/mlperf_log_summary.txt",
+    "scenario": "SingleStream",
+    "mode": "PerformanceOnly",
+    "p90_latency_ns": 772959.0,
+    "valid": "VALID",
+    "min_duration_satisfied": "Yes",
+    "min_queries_satisfied": "Yes",
+    "early_stopping_satisfied": "Yes",
+    "mean_latency_ns": 761743.0
+  },
+  "lite": {
+    "scenario": "SingleStream",
+    "sut": "resnet50-ane-fp16",
+    "queries": 2000,
+    "samples": 2000,
+    "wall_s": 1.5184667079010978,
+    "official": false,
+    "throughput_qps": 1317.1181097309022,
+    "latency_ms": {
+      "p50": 0.7571044843643904,
+      "p90": 0.77133720042184,
+      "p99": 0.7997599779628217,
+      "mean": 0.7591474700602703
+    }
+  },
+  "p90_ratio_lite_over_loadgen": 0.997901829750142
+}

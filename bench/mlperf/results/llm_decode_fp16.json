@@ -1,0 +1,24 @@
+{
+  "model": "qwen3-0.6b-ane-fp16",
+  "compress": "fp16",
+  "result": {
+    "scenario": "LLMDecode",
+    "sut": "qwen3-0.6b-ane-fp16",
+    "queries": 1,
+    "samples": 64,
+    "wall_s": 1.699252999969758,
+    "official": false,
+    "throughput_qps": 37.66360865694456,
+    "latency_ms": {
+      "p50": 18.68133305106312,
+      "p90": 18.880283809266984,
+      "p99": 19.31403750553727,
+      "mean": 18.70474007926763
+    },
+    "extra": {
+      "ttft_ms": 520.8543749758974,
+      "prompt_len": 32,
+      "gen_len": 64
+    }
+  }
+}

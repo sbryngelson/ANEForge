@@ -64,6 +64,50 @@ def test_conv_asymmetric_pad_builds():  # ONNX pads [top,left,bottom,right] -> p
   m = _model([n], [_vi("x", [1, 3, 10, 10])], [_vi("y", [1, 4, 10, 9])], inits=[w])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4, 10, 9) and out.op == "conv"
 
+def test_maxpool_asymmetric_pad_builds():  # TF SAME emits pool pads like [0,0,1,1] -> explicit pad, then valid pool
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[3, 3], strides=[2, 2], pads=[0, 0, 1, 1])
+  m = _model([n], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 4, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3, 4, 4) and out.op == "max_pool"
+
+@requires_ane
+def test_maxpool_asymmetric_pad_matches_onnxruntime():  # numerically matches ORT (pad cells never win the max)
+  import onnxruntime as ort, tempfile, os
+  n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[3, 3], strides=[2, 2], pads=[0, 0, 1, 1])
+  m = _model([n], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 4, 4])])
+  p = os.path.join(tempfile.mkdtemp(), "m.onnx"); onnx.save(m, p)
+  x = np.random.default_rng(0).standard_normal((1, 3, 8, 8)).astype(np.float32)   # negative values -> pad must be -inf-ish
+  ref = np.asarray(ort.InferenceSession(p).run(None, {"x": x})[0])
+  got = np.asarray(af.load_onnx(p)(x.astype(np.float16))).astype(np.float32)
+  assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-2
+
+def _conv_bn_relu_model(seed=0):
+  rng = np.random.default_rng(seed)
+  W = _init(rng.standard_normal((4, 3, 3, 3)).astype(np.float32), "W")
+  gg = _init((np.abs(rng.standard_normal(4)) + 0.5).astype(np.float32), "g"); bb = _init(rng.standard_normal(4).astype(np.float32), "b")
+  mm = _init(rng.standard_normal(4).astype(np.float32), "m"); vv = _init((np.abs(rng.standard_normal(4)) + 0.5).astype(np.float32), "v")
+  nodes = [helper.make_node("Conv", ["x", "W"], ["c"], pads=[1, 1, 1, 1]),
+           helper.make_node("BatchNormalization", ["c", "g", "b", "m", "v"], ["bnout"], epsilon=1e-5),
+           helper.make_node("Relu", ["bnout"], ["y"])]
+  return _model(nodes, [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 4, 8, 8])], inits=[W, gg, bb, mm, vv])
+
+def test_conv_bn_fold_removes_bn():  # Conv->BN folds into the Conv (exact); removes the standalone fp16 BN op
+  from aneforge.onnx import _fold_conv_bn
+  import copy
+  fm = copy.deepcopy(_conv_bn_relu_model())
+  n = _fold_conv_bn(fm)
+  assert n == 1 and all(nd.op_type != "BatchNormalization" for nd in fm.graph.node)
+  _, out = af.onnx_to_tensor(_conv_bn_relu_model()); assert out.shape == (1, 4, 8, 8)   # imports (folds in _load)
+
+@requires_ane
+def test_conv_bn_fold_matches_onnxruntime():  # folded model on the ANE matches ORT on the original (fold is exact)
+  import onnxruntime as ort, tempfile, os
+  m = _conv_bn_relu_model(1)
+  p = os.path.join(tempfile.mkdtemp(), "m.onnx"); onnx.save(m, p)
+  x = np.random.default_rng(2).standard_normal((1, 3, 8, 8)).astype(np.float32)
+  ref = np.asarray(ort.InferenceSession(p).run(None, {"x": x})[0])
+  got = np.asarray(af.load_onnx(p)(x.astype(np.float16))).astype(np.float32)
+  assert got.shape == ref.shape and np.abs(got - ref).max() < 5e-2
+
 def test_dequantize_weight_conv_builds():  # int8 weight DequantizeLinear -> fp32 const fed to conv
   w8 = onnx.numpy_helper.from_array(np.ones((4, 3, 3, 3), np.int8), "w8")
   sc = onnx.numpy_helper.from_array(np.full(4, 0.1, np.float32), "sc")

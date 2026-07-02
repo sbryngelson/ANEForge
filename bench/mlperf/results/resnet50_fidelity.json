@@ -1,0 +1,17 @@
+{
+  "mode": "fidelity",
+  "reference": "onnxruntime-fp32",
+  "images": 9,
+  "rows": [
+    {
+      "sut": "resnet50-ane-fp16",
+      "top1_agreement": 1.0,
+      "logit_cosine": 0.999995768070221
+    },
+    {
+      "sut": "resnet50-ane-int8",
+      "top1_agreement": 1.0,
+      "logit_cosine": 0.9976733326911926
+    }
+  ]
+}
