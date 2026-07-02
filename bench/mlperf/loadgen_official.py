@@ -22,8 +22,14 @@ def available() -> bool:
         return False
 
 
+# Official LoadGen RNG seeds by MLPerf Inference round (the submission-checker verifies these exactly).
+SEEDS = {
+    "v5.1": (1780908523862526354, 14771362308971278857, 18209322760996052031),   # (qsl, sample_index, schedule)
+}
+
+
 def run(sut, qsl, scenario="SingleStream", mode="PerformanceOnly", outdir=None,
-        min_query_count=1024, min_duration_ms=0, expected_latency_ns=0, perf_sample_count=None):
+        min_query_count=1024, min_duration_ms=0, expected_latency_ns=0, perf_sample_count=None, seeds=None):
     """Run our (sut, qsl) under real LoadGen and return the fields parsed from mlperf_log_summary.txt
     (valid, p90 latency ns, samples/s, ...). `scenario` in {SingleStream, Offline, ...}; `mode` in
     {PerformanceOnly, AccuracyOnly, ...}."""
@@ -37,6 +43,8 @@ def run(sut, qsl, scenario="SingleStream", mode="PerformanceOnly", outdir=None,
         settings.min_duration_ms = int(min_duration_ms)
     if expected_latency_ns:
         settings.single_stream_expected_latency_ns = int(expected_latency_ns)   # scheduler hint; loadgen refines it
+    if seeds:                                                                    # official per-round RNG seeds
+        settings.qsl_rng_seed, settings.sample_index_rng_seed, settings.schedule_rng_seed = (int(s) for s in seeds)
 
     load = lambda samples: None          # our QSL.get materializes + caches on demand -> load/unload are no-ops
     unload = lambda samples: None

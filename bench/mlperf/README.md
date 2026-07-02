@@ -153,8 +153,21 @@ Validate it with the upstream checker (needs the public `mlcommons/inference` re
 python3 inference/tools/submission/submission_checker.py --input bench/mlperf/submission
 ```
 
-Still off the harness: the compliance tests (TEST01/04/05) and MLCommons membership + an official round. Those
-are process, not engineering -- the accuracy, the latency, and the real LoadGen artifacts are all in hand.
+### submission-checker status
+
+Run against the tree, the upstream `submission_checker` (v5.1) already passes the **system-description**,
+**measurement**, and **RNG-seed** checks, with a **VALID** official-length SingleStream performance run and a
+real `mlperf_log_accuracy.json`. What it still wants (all mechanical MLPerf-submission plumbing, not accuracy
+or latency):
+
+- **all three scenarios** for edge ResNet-50 -- add MultiStream + Offline runs (this harness has Offline; a
+  batched MultiStream SUT is the one new piece);
+- **accuracy-log truncation + hash** -- run the repo's `truncate_accuracy_log.py` so `accuracy.txt` carries the
+  hash of `mlperf_log_accuracy.json`;
+- a **`compliance/` dir** with TEST01 + TEST04 (re-run LoadGen under the audit configs from `mlcommons/inference`).
+
+Then MLCommons membership + an official round -- process, not engineering. The accuracy (fp16 == fp32, clears
+the gate), the VALID official-length latency, and the real LoadGen artifacts are all in hand.
 
 ## Layout
 
