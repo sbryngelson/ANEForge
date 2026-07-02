@@ -85,16 +85,26 @@ Result on the 1000-image preview (Apple M-series):
 | ANE fp16 | 78.7% | 82.9% agree, logit cosine 0.919 |
 | ANE int8 | 78.6% | 82.6% agree, logit cosine 0.919 |
 
-The ~13-point gap is **not** a bug: it is fp16 compute precision degrading with activation MAGNITUDE. MLPerf's
-reference preprocessing is raw-scale (inputs ~+-150, no normalization), which drives large internal
-activations; the ANE computes in fp16 and loses precision on them. The effect is monotonic in input scale --
-ANE-vs-fp32 logit cosine climbs 0.907 (raw ~150) -> 0.955 (x0.1) -> 0.984 (x0.02). A normalized-input model
-(the torchvision export above) does not hit this. int8 does not rescue it (it quantizes weights, not the fp16
-activation math). This mirrors the fp16-accumulation gap seen in the LLM work.
+The ~13-point gap is **not** a bug and **not** the ANE being inaccurate: it is fp16 accumulation error
+compounding through the residual stream, seeded by the reference model's raw-scale preprocessing (inputs
+~+-150). Per-depth ANE-vs-fp32 cosine localizes it -- 0.977 after the stem, then compounding through the
+residual adds (0.92 at stage 1 -> 0.87 by the logits) at modest magnitudes (~20-65, no overflow). onnxruntime
+(and GPUs) accumulate conv/matmul in fp32; the ANE is an fp16 engine. int8 does not rescue it (it quantizes
+weights, not the fp16 activation math).
 
-Consequence for a Closed submission: naive fp16/int8 will not clear the >= 99%-of-reference gate on this model.
-Closing it needs higher-precision (fp32) accumulation for the large-activation ops -- an aneforge compiler
-feature -- or an Open-division submission with a normalized-input model. This is the concrete next lever.
+**The ANE is not the bottleneck -- input conditioning is.** With normalized preprocessing (`--preprocess torch`,
+`/255` + std, inputs ~+-2.6) the ANE is bit-faithful to fp32:
+
+| Path (normalized preprocessing, torchvision ResNet-50) | top-1 | fidelity vs fp32 |
+| --- | --- | --- |
+| onnxruntime fp32 | 92.1% | -- |
+| ANE fp16 | 92.1% | 100% agree, cosine 1.0000 |
+| ANE int8 | 92.0% | 99.4% agree, cosine 0.9962 |
+
+So the two submission paths are: **Open division** -- normalized-input model, ANE matches fp32 today (done);
+**Closed division** -- the exact raw-input reference, which needs an activation-equalization fold (fold scales
+through consecutive conv layers, SmoothQuant-style, to keep fp16 intermediates well-conditioned) since the ANE
+cannot accumulate in fp32. That fold is the concrete next lever.
 
 ## Layout
 

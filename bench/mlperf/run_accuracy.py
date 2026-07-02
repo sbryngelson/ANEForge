@@ -39,21 +39,28 @@ def main():
     ap.add_argument("--imagenet-val", default=None, help="flat ILSVRC2012 val dir")
     ap.add_argument("--val-map", default=None, help="MLPerf val_map ('<file> <label>' lines) for --imagenet-val")
     ap.add_argument("--count", type=int, default=None, help="cap the number of images")
+    ap.add_argument("--preprocess", default="mlperf", choices=("mlperf", "torch"),
+                    help="mlperf: raw-scale mean-subtract (Closed, fp16-bound); torch: /255+std normalized (ANE=fp32)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    model = args.model or (_REF if os.path.exists(_REF) else None)
+    # raw-scale MLPerf preprocessing pairs with the reference model; normalized preprocessing pairs with the
+    # torchvision model (its weights expect normalized input). See the fp16-magnitude finding in the README.
+    if args.preprocess == "torch":
+        pre, model = rn._preprocess, args.model            # None -> torchvision export
+    else:
+        pre, model = rn.preprocess_mlperf, args.model or (_REF if os.path.exists(_REF) else None)
     if args.imagenet_val:
         if not args.val_map:
             print("--imagenet-val needs --val-map"); return 1
-        qsl, labels = rn.imagenet_val_qsl(args.imagenet_val, args.val_map, count=args.count)
+        qsl, labels = rn.imagenet_val_qsl(args.imagenet_val, args.val_map, count=args.count, pre=pre)
     elif args.sample_images:
-        qsl, labels = rn.sample_images_qsl(args.sample_images, count=args.count)
+        qsl, labels = rn.sample_images_qsl(args.sample_images, count=args.count, pre=pre)
     else:
         print("pass --sample-images DIR or --imagenet-val DIR --val-map FILE"); return 1
 
     tag = os.path.basename(model) if model else "torchvision-resnet50"
-    print(f"model {tag}; {qsl.count} images, MLPerf preprocessing ...", flush=True)
+    print(f"model {tag}; {qsl.count} images, {args.preprocess} preprocessing ...", flush=True)
 
     # onnxruntime fp32 reference (same stripped logits model) -- the accuracy target + the fidelity baseline
     logits_path = rn.strip_to_logits(rn.resolve_onnx(model))
