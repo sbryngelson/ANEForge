@@ -187,14 +187,17 @@ def preprocess_mlperf(img):
     return a[None].astype(np.float16)
 
 
-def _labeled_qsl(files, labels, pre, name):
-    """A labeled QSL over `files` with preprocessing `pre` (cached on demand)."""
+def _labeled_qsl(files, labels, pre, name, cache=True):
+    """A labeled QSL over `files` with preprocessing `pre`. `cache=False` re-decodes on each get (bounded memory
+    for a large single-pass run; 50k cached fp16 tensors would be ~15GB)."""
     from PIL import Image
-    cache = {}
+    store = {}
     def get(i):
-        if i not in cache:
-            cache[i] = pre(Image.open(files[i]))
-        return cache[i]
+        if not cache:
+            return pre(Image.open(files[i]))
+        if i not in store:
+            store[i] = pre(Image.open(files[i]))
+        return store[i]
     return lg.QSL(len(files), get, name=name), list(labels)
 
 
@@ -218,7 +221,7 @@ def imagenet_val_qsl(val_dir, val_map, count=None, pre=preprocess_mlperf):
                 files.append(os.path.join(val_dir, p[0])); labels.append(int(p[1]))
     if count:
         files, labels = files[:count], labels[:count]
-    return _labeled_qsl(files, labels, pre, "imagenet-val")
+    return _labeled_qsl(files, labels, pre, "imagenet-val", cache=False)   # 50k -> no cache (bounded memory)
 
 
 def imagenet_qsl(val_dir, count=None):

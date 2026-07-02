@@ -95,11 +95,32 @@ weights, not the fp16 activation math).
 **The ANE is not the bottleneck -- input conditioning is.** With normalized preprocessing (`--preprocess torch`,
 `/255` + std, inputs ~+-2.6) the ANE is bit-faithful to fp32:
 
-| Path (normalized preprocessing, torchvision ResNet-50) | top-1 | fidelity vs fp32 |
+Full **50,000-image ILSVRC-2012 val** (torchvision ResNet-50 V2):
+
+| Path | top-1 | fidelity vs fp32 |
 | --- | --- | --- |
-| onnxruntime fp32 | 92.1% | -- |
-| ANE fp16 | 92.1% | 100% agree, cosine 1.0000 |
-| ANE int8 | 92.0% | 99.4% agree, cosine 0.9962 |
+| onnxruntime fp32 | 80.32% | -- |
+| **ANE fp16** | **80.33%** | 99.9% agree, cosine 0.99999 |
+| ANE int8 | 80.22% | 98.2% agree, cosine 0.9962 |
+
+ANE fp16 matches fp32 to within noise over the whole val set; int8 costs 0.1 pt. (The 1000-image preview reads
+higher -- 92.1% -- because it is one curated image per class.)
+
+### Full ImageNet-val run
+
+The tables above use the 1000-image preview. For the full 50,000-image ILSVRC-2012 val set (not committed --
+ImageNet is licensed): download `ILSVRC2012_img_val.tar`, extract to a flat dir, and build a val_map (each
+`ILSVRC2012_val_*.JPEG` -> its 0-999 label). The labels come from the public per-image WNID list; sorted-WNID
+order is the torchvision/PyTorch class index:
+
+```bash
+tar xf ILSVRC2012_img_val.tar -C ~/Models/mlperf/val
+curl -L -o labels.txt https://raw.githubusercontent.com/tensorflow/models/master/research/slim/datasets/imagenet_2012_validation_synset_labels.txt
+python3 -c "w=[l.split()[0] for l in open('labels.txt')]; idx={x:i for i,x in enumerate(sorted(set(w)))}; open('val_map.txt','w').writelines(f'ILSVRC2012_val_{i:08d}.JPEG {idx[x]}\n' for i,x in enumerate(w,1))"
+PYTHONPATH=. python3 bench/mlperf/run_accuracy.py --preprocess torch --imagenet-val ~/Models/mlperf/val --val-map val_map.txt
+```
+
+The runner streams (one decode per image, no 50k cache). Sanity: onnxruntime fp32 should read ~76% top-1.
 
 So the two submission paths are: **Open division** -- normalized-input model, ANE matches fp32 today (done);
 **Closed division** -- the exact raw-input reference, which needs an activation-equalization fold (fold scales

@@ -62,31 +62,42 @@ def main():
     tag = os.path.basename(model) if model else "torchvision-resnet50"
     print(f"model {tag}; {qsl.count} images, {args.preprocess} preprocessing ...", flush=True)
 
-    # onnxruntime fp32 reference (same stripped logits model) -- the accuracy target + the fidelity baseline
-    logits_path = rn.strip_to_logits(rn.resolve_onnx(model))
-    ref_pred, ref_logits = rn.onnx_logits(logits_path, qsl)
-    off = 1 if ref_logits.shape[1] == 1001 else 0
+    import onnxruntime as ort
+    fp16 = rn.build_sut(model_path=model, compress=None, strip_logits=True)
+    int8 = rn.build_sut(model_path=model, compress="int8", strip_logits=True)
+    sess = ort.InferenceSession(rn.strip_to_logits(rn.resolve_onnx(model)))
+    inm = sess.get_inputs()[0].name
+    off = fp16.class_offset
 
-    rows = {}
-    for compress in (None, "int8"):
-        sut = rn.build_sut(model_path=model, compress=compress, strip_logits=True)
-        top1, n = rn.accuracy(sut, qsl, labels)
-        preds, logits = rn.net_logits(sut.net, qsl)                 # raw argmax + logits, for fidelity vs the reference
-        agree, cos = rn.fidelity(ref_pred, ref_logits, preds, logits)
-        rows[compress or "fp16"] = {"top1": top1, "n": n, "class_offset": sut.class_offset,
-                                    "agreement_vs_fp32": agree, "logit_cosine_vs_fp32": cos}
-        print(f"  ANE {sut.name:22s} top-1 = {top1 * 100:6.2f}%   (vs fp32: {agree * 100:5.1f}% agree, cosine {cos:.4f})")
+    # single streaming pass: decode each image once, run fp32 (ref) + fp16 + int8 together (no 50k cache)
+    n = qsl.count
+    c_ref = c_16 = c_8 = agree16 = agree8 = 0
+    cos16 = cos8 = 0.0
+    for i in range(n):
+        x = np.asarray(qsl.get(i), np.float16)
+        lr = np.asarray(sess.run(None, {inm: x.astype(np.float32)})[0]).astype(np.float32).ravel()
+        l16 = np.asarray(fp16.net(x)).astype(np.float32).ravel()
+        l8 = np.asarray(int8.net(x)).astype(np.float32).ravel()
+        rp, p16, p8 = int(lr.argmax()), int(l16.argmax()), int(l8.argmax())
+        c_ref += (rp - off == labels[i]); c_16 += (p16 - off == labels[i]); c_8 += (p8 - off == labels[i])
+        agree16 += (p16 == rp); agree8 += (p8 == rp)
+        cos16 += float(l16 @ lr / (np.linalg.norm(l16) * np.linalg.norm(lr) + 1e-9))
+        cos8 += float(l8 @ lr / (np.linalg.norm(l8) * np.linalg.norm(lr) + 1e-9))
+        if (i + 1) % 5000 == 0:
+            print(f"  ...{i + 1}/{n}  fp16 top-1 so far {100 * c_16 / (i + 1):.2f}%", flush=True)
 
-    lab = np.asarray(labels[:len(ref_pred)])
-    ref_top1 = float(((ref_pred - off) == lab).mean())
-    print(f"  onnxruntime-fp32 reference     top-1 = {ref_top1 * 100:6.2f}%")
+    rows = {"fp16": {"top1": c_16 / n, "agreement_vs_fp32": agree16 / n, "logit_cosine_vs_fp32": cos16 / n},
+            "int8": {"top1": c_8 / n, "agreement_vs_fp32": agree8 / n, "logit_cosine_vs_fp32": cos8 / n},
+            "onnxruntime_fp32": {"top1": c_ref / n}, "n": n, "class_offset": off}
+    print(f"  ANE fp16              top-1 = {100 * c_16 / n:6.2f}%   (vs fp32: {100 * agree16 / n:5.1f}% agree, cosine {cos16 / n:.4f})")
+    print(f"  ANE int8              top-1 = {100 * c_8 / n:6.2f}%   (vs fp32: {100 * agree8 / n:5.1f}% agree, cosine {cos8 / n:.4f})")
+    print(f"  onnxruntime-fp32      top-1 = {100 * c_ref / n:6.2f}%")
     print(f"  (MLPerf reference full-val {_REF_TOP1 * 100:.2f}%; Closed needs >= {_REF_TOP1 * 99:.2f}%)")
-    rows["onnxruntime_fp32"] = {"top1": ref_top1, "n": int(len(ref_pred))}
 
     out = args.out or os.path.join(Path(__file__).resolve().parent, "results", "resnet50_accuracy.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w") as f:
-        json.dump({"model": tag, "images": qsl.count, "preprocessing": "mlperf", "top1": rows}, f, indent=2, allow_nan=False)
+        json.dump({"model": tag, "images": n, "preprocessing": args.preprocess, "top1": rows}, f, indent=2, allow_nan=False)
     print(f"\nwrote {out}")
     return 0
 
