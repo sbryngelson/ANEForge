@@ -87,18 +87,21 @@ reduces in a **wide fp32-class accumulator**, and the reference's convs are indi
 datapath on the large pre-BN values (~1000s), and that rounding then amplifies through the network.
 
 The importer now **folds `Conv->BatchNorm` into the conv** (`aneforge/onnx.py`, exact) -- so the reference
-model computes the stem as a single wide-accumulator conv, with no standalone fp16 BN. Effect on the reference
-model with MLPerf preprocessing (real val):
+model computes the stem as a single wide-accumulator conv, with no standalone fp16 BN. Effect on the exact
+reference model with MLPerf preprocessing, over the **full 50,000-image ILSVRC-2012 val set**:
 
-| Reference ResNet-50, MLPerf preprocessing | before fold | **after Conv->BN fold** |
+| Reference ResNet-50, MLPerf preprocessing, 50k val | before fold | **after Conv->BN fold** |
 | --- | --- | --- |
-| ANE fp16 top-1 | 67.0% | **77.1%** (cosine 0.917 -> **0.99999** vs fp32) |
-| ANE int8 top-1 | 66.9% | **77.1%** |
-| onnxruntime fp32 | 77.05% | 77.05% |
+| ANE fp16 top-1 | ~67% | **76.16%** (cosine 0.917 -> **0.99999** vs fp32) |
+| ANE int8 top-1 | ~67% | **76.06%** |
+| onnxruntime fp32 | 76.16% | 76.16% |
 
-**ANE fp16 now matches fp32 on the exact MLPerf reference model and clears the Closed-division gate**
-(>= 99% of the 76.46% reference = >= 75.70%). The fold is a general importer feature -- any TF-exported model
-with a standalone Conv->BN benefits.
+**ANE fp16 == fp32 == 76.16% over the full val set, on the exact MLPerf reference model -- clearing the
+Closed-division gate** (>= 99% of the 76.46% reference = >= 75.70%). The ANE is exactly as accurate as full
+precision here. The fold is a general importer feature -- any TF-exported model with a standalone Conv->BN
+benefits. (Note: the ~0.3pt below the canonical 76.46% is a preprocessing detail -- this harness resizes with
+PIL bilinear; the MLPerf reference uses cv2 INTER_AREA. It moves fp32 and ANE together and does not affect the
+ANE-vs-fp32 equality; an exactly-official run would match the interpolation.)
 
 ### Open division (normalized-input model), full 50k val
 
