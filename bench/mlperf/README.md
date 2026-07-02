@@ -12,10 +12,13 @@ the ANE, clean top-1 accuracy target).
 
 - It **is** the same measurement shape as MLPerf Inference Edge: the SingleStream and Offline scenarios, the
   SUT/QSL split, the p90-latency and throughput metrics.
-- It is **not** an official MLPerf submission. There is no MLCommons LoadGen logging or audit trail, and the
-  default run lengths are short. A run is flagged `official: false` unless it meets the MLPerf minimums
-  (>= 1024 queries AND >= 600 s). Treat the output as methodology-only numbers - the on-ramp to a real run,
-  not a verified result.
+- It is **not** an official MLPerf submission. The `loadgen_lite` runs have no MLCommons audit trail, and the
+  default run lengths are short. A `loadgen_lite` run is flagged `official: false` unless it meets the MLPerf
+  minimums (>= 1024 queries AND >= 600 s).
+- A **real MLCommons LoadGen** driver (`loadgen_official.py`) runs the SAME workloads through the actual
+  generator/logger (writes `mlperf_log_summary.txt`, uses LoadGen's early-stopping metric). Install it with
+  `pip install mlcommons-loadgen`. On this hardware the two agree: real-LoadGen ResNet-50 SingleStream
+  p90 = 0.773 ms vs lite p90 = 0.771 ms (ratio 0.998), so the lite numbers track LoadGen's.
 
 ## Run it
 
@@ -38,6 +41,10 @@ PYTHONPATH=. python3 bench/mlperf/run_llm.py --int8 --gen 128
 
 # your own MLPerf-provided ResNet-50 ONNX (to match the official model exactly):
 PYTHONPATH=. python3 bench/mlperf/run.py --onnx resnet50.onnx
+
+# REAL MLCommons LoadGen (pip install mlcommons-loadgen) + differential vs the lite harness:
+PYTHONPATH=. python3 bench/mlperf/run_official.py --count 2000 --compare
+PYTHONPATH=. python3 bench/mlperf/run_official.py --count 1024 --min-duration 600   # official length
 ```
 
 Each run prints a summary and writes a JSON to `bench/mlperf/results/`.
@@ -49,6 +56,7 @@ Methodology-only numbers (short runs; not an audited submission), to show the sh
 | Run | Result |
 | --- | --- |
 | ResNet-50 fp16, SingleStream (official length: 785,720 queries / 600 s, `official: true`) | p90 latency 0.776 ms (~1310 img/s) |
+| ResNet-50 fp16, SingleStream under REAL LoadGen | p90 0.773 ms, `Result is: VALID`; lite/loadgen ratio 0.998 |
 | ResNet-50, Offline | ~1310 samples/s (tracks SingleStream: latency-bound at batch 1) |
 | ResNet-50 fidelity vs onnxruntime fp32 | fp16: 100% top-1 agreement, logit cosine 1.00000; int8: 100%, cosine 0.998 |
 | Qwen3-0.6B decode, fp16 | TTFT ~520 ms, TPOT ~18.7 ms/token, ~37.7 tok/s |
@@ -66,6 +74,8 @@ Closed-division accuracy gate (>= 99% of the reference); the committed `results/
 | `run.py` | ResNet-50 CLI: build the SUT, run the scenarios (+ accuracy / fidelity), write results |
 | `llm_decode.py` | LLM decode workload: an aneforge LLM wrapped as a decode SUT (TTFT / TPOT / tokens-per-second) |
 | `run_llm.py` | LLM CLI: build the decode SUT, run `run_llm_decode`, write results |
+| `loadgen_official.py` | REAL MLCommons LoadGen driver behind the same SUT/QSL (import-gated on `mlperf_loadgen`) |
+| `run_official.py` | ResNet-50 under real LoadGen + differential vs `loadgen_lite` |
 
 ## Scenarios
 
@@ -83,12 +93,14 @@ The Server scenario is intentionally omitted - it needs request concurrency the 
 
 ## Path to an official submission
 
-1. Validate accuracy in the **Open** division first (quantize freely), then tighten to **Closed** (exact
-   reference model + preprocessing, >= 99% of the reference top-1, i.e. >= 75.68%).
-2. Swap `loadgen_lite` for the real `mlperf_loadgen`: the SUT/QSL here map directly onto
-   `lg.ConstructSUT(issue_queries, flush_queries)` and `lg.ConstructQSL(...)`. The workload code
-   (`resnet50.py`) is unchanged; only the driver in `run.py` is replaced by a LoadGen `StartTest`.
-3. Submit in an official Inference round (Edge, SingleStream + Offline) through an MLCommons member.
+1. Real `mlperf_loadgen` -- **done** (`loadgen_official.py`): the SUT/QSL map onto `lg.ConstructSUT` /
+   `lg.ConstructQSL` and the run is driven by `StartTestWithLogSettings`; the workload code is unchanged.
+2. Validate accuracy in the **Open** division first (quantize freely), then tighten to **Closed** (exact
+   reference model + preprocessing, >= 99% of the reference top-1, i.e. >= 75.68%). Needs the MLPerf reference
+   ResNet-50 artifact + its preprocessing, and the full ImageNet val set in LoadGen AccuracyOnly mode.
+3. Add the submission package: `mlperf.conf` / `user.conf`, `system_description.json`, and pass the
+   compliance tests (TEST01 / TEST04 / TEST05) and `submission-checker.py`.
+4. Submit in an official Inference round (Edge, SingleStream + Offline) through an MLCommons member.
 
 ## Adding a workload
 

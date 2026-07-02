@@ -1,0 +1,4 @@
+# Raw LoadGen logs are regenerated per run; keep only the human-readable summary as committed evidence.
+*
+!.gitignore
+!mlperf_log_summary.txt

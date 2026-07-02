@@ -1,11 +1,16 @@
 """The MLPerf-lite harness core (bench/mlperf/loadgen_lite.py): scenario semantics + stats, off-device."""
+import importlib.util
 import os
 import sys
+import time
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bench", "mlperf"))
 import loadgen_lite as lg   # noqa: E402
+
+_HAS_LOADGEN = importlib.util.find_spec("mlperf_loadgen") is not None
 
 
 class _CountingSUT(lg.SUT):
@@ -90,6 +95,30 @@ def test_llm_decode_metrics():
   import json
   json.dumps(r.to_dict(), allow_nan=False)
   assert "TTFT" in r.summary() and "tok/s" in r.summary()
+
+
+@pytest.mark.skipif(not _HAS_LOADGEN, reason="mlperf_loadgen not installed")
+def test_lite_tracks_real_loadgen():
+  # differential: our lite SingleStream p90 must track real LoadGen's p90 on the same fixed-latency SUT.
+  import tempfile
+  import loadgen_official as lg_off   # noqa: E402
+
+  class _BusySUT(lg.SUT):
+    name = "busy"
+    def issue(self, qsl, indices):
+      for _ in indices:                # busy-wait a fixed 0.3 ms/query (precise, unlike time.sleep at this scale)
+        t = time.perf_counter()
+        while time.perf_counter() - t < 3.0e-4:
+          pass
+      return [0] * len(indices)
+
+  sut, qsl = _BusySUT(), _qsl(8)
+  # short runs are not MLPerf-VALID (that needs the 600s floor); the point here is that the two drivers agree.
+  summ = lg_off.run(sut, qsl, scenario="SingleStream", min_query_count=256, outdir=tempfile.mkdtemp())
+  loadgen_p90_ms = summ["p90_latency_ns"] / 1e6
+  r = lg.run_single_stream(sut, qsl, count=256)
+  ratio = r.p90_ms / loadgen_p90_ms
+  assert 0.7 < ratio < 1.4, f"lite p90 {r.p90_ms:.4f} vs loadgen {loadgen_p90_ms:.4f} ms (ratio {ratio:.3f})"
 
 
 def test_result_to_dict_is_json_shaped():
