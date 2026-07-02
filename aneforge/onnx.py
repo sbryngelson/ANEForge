@@ -39,10 +39,59 @@ def _shape(vi) -> tuple:
     else: raise ValueError(f"onnx: dynamic/symbolic dim in '{vi.name}' - static shapes only")
   return tuple(out)
 
+def _fold_conv_bn(m):
+  """Fold each `Conv -> BatchNormalization` into the Conv (exact: the BN becomes per-output-channel weight
+  scale + bias). This removes a standalone fp16 BN op, which on the ANE is the main precision loss for
+  TF-exported models: the Conv reduces in a wide fp32-class accumulator, but a following BN runs in the fp16
+  datapath on the large pre-BN values and its rounding then amplifies through the network. No-op unless the BN
+  directly follows a single-consumer Conv whose weight (and bias, if any) are initializers. Returns the count."""
+  from onnx import numpy_helper as nh
+  g = m.graph
+  init = {i.name: i for i in g.initializer}
+  producer = {o: n for n in g.node for o in n.output}
+  consumers: dict = {}
+  for n in g.node:
+    for inp in n.input:
+      consumers.setdefault(inp, []).append(n)
+  graph_outs = {o.name for o in g.output}
+  folded = 0
+  for bn in list(g.node):
+    if bn.op_type != "BatchNormalization":
+      continue
+    conv = producer.get(bn.input[0])
+    if conv is None or conv.op_type != "Conv" or bn.output[0] in graph_outs:
+      continue
+    if conv.output[0] in graph_outs or len(consumers.get(conv.output[0], [])) != 1:
+      continue                                              # conv feeds only this BN
+    if conv.input[1] not in init or any(bn.input[k] not in init for k in (1, 2, 3, 4)):
+      continue
+    if len(conv.input) > 2 and conv.input[2] not in init:  # dynamic conv bias -> skip
+      continue
+    W = nh.to_array(init[conv.input[1]])
+    gm, be, mean, var = (nh.to_array(init[bn.input[k]]) for k in (1, 2, 3, 4))
+    eps = next((a.f for a in bn.attribute if a.name == "epsilon"), 1e-5)
+    s = (gm / np.sqrt(var + eps)).astype(np.float32)
+    Wf = (W * s.reshape([-1] + [1] * (W.ndim - 1))).astype(W.dtype)
+    b0 = nh.to_array(init[conv.input[2]]) if len(conv.input) > 2 else 0.0
+    bf = (be + (b0 - mean) * s).astype(np.float32)
+    g.initializer.remove(init[conv.input[1]]); g.initializer.append(nh.from_array(Wf, conv.input[1]))
+    if len(conv.input) > 2:
+      g.initializer.remove(init[conv.input[2]]); g.initializer.append(nh.from_array(bf, conv.input[2]))
+    else:
+      bname = conv.output[0] + "_bnbias"; conv.input.append(bname); g.initializer.append(nh.from_array(bf, bname))
+    for n in consumers.get(bn.output[0], []):               # rewire BN's consumers to the conv output
+      for i, inp in enumerate(n.input):
+        if inp == bn.output[0]:
+          n.input[i] = conv.output[0]
+    g.node.remove(bn); folded += 1
+  return folded
+
+
 def _load(path):
-  """Load an ONNX model (or accept one in-memory) and run shape inference."""
+  """Load an ONNX model (or accept one in-memory), fold Conv->BN, and run shape inference."""
   import onnx
   m = path if hasattr(path, "graph") else onnx.load(path)
+  _fold_conv_bn(m)                                          # exact; removes standalone fp16 BN (ANE precision)
   return onnx.shape_inference.infer_shapes(m)
 
 _APPROX_RESIZE = False                          # opt-in: map a half-pixel Resize to the closest ANE bilinear
