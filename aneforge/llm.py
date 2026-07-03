@@ -30,6 +30,7 @@ class LlamaConfig:
   dim: int; n_layers: int; n_heads: int; n_kv_heads: int; ffn_dim: int; vocab: int
   rope_base: float = 10000.0; norm_eps: float = 1e-5; head_dim: int = 0
   rotary_dim: int = 0; rope_interleaved: bool = False   # 0 = full RoPE (dh); interleaved = GPT-J pair layout
+  rope_scaling: dict | None = None                       # HF rope_scaling, e.g. Llama-3.1 "llama3" freq rescaling
   layers: list[LayerSpec] = field(default_factory=list)
   extra: dict = field(default_factory=dict)   # arch-specific params for non-default mixers (e.g. DeltaNet head dims)
 
@@ -37,13 +38,30 @@ class LlamaConfig:
   def dh(self) -> int: return self.head_dim or self.dim // self.n_heads
 
 
-def rope_tables(seq: int, dh: int, base: float = 10000.0, rotary_dim: int = 0, interleaved: bool = False):
+def _llama3_rope_scale(inv, s):
+  """Llama-3.1+ RoPE frequency rescaling (HF `rope_type: "llama3"`): low-frequency components (long wavelengths)
+  are divided by `factor`, high frequencies pass through, with a smooth blend between. Without it, long-range
+  positions get the wrong phase -- short context works, long context degenerates. Operates on inv_freq."""
+  factor, lo, hi = float(s["factor"]), float(s["low_freq_factor"]), float(s["high_freq_factor"])
+  old = float(s["original_max_position_embeddings"])
+  low_wl, high_wl = old / lo, old / hi
+  wl = 2.0 * np.pi / inv
+  scaled = np.where(wl > low_wl, inv / factor, inv)                       # low freq -> /factor; else unchanged
+  smooth = (old / wl - lo) / (hi - lo)
+  smoothed = (1.0 - smooth) * scaled / factor + smooth * scaled
+  return np.where((wl >= high_wl) & (wl <= low_wl), smoothed, scaled)     # medium freq -> smooth blend
+
+
+def rope_tables(seq: int, dh: int, base: float = 10000.0, rotary_dim: int = 0, interleaved: bool = False,
+                scaling: dict | None = None):
   """Precompute the [seq, dh] cos/sin rotation tables. Default: HF Llama "neox" layout (full `dh`, freqs
   duplicated over the two halves). `rotary_dim < dh` rotates only the first `rotary_dim` dims and pads the rest
   with cos=1/sin=0 (partial RoPE). `interleaved=True` uses the GPT-J pair layout (dim 2p,2p+1 share freq p) for
-  use with the matmul-rope `x*cos + (x@P)*sin`."""
+  use with the matmul-rope `x*cos + (x@P)*sin`. `scaling` applies an HF rope_scaling (Llama-3.1 "llama3")."""
   rd = rotary_dim or dh
   inv = 1.0 / (base ** (np.arange(0, rd, 2) / rd))
+  if scaling and scaling.get("rope_type") == "llama3":
+    inv = _llama3_rope_scale(inv, scaling)
   pos = np.arange(seq)[:, None] * inv[None, :]               # [seq, rd/2]
   if interleaved:
     c = np.repeat(np.cos(pos), 2, axis=1); s = np.repeat(np.sin(pos), 2, axis=1)   # pair layout [seq, rd]
@@ -193,7 +211,7 @@ class LlamaPrefill:
 
   def compile(self, seq: int):
     cfg = self.cfg
-    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved)
+    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
     x = _input((seq, cfg.dim))
     for i, lw in enumerate(self.w["layers"]):
       ls = self._spec(i)
@@ -275,7 +293,7 @@ class LlamaPrefill:
       chunks.append({"net": net, "p": p})
       if hasattr(self.w["layers"], "free"):                    # streamed weights: free this chunk's fp16 now it's baked
         for li in grp: self.w["layers"].free(li)
-    cos_t, sin_t = rope_tables(M, dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved)
+    cos_t, sin_t = rope_tables(M, dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
     self._dec = {"M": M, "chunks": chunks, "cos": cos_t, "sin": sin_t}
     return self._dec
 
@@ -294,7 +312,7 @@ class LlamaPrefill:
       for c in self._pre["chunks"]: c["net"].release()
     from ._compile import compile_multi
     cfg = self.cfg
-    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved)
+    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
     chunks = []
     for grp in self._layer_chunks():
       x = _input((seq, cfg.dim)); h = x; kvts = []
@@ -422,7 +440,7 @@ def _dense_adapter(c, sd) -> tuple[LlamaConfig, dict]:
                     n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                     ffn_dim=c.intermediate_size, vocab=c.vocab_size,
                     rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
-                    head_dim=int(getattr(c, "head_dim", 0) or 0),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None),
                     layers=[LayerSpec(mixer="attention", mlp="swiglu", qk_norm=qk) for _ in range(n)])
   return cfg, _weights_from_state_dict(sd, cfg)
 
@@ -433,7 +451,7 @@ def _cfg_from_hf(c) -> LlamaConfig:
                      n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                      ffn_dim=c.intermediate_size, vocab=c.vocab_size,
                      rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
-                     head_dim=int(getattr(c, "head_dim", 0) or 0))
+                     head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None))
 
 
 # Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, sd) -> (cfg, weights)); first match
