@@ -104,6 +104,26 @@ def _attn_prefill(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin)
   return x + a.linear(w["wo"])
 
 
+def _attn_prefill_kv(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin):
+  """Like `_attn_prefill`, but also emits the per-layer cache tensors (roped k, raw v) at `[KV, S, dh]` -- the
+  exact layout `_attn_decode`'s resident cache stores -- so a batched prefill can seed the decode KV cache.
+  Returns (hidden+residual, (k_cache, v_cache))."""
+  H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dh, x.shape[0]
+  xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
+  q = xn.linear(w["wq"], w.get("q_bias")).reshape(S, H, dh)
+  k = xn.linear(w["wk"], w.get("k_bias")).reshape(S, KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(S, KV, dh)
+  if ls.qk_norm:
+    q = q.reshape(S * H, dh).rms_norm(w["q_norm"], cfg.norm_eps).reshape(S, H, dh)
+    k = k.reshape(S * KV, dh).rms_norm(w["k_norm"], cfg.norm_eps).reshape(S, KV, dh)
+  q = q.transpose([1, 0, 2]).reshape(1, H, S, dh); k = k.transpose([1, 0, 2]).reshape(1, KV, S, dh)
+  v = v.transpose([1, 0, 2]).reshape(1, KV, S, dh)
+  q, k = rope(q, cos, sin), rope(k, cos, sin)
+  kc, vc = k.reshape(KV, S, dh), v.reshape(KV, S, dh)            # cache layout: pre-repeat, k roped, v raw
+  kr, vr = _repeat_kv(k, H // KV), _repeat_kv(v, H // KV)
+  a = _causal_attn(q, kr, vr).reshape(H, S, dh).transpose([1, 0, 2]).reshape(S, H * dh)
+  return x + a.linear(w["wo"]), (kc, vc)
+
+
 def _swiglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   """SwiGLU MLP with its residual: `h + down(silu(gate(norm(h))) * up(norm(h)))`. Stateless and
   shape-agnostic, so one builder serves both prefill [S,dim] and decode [1,dim]."""
@@ -159,7 +179,7 @@ class LlamaPrefill:
   `prefill(token_ids)` returns next-token logits; `generate(...)` does resident-KV-cache decode. Weights are
   a dict of numpy arrays (see `from_pretrained`)."""
   def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None):
-    self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None
+    self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None; self._pre = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
 
@@ -262,8 +282,71 @@ class LlamaPrefill:
     `generate` streams immediately. Returns self."""
     self._decoder(int(max_len)); return self
 
+  def _prefiller(self, seq):
+    """Build (once, cached) the CHUNKED batched-prefill program(s) for prompt length `seq`: layers split under
+    the ANE program ceiling (like `_decoder`), each chunk a full-sequence forward emitting its attention layers'
+    (roped k, raw v) at `[KV, seq, dh]`, hidden chained chunk->chunk. Attention layers only. Cached by `seq`, so
+    padding prompts to a fixed bucket length reuses one compile across calls (amortizing the compile cost)."""
+    if self._pre is not None and self._pre["seq"] == seq: return self._pre
+    if self._pre is not None:
+      for c in self._pre["chunks"]: c["net"].release()
+    from ._compile import compile_multi
+    cfg = self.cfg
+    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved)
+    chunks = []
+    for grp in self._layer_chunks():
+      x = _input((seq, cfg.dim)); h = x; kvts = []
+      for li in grp:
+        ls = self._spec(li)
+        if ls.mixer != "attention":
+          raise NotImplementedError("batched prefill supports attention layers only")
+        h, kv = _attn_prefill_kv(h, self.w["layers"][li], cfg, ls, cos, sin)
+        h = PREFILL_MLPS[ls.mlp](h, self.w["layers"][li], cfg, ls)
+        kvts.append((li, kv))
+      if grp[-1] == cfg.n_layers - 1: h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)
+      net = compile_multi([h] + [t for _, kv in kvts for t in kv], compress=self.compress)
+      om = dict(net.output_ports); inm = {id(t): n for t, n in net.input_ports}
+      p = {"x": inm[id(x)], "h": om[h], "kv": [(li, om[kv[0]], om[kv[1]]) for li, kv in kvts]}
+      chunks.append({"net": net, "p": p})
+    self._pre = {"seq": seq, "chunks": chunks}
+    return self._pre
+
+  def _prefill_seed(self, token_ids, pad_to=None):
+    """Batched prefill via the cached chunked prefiller: run the whole prompt in one pass per chunk (full causal
+    attention -- the compute-bound matmuls the engine likes) instead of stepping the decode program per token.
+    `pad_to` right-pads the prompt to a fixed bucket length so ONE prefiller compile is reused across prompts of
+    different real length (causal attention ignores the trailing pads); the real length drives the returned
+    logits and the cache seed. Returns (next_logits [1, vocab], kv_by_layer) in the decode cache layout."""
+    f16 = np.float16; real = len(token_ids)
+    seq = max(int(pad_to), real) if pad_to else real
+    pre = self._prefiller(seq)
+    h = self.w["embed"][np.asarray(list(token_ids) + [0] * (seq - real))].astype(f16)   # [seq, dim], right-padded
+    kv_by_layer: list = [None] * self.cfg.n_layers
+    for c in pre["chunks"]:
+      pr = c["net"].prog; p = c["p"]
+      pr.set_input(p["x"], h); pr.execute()
+      h = np.asarray(pr.read_output(p["h"])).astype(f16)                      # hidden chained chunk -> chunk
+      for li, kport, vport in p["kv"]:                                        # keep only the real positions
+        kv_by_layer[li] = (np.asarray(pr.read_output(kport)).astype(f16)[:, :real, :],
+                           np.asarray(pr.read_output(vport)).astype(f16)[:, :real, :])
+    return self._logits(h[real - 1].astype(np.float32))[None], kv_by_layer
+
+  def _seed_cache(self, d, kv_by_layer, seq):
+    """Write a batched prefill's per-layer K/V into the resident decode cache buffers (positions [0:seq]), the
+    same `set_input` path `generate` uses to zero them. Decode chunks group layers exactly as `_layer_chunks`."""
+    M = d["M"]; f16 = np.float16; groups = self._layer_chunks()
+    for gi, c in enumerate(d["chunks"]):
+      ports, seeded = list(c["p"]["states"].keys()), []
+      for li in groups[gi]:                                   # states ordered K_li, V_li per attention layer
+        K, V = kv_by_layer[li]; KVh, _, dh = K.shape
+        pk = np.zeros((KVh, M, dh), f16); pk[:, :seq, :] = K
+        pv = np.zeros((KVh, M, dh), f16); pv[:, :seq, :] = V
+        seeded += [pk, pv]
+      for port, buf in zip(ports, seeded):
+        c["net"].prog.set_input(port, buf)
+
   def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None,
-               temperature=0.0, top_p=1.0, top_k=0):
+               temperature=0.0, top_p=1.0, top_k=0, batched_prefill=True, prefill_pad=None):
     """Autoregressive generation with a resident KV-cache. The decode program (compiled once and cached) runs
     all layers for one token attending to caches that stay on the ANE across steps, so each step feeds only the
     token embedding + a position one-hot. `on_token(id)` is called per token (streaming). Greedy by default
@@ -287,14 +370,26 @@ class LlamaPrefill:
           if k in p: pr.set_input(p[k], vals[k])
         pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
       return h.reshape(cfg.dim).astype(np.float32)
-    for pos, tok in enumerate(prompt[:-1]): step(tok, pos)      # prefill the cache (discard hidden)
-    cur = prompt[-1]; pos = len(prompt) - 1; out = []
-    for _ in range(max_new_tokens):                            # decode
+    use_batched = (batched_prefill and len(prompt) > 1
+                   and not hasattr(self.w["layers"], "free")     # streamed weights are freed by _decoder; can't re-bake
+                   and all(self._spec(i).mixer == "attention" for i in range(cfg.n_layers)))
+    out = []
+    if use_batched:                                            # one-pass prefill, then seed the resident cache
+      logits0, kv = self._prefill_seed(prompt, prefill_pad)
+      self._seed_cache(d, kv, len(prompt))
+      cur = self._sample(logits0[0], temperature, top_p, top_k); out.append(cur)
+      if cur == eos_id: return out
+      if on_token is not None: on_token(cur)
+      pos = len(prompt)
+    else:
+      for p, tok in enumerate(prompt[:-1]): step(tok, p)       # token-by-token prefill (fallback / oracle)
+      cur, pos = prompt[-1], len(prompt) - 1
+    while len(out) < max_new_tokens:                           # decode
       if pos >= M - 1: break                                   # cache full
       nxt = self._sample(self._logits(step(cur, pos)), temperature, top_p, top_k); out.append(nxt)
       if nxt == eos_id: break
       if on_token is not None: on_token(nxt)                   # stream the token
-      cur = nxt; pos += 1
+      cur, pos = nxt, pos + 1
     return out
 
 
