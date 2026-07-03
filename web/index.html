@@ -240,6 +240,10 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
           <p>Prefill and KV-cache decode for Llama/Qwen, exact speculative decoding, Mixture-of-Experts from GGUF, and the hybrid Qwen3.5-27B (DeltaNet + attention), decoding end to end on the engine.</p>
         </div>
         <div class="cap">
+          <h4>MLPerf on the engine <em>passes the checker</em></h4>
+          <p>The MLPerf reference ResNet-50 runs pure-ANE and passes the upstream MLCommons <code>submission_checker</code> at the reference accuracy (fp16 76.44%, equal to fp32). <a href="https://github.com/sbryngelson/ANEForge/tree/main/bench/mlperf">One command reproduces it</a>.</p>
+        </div>
+        <div class="cap">
           <h4>Layers CoreML can’t reach <em>+19 bridge ops</em></h4>
           <p><code>af.sdpa</code> drives fused attention directly, what CoreML never emits. Sort, <code>argmax</code>, <code>topk</code>, geometry too.</p>
         </div>
