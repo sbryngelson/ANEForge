@@ -281,19 +281,37 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
     </div>
   </section>
 
-  <section id="measured">
+  <section id="mlperf">
     <div class="wrap">
-      <span class="label">Measured</span>
-      <h2 style="margin-top:10px">ResNet-18 in 0.33 ms on the engine, 6× the GPU and a fraction of the CPU.</h2>
+      <span class="label">MLPerf</span>
+      <h2 style="margin-top:10px; max-width:none">Where it lands:<br>the reference ResNet-50 against official MLPerf.</h2>
+      <p class="sub">The MLPerf reference ResNet-50 on the engine, next to official MLPerf Inference results. Every competitor number is sourced to a public <code>mlcommons/inference_results</code> submission; the ANE row is unofficial and self-measured.</p>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>ResNet-18 forward</th><th class="num">ANE</th><th class="num">GPU</th><th class="num">CPU</th></tr></thead>
+          <thead><tr><th>System</th><th class="num">SingleStream p90</th><th class="num">Offline</th><th>Power class</th></tr></thead>
           <tbody>
-            <tr><td>end-to-end latency</td><td class="num you">0.33 ms</td><td class="num">2.0 ms</td><td class="num">6.0 ms</td></tr>
+            <tr>
+              <td class="you">Apple Neural Engine<span style="font-family:var(--mono); font-size:.72rem; color:var(--faint); margin-left:8px">unofficial</span></td>
+              <td class="num you">0.773 ms</td>
+              <td class="num you">1,149/s</td>
+              <td>single-digit W · SoC block</td>
+            </tr>
+            <tr>
+              <td>NVIDIA Jetson AGX Orin<span style="font-family:var(--mono); font-size:.72rem; color:var(--faint); margin-left:8px">v3.1 · edge</span></td>
+              <td class="num">0.640 ms</td>
+              <td class="num">6,424/s</td>
+              <td>15–60 W module</td>
+            </tr>
+            <tr>
+              <td>NVIDIA H100, 1 GPU<span style="font-family:var(--mono); font-size:.72rem; color:var(--faint); margin-left:8px">v4.0 · datacenter</span></td>
+              <td class="num cross">—</td>
+              <td class="num">88,714/s</td>
+              <td>350–700 W board</td>
+            </tr>
           </tbody>
         </table>
       </div>
-      <p class="caption" style="max-width:none">M5 Pro, macOS 26.5; the GPU and CPU baselines are PyTorch at float32, and the ANE rail draws 4.5 W during the hot loop. ResNet-18, a ViT-B/16, and a MiniLM encoder each match their float32 reference to cosine 1.0000.</p>
+      <p class="caption" style="max-width:none">Passes the upstream MLCommons <code>submission_checker</code> (v5.1, all three edge scenarios VALID) at fp16 76.44% top-1, equal to fp32. On SingleStream latency the ANE is within ~1.2× of the Jetson AGX Orin at a fraction of the power; on Offline throughput it trails, because the program is batch-1 and compute-bound — at ~10 TFLOP/s it sits on the engine's applicable roofline. Power class is a device power envelope, not a MLPerf Power measurement. Sourced from <code>mlcommons/inference_results_v3.1</code> (Orin) and <code>v4.0</code> (H100).</p>
     </div>
   </section>
 
