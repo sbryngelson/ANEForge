@@ -65,6 +65,16 @@ def test_segmented_decode_matches_single():  # splitting the decode across chunk
   assert m2.generate([1, 2, 3], max_new_tokens=6) == out1, "segmented decode diverged from single-program"
 
 @requires_ane
+def test_batched_prefill_matches_token_by_token():  # batched prefill (KV-bridge -> seed -> decode) == token-by-token
+  cfg = LlamaConfig(dim=64, n_layers=4, n_heads=4, n_kv_heads=2, ffn_dim=128, vocab=48)
+  prompt = list(range(1, 9))
+  oracle = _random_model(cfg).generate(prompt, max_new_tokens=8, batched_prefill=False)   # token-by-token prefill
+  assert _random_model(cfg).generate(prompt, max_new_tokens=8, batched_prefill=True) == oracle
+  assert _random_model(cfg).generate(prompt, max_new_tokens=8, batched_prefill=True, prefill_pad=16) == oracle  # bucketed
+  m = _random_model(cfg); m._chunk_bytes = 1                       # force one layer per prefill/decode chunk
+  assert m.generate(prompt, max_new_tokens=8, batched_prefill=True) == oracle, "chunked batched prefill diverged"
+
+@requires_ane
 def test_prefill_matches_huggingface_llama():  # the definitive check: ANE prefill == HF LlamaForCausalLM
   import torch
   from transformers import LlamaConfig as HF, LlamaForCausalLM

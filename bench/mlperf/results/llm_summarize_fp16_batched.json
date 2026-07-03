@@ -1,0 +1,42 @@
+{
+  "model": "Qwen3-8B-ane-fp16",
+  "n": 3,
+  "mean_rouge": {
+    "rouge1": 0.323351992434118,
+    "rouge2": 0.10670701388000965,
+    "rougeL": 0.25212790430181736
+  },
+  "mean_decode_tok_s": 7.126220726754204,
+  "rows": [
+    {
+      "summary": "Zully Broussard donated one of her kidneys to a stranger. Her donation, combined with genetic data matching, resulted in six patients receiving transplants.",
+      "prompt_tokens": 372,
+      "gen_tokens": 33,
+      "ttft_s": 269.7521523339674,
+      "decode_tok_s": 5.87097819932738,
+      "rouge1": 0.43478260869565216,
+      "rouge2": 0.18181818181818182,
+      "rougeL": 0.391304347826087
+    },
+    {
+      "summary": "On April 6, 1996, the first Major League Soccer match was played in San Jose. The league has grown significantly, expanding from 10 to 20 teams by 2015.",
+      "prompt_tokens": 372,
+      "gen_tokens": 47,
+      "ttft_s": 4.068945792037994,
+      "decode_tok_s": 7.797309010553874,
+      "rouge1": 0.21428571428571427,
+      "rouge2": 0.037037037037037035,
+      "rougeL": 0.14285714285714285
+    },
+    {
+      "summary": "Bafetimbi Gomis collapsed during a Premier League match but is now feeling well. He was treated on the pitch and spent the night in hospital as a precaution. Swansea confirmed Gomis was fine and had undergone medical tests.",
+      "prompt_tokens": 372,
+      "gen_tokens": 50,
+      "ttft_s": 1.3076140829361975,
+      "decode_tok_s": 7.710374970381358,
+      "rouge1": 0.32098765432098764,
+      "rouge2": 0.10126582278481013,
+      "rougeL": 0.2222222222222222
+    }
+  ]
+}
