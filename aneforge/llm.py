@@ -67,12 +67,13 @@ def rope(x: Tensor, cos, sin) -> Tensor:
 
 
 def _repeat_kv(k: Tensor, g: int) -> Tensor:
-  """Grouped-query repeat: [1, KV, S, dh] -> [1, KV*g, S, dh], each kv head repeated `g` times (via a 0/1 expansion matmul; any `g`)."""
+  """Grouped-query repeat: [1, KV, S, dh] -> [1, KV*g, S, dh], each kv head repeated `g` times (a 0/1 expansion
+  matmul on the KV axis; any `g`). S and dh stay separate axes -- flattening them into one (S*dh) trips the ANE
+  65536 per-axis limit, capping context at S*dh <= 65536 (e.g. 512 at dh=128)."""
   if g == 1: return k
   _, KV, S, dh = k.shape
-  M = np.repeat(np.eye(KV, dtype=np.float16), g, axis=0)        # [KV*g, KV]: M[h, kv] = 1 iff kv == h // g
-  k2 = k.reshape(KV, S * dh).transpose([1, 0])                  # [S*dh, KV]
-  return k2.linear(M).transpose([1, 0]).reshape(1, KV * g, S, dh)
+  Mx = np.repeat(np.eye(KV, dtype=np.float16), g, axis=0)       # [KV*g, KV]: Mx[h, kv] = 1 iff kv == h // g
+  return k.reshape(KV, S, dh).transpose([1, 2, 0]).linear(Mx).transpose([2, 0, 1]).reshape(1, KV * g, S, dh)
 
 
 def _causal_attn(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
@@ -138,11 +139,12 @@ def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin, ls: LayerSpec 
 
 
 def _repeat_kv3(k: Tensor, g: int) -> Tensor:
-  """Grouped-query repeat for the decode cache: [KV, M, dh] -> [KV*g, M, dh] (0/1 expansion matmul)."""
+  """Grouped-query repeat for the decode cache: [KV, M, dh] -> [KV*g, M, dh] (0/1 expansion matmul on the KV
+  axis). M and dh stay separate axes -- flattening to M*dh trips the ANE 65536 per-axis limit (context cap
+  M*dh <= 65536, i.e. 512 at dh=128)."""
   if g == 1: return k
-  KV, M, dh = k.shape
-  Mx = np.repeat(np.eye(KV, dtype=np.float16), g, axis=0)
-  return k.reshape(KV, M * dh).transpose([1, 0]).linear(Mx).transpose([1, 0]).reshape(KV * g, M, dh)
+  Mx = np.repeat(np.eye(k.shape[0], dtype=np.float16), g, axis=0)
+  return k.transpose([1, 2, 0]).linear(Mx).transpose([2, 0, 1])   # [KV,M,dh]->[M,dh,KV]->[M,dh,KV*g]->[KV*g,M,dh]
 
 
 def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict, M: int):

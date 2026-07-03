@@ -65,6 +65,12 @@ def test_segmented_decode_matches_single():  # splitting the decode across chunk
   assert m2.generate([1, 2, 3], max_new_tokens=6) == out1, "segmented decode diverged from single-program"
 
 @requires_ane
+def test_attention_context_above_512():  # M*dh > 65536 formerly tripped the ANE per-axis limit in the GQA repeat
+  cfg = LlamaConfig(dim=256, n_layers=2, n_heads=2, n_kv_heads=1, ffn_dim=128, vocab=48)   # dh=128 -> old cap M=512
+  out = _random_model(cfg).generate([1, 2, 3, 4], max_new_tokens=4, max_len=600)           # M=600 -> M*dh=76800
+  assert len(out) == 4 and all(0 <= t < cfg.vocab for t in out)
+
+@requires_ane
 def test_batched_prefill_matches_token_by_token():  # batched prefill (KV-bridge -> seed -> decode) == token-by-token
   cfg = LlamaConfig(dim=64, n_layers=4, n_heads=4, n_kv_heads=2, ffn_dim=128, vocab=48)
   prompt = list(range(1, 9))
