@@ -91,8 +91,13 @@ class SummarizeSUT:
     """An aneforge LLM (chunked ANE decode) + its HF tokenizer, wrapped to summarize one article and time it."""
     def __init__(self, model_path, compress=None, max_input=512, max_new=96):
         import aneforge as af
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer, GenerationConfig
         self.tok = AutoTokenizer.from_pretrained(model_path)
+        try:                                                   # stop on the model's FULL eos set, like vLLM/MLPerf --
+            e = GenerationConfig.from_pretrained(model_path).eos_token_id   # Llama-3.1: [128001, 128008, 128009], not
+            self.eos = list(e) if isinstance(e, (list, tuple)) else [e]     # just the tokenizer's <|eot_id|> (128009),
+        except Exception:                                                   # which never fires in completion mode
+            self.eos = [self.tok.eos_token_id]
         self.model = af.load_llm(model_path, compress=compress)
         self.max_input, self.max_new = max_input, max_new
         self.prefill_pad = max_input + 96          # fixed bucket so batched prefill compiles once, reused per article
@@ -109,7 +114,7 @@ class SummarizeSUT:
         t0 = time.perf_counter()
         out = self.model.generate(list(ids), max_new_tokens=self.max_new,
                                   max_len=self.prefill_pad + self.max_new,   # fixed bucket -> decode compiles ONCE
-                                  eos_id=self.tok.eos_token_id, temperature=0.0, prefill_pad=self.prefill_pad,
+                                  eos_id=self.eos, temperature=0.0, prefill_pad=self.prefill_pad,
                                   on_token=lambda _t: times.append(time.perf_counter()))
         summary = _clean(self.tok.decode(out, skip_special_tokens=True))
         ttft = (times[0] - t0) if times else float("nan")
@@ -117,6 +122,16 @@ class SummarizeSUT:
         tok_s = dtoks / (times[-1] - times[0]) if dtoks > 0 else float("nan")
         return {"summary": summary, "prompt_tokens": len(ids), "gen_tokens": len(out),
                 "ttft_s": ttft, "decode_tok_s": tok_s}
+
+
+def _save(out, name, rows):
+    """Write the result JSON (mean ROUGE + per-row summary/reference). Called at checkpoints and at the end."""
+    n = len(rows)
+    mean = {k: sum(x[k] for x in rows) / n for k in ("rouge1", "rouge2", "rougeL")} if n else {}
+    mtok = (sum(x["decode_tok_s"] for x in rows) / n) if n else float("nan")
+    with open(out, "w") as f:
+        json.dump({"model": name, "n": n, "mean_rouge": mean, "mean_decode_tok_s": mtok, "rows": rows},
+                  f, indent=2, allow_nan=True)
 
 
 def main():
@@ -135,6 +150,9 @@ def main():
     data = load_cnndm(args.n)
     print(f"summarizing {len(data)} CNN/DailyMail articles ...\n", flush=True)
 
+    out = args.out or os.path.join(Path(__file__).resolve().parent, "results", "llm_summarize_preview.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+
     rows = []
     for i, (article, ref) in enumerate(data):
         try:
@@ -151,6 +169,8 @@ def main():
               f"TTFT {r['ttft_s']:.2f}s, {r['decode_tok_s']:.1f} tok/s, "
               f"R1 {sc['rouge1']:.3f} R2 {sc['rouge2']:.3f} RL {sc['rougeL']:.3f}", flush=True)
         print(f"      summary: {r['summary'][:220]}", flush=True)
+        if (i + 1) % 20 == 0:
+            _save(out, sut.name, rows)               # checkpoint so a long run's partial results survive teardown
 
     n = len(rows)
     mean = {k: sum(x[k] for x in rows) / n for k in ("rouge1", "rouge2", "rougeL")}
@@ -158,12 +178,7 @@ def main():
     print(f"\nmean ROUGE-1 {mean['rouge1']:.3f}  ROUGE-2 {mean['rouge2']:.3f}  ROUGE-L {mean['rougeL']:.3f}"
           f"   |  mean decode {mtok:.1f} tok/s   ({sut.name}, {n} articles, ROUGE: {_ROUGE})")
     print("(subset preview -- not the official 5000-article MLPerf gate)")
-
-    out = args.out or os.path.join(Path(__file__).resolve().parent, "results", "llm_summarize_preview.json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "w") as f:
-        json.dump({"model": sut.name, "n": n, "mean_rouge": mean, "mean_decode_tok_s": mtok, "rows": rows},
-                  f, indent=2, allow_nan=True)
+    _save(out, sut.name, rows)
     print(f"wrote {out}")
     return 0
 

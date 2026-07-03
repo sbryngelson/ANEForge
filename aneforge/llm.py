@@ -373,6 +373,7 @@ class LlamaPrefill:
     (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
     cfg = self.cfg; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
+    eos = {int(eos_id)} if isinstance(eos_id, int) else set(int(e) for e in (eos_id or ()))   # any-of stop set
     d = self._decoder(M); chunks = d["chunks"]
     for c in chunks:                                           # reset every mixer's resident state for this generation
       for name, shape in c["p"]["states"].items():
@@ -398,7 +399,7 @@ class LlamaPrefill:
       logits0, kv = self._prefill_seed(prompt, prefill_pad)
       self._seed_cache(d, kv, len(prompt))
       cur = self._sample(logits0[0], temperature, top_p, top_k); out.append(cur)
-      if cur == eos_id: return out
+      if cur in eos: return out
       if on_token is not None: on_token(cur)
       pos = len(prompt)
     else:
@@ -407,7 +408,7 @@ class LlamaPrefill:
     while len(out) < max_new_tokens:                           # decode
       if pos >= M - 1: break                                   # cache full
       nxt = self._sample(self._logits(step(cur, pos)), temperature, top_p, top_k); out.append(nxt)
-      if nxt == eos_id: break
+      if nxt in eos: break
       if on_token is not None: on_token(nxt)                   # stream the token
       cur, pos = nxt, pos + 1
     return out
