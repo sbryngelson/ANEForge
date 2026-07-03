@@ -20,6 +20,40 @@ the ANE, clean top-1 accuracy target).
   `pip install mlcommons-loadgen`. On this hardware the two agree: real-LoadGen ResNet-50 SingleStream
   p90 = 0.773 ms vs lite p90 = 0.771 ms (ratio 0.998), so the lite numbers track LoadGen's.
 
+## One-command repro (no dataset)
+
+```bash
+./bench/mlperf/repro.sh
+```
+
+Compiles the MLPerf reference ResNet-50 onto the Apple Neural Engine and prints (1) the SingleStream p90
+latency and (2) ANE fp16 / int8 vs onnxruntime fp32 fidelity on MLPerf-scale inputs (mean-subtracted, the
+range where fp16 rounding matters). ~1-2 min, no ImageNet, runs on any Apple Silicon Mac; uses the real
+MLCommons LoadGen if `mlcommons-loadgen` is installed, else the lite harness. For the full 50,000-image
+accuracy + upstream `submission_checker` path:
+
+```bash
+./bench/mlperf/repro.sh --full --imagenet-val ~/Models/mlperf/val --val-map val_map.txt
+```
+
+## Where the ANE lands (vs published MLPerf)
+
+`bench/mlperf/compare/compare.py` places the ANE's ResNet-50 numbers next to **official** MLPerf Inference
+results. Every competitor number is sourced to a `mlcommons/inference_results_*` path in
+`compare/competitors.csv`; the ANE row is **unofficial** and self-measured.
+
+| System | Category | MLPerf round | SingleStream p90 (ms) | Offline (samples/s) | Power class |
+| --- | --- | --- | --- | --- | --- |
+| Apple Neural Engine (Apple M-series) *(unofficial -- self-measured)* | Edge | unofficial | 0.773 | 1,149 | single-digit W (SoC block) |
+| NVIDIA Jetson AGX Orin | Edge | v3.1 | 0.640 | 6,424 | 15-60 W module |
+| NVIDIA H100-SXM-80GB (1 GPU) | Datacenter | v4.0 | -- | 88,714 | 350-700 W board |
+
+On **SingleStream latency** the ANE (0.773 ms) is within ~1.2x of the Jetson AGX Orin (0.640 ms); on
+**Offline throughput** it trails (the ANE program is batch-1, latency-bound), at a fraction of the power.
+Run `compare.py` for the full legend: the power class is a device power envelope, not a MLPerf Power
+measurement, and the rounds differ because ResNet-50 edge submissions from the big vendors thinned out
+after ~v3.1.
+
 ## Run it
 
 ```bash
