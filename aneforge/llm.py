@@ -373,7 +373,7 @@ class LlamaPrefill:
     (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
     cfg = self.cfg; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
-    eos = {int(eos_id)} if isinstance(eos_id, int) else set(int(e) for e in (eos_id or ()))   # any-of stop set
+    eos = {int(eos_id)} if isinstance(eos_id, int) else {int(e) for e in (eos_id or ())}   # any-of stop set
     d = self._decoder(M); chunks = d["chunks"]
     for c in chunks:                                           # reset every mixer's resident state for this generation
       for name, shape in c["p"]["states"].items():
