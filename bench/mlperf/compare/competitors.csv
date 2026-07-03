@@ -1,0 +1,4 @@
+system,vendor,category,mlperf_round,official,singlestream_ms,offline_qps,power_class,source
+Apple Neural Engine (Apple M-series),Apple / ANEForge,Edge,unofficial,no,0.773,1149,single-digit W (SoC block),self-measured via bench/mlperf under real MLCommons LoadGen (VALID); results/resnet50_loadgen_singlestream.json
+NVIDIA Jetson AGX Orin,NVIDIA,Edge,v3.1,yes,0.640,6423.63,15-60 W module,mlcommons/inference_results_v3.1 closed/NVIDIA/results/Orin_TRT/resnet50 (SingleStream + Offline)
+NVIDIA H100-SXM-80GB (1 GPU),NVIDIA,Datacenter,v4.0,yes,,88714.3,350-700 W board,mlcommons/inference_results_v4.0 closed/NVIDIA/results/DGX-H100_H100-SXM-80GBx1_TRT/resnet50/Offline

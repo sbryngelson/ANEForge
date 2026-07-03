@@ -83,6 +83,7 @@ nav:
       - Op catalog: op-catalog.md
       - ONNX import: onnx.md
       - LLMs (decode, MoE, speculative): llm.md
+      - MLPerf (ResNet-50 on the ANE): mlperf.md
   - API reference:
       - Overview: api/index.md
       - Graph & operators: api/graph.md
