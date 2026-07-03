@@ -27,14 +27,17 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-_PROMPT = ("Summarize the news article below in three short sentences. State only the key facts from the "
-           "article; add no commentary, and do not begin with phrases like \"The article\" or \"Summary\".\n\n"
-           "{article}")
+# MLPerf's exact reference prompt for the Llama3.1-8B CNN/DailyMail task (mlcommons/inference
+# language/llama3.1-8b/download_cnndm.py), fed as a plain COMPLETION string (no chat template) -- the model just
+# continues after "Summary:", which is why it neither refuses nor adds a "Here is a summary" preamble.
+_PROMPT = ("Summarize the following news article in 128 tokens. Please output the summary only, without any "
+           "other text.\n\nArticle:\n{article}\n\nSummary:")
 
 
 def _clean(text):
-    """Strip a leading 'Summary:' / '**Summary:**' preamble and markdown bold the chat model tends to add."""
-    t = re.sub(r"^\**\s*summary\s*:?\**\s*", "", text.strip(), flags=re.I)
+    """Strip a leading chat preamble ('Here is a 3-sentence summary:', 'Sure,', '**Summary:**') + markdown bold."""
+    t = re.sub(r"^\**\s*(here (is|are)[^\n:]*|sure[^\n:]*|below is[^\n:]*|summary)\s*:?\**\s*\n*", "",
+               text.strip(), flags=re.I)
     return t.replace("**", "").strip()
 
 
@@ -65,17 +68,11 @@ def _rouge_inline(pred, ref):
     return {"rouge1": f1n(1), "rouge2": f1n(2), "rougeL": rougeL}
 
 
-try:
-    from rouge_score import rouge_scorer as _rs
-    _SCORER = _rs.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
-
-    def rouge(pred, ref):
-        s = _SCORER.score(ref, pred)
-        return {k: s[k].fmeasure for k in ("rouge1", "rouge2", "rougeL")}
-    _ROUGE = "rouge_score (stemmer)"
-except Exception:
-    rouge = _rouge_inline
-    _ROUGE = "inline (no stemmer)"
+# In-harness scoring is the self-contained inline ROUGE: the canonical `rouge_score` (via nltk) cannot share a
+# process with the ANE dispatch -- it loads fine but SEGFAULTS at dispatch time. Score canonically out of process
+# with `score_rouge.py` (reads the summary/reference pairs this harness writes to the result JSON).
+rouge = _rouge_inline
+_ROUGE = "inline (no stemmer); canonical via score_rouge.py"
 
 
 def load_cnndm(n):
@@ -104,18 +101,14 @@ class SummarizeSUT:
     def _prompt_ids(self, article):
         art = self.tok(article, truncation=True, max_length=self.max_input)["input_ids"]
         text = _PROMPT.format(article=self.tok.decode(art, skip_special_tokens=True))
-        msgs = [{"role": "user", "content": text}]
-        try:                                                 # Qwen3: no chain-of-thought, just the summary
-            s = self.tok.apply_chat_template(msgs, add_generation_prompt=True, enable_thinking=False, tokenize=False)
-        except TypeError:
-            s = self.tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
-        return [int(t) for t in self.tok(s, add_special_tokens=False)["input_ids"]]   # template already has specials
+        return [int(t) for t in self.tok(text)["input_ids"]]   # MLPerf: plain encode (BOS added), NO chat template
 
     def summarize(self, article):
         ids = self._prompt_ids(article)
         times = []
         t0 = time.perf_counter()
-        out = self.model.generate(list(ids), max_new_tokens=self.max_new, max_len=len(ids) + self.max_new,
+        out = self.model.generate(list(ids), max_new_tokens=self.max_new,
+                                  max_len=self.prefill_pad + self.max_new,   # fixed bucket -> decode compiles ONCE
                                   eos_id=self.tok.eos_token_id, temperature=0.0, prefill_pad=self.prefill_pad,
                                   on_token=lambda _t: times.append(time.perf_counter()))
         summary = _clean(self.tok.decode(out, skip_special_tokens=True))
@@ -144,9 +137,16 @@ def main():
 
     rows = []
     for i, (article, ref) in enumerate(data):
-        r = sut.summarize(article)
+        try:
+            r = sut.summarize(article)
+        except RuntimeError as e:                    # occasional transient ANE "Program Inference error"; retry once
+            print(f"[{i + 1}/{len(data)}] ANE error, retry: {str(e).splitlines()[0][:60]}", flush=True)
+            try:
+                r = sut.summarize(article)
+            except RuntimeError:
+                print(f"[{i + 1}/{len(data)}] skipped (ANE error twice)", flush=True); continue
         sc = rouge(r["summary"], ref)
-        rows.append({**r, **sc})
+        rows.append({**r, **sc, "reference": ref})   # keep the reference so score_rouge.py can re-score canonically
         print(f"[{i + 1}/{len(data)}] prompt {r['prompt_tokens']} tok, gen {r['gen_tokens']} tok, "
               f"TTFT {r['ttft_s']:.2f}s, {r['decode_tok_s']:.1f} tok/s, "
               f"R1 {sc['rouge1']:.3f} R2 {sc['rouge2']:.3f} RL {sc['rougeL']:.3f}", flush=True)

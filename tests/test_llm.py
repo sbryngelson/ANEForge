@@ -64,6 +64,24 @@ def test_segmented_decode_matches_single():  # splitting the decode across chunk
   assert len(m2._layer_chunks()) == cfg.n_layers
   assert m2.generate([1, 2, 3], max_new_tokens=6) == out1, "segmented decode diverged from single-program"
 
+def test_llama3_rope_scaling():  # Llama-3.1 "llama3" rope_scaling rescales low freqs; must match HF and be off by default
+  from aneforge.llm import rope_tables, _llama3_rope_scale
+  sc = {"factor": 8.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0,
+        "original_max_position_embeddings": 8192, "rope_type": "llama3"}
+  inv = 1.0 / (500000.0 ** (np.arange(0, 128, 2) / 128))
+  scaled = _llama3_rope_scale(inv, sc)
+  # HF _compute_llama3_parameters math, inline:
+  f, lo, hi, old = 8.0, 1.0, 4.0, 8192.0
+  wl = 2 * np.pi / inv
+  il = np.where(wl > old / lo, inv / f, inv)
+  smd = (1 - (old / wl - lo) / (hi - lo)) * il / f + (old / wl - lo) / (hi - lo) * il
+  ref = np.where(~(wl < old / hi) * ~(wl > old / lo), smd, il)
+  assert np.max(np.abs(scaled - ref)) < 1e-12, "llama3 rope scaling diverges from HF"
+  assert scaled[-1] < inv[-1] and abs(scaled[0] - inv[0]) < 1e-9   # low freq divided down; high freq unchanged
+  c_off, _ = rope_tables(16, 128, 500000.0)                        # scaling off by default -> unchanged tables
+  c_on, _ = rope_tables(16, 128, 500000.0, scaling=sc)
+  assert not np.allclose(c_off, c_on), "scaling did not change the rope tables"
+
 @requires_ane
 def test_attention_context_above_512():  # M*dh > 65536 formerly tripped the ANE per-axis limit in the GQA repeat
   cfg = LlamaConfig(dim=256, n_layers=2, n_heads=2, n_kv_heads=1, ffn_dim=128, vocab=48)   # dh=128 -> old cap M=512
