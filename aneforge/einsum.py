@@ -58,6 +58,8 @@ def _expand_ellipsis(equation: str, operands) -> str:
     singles = "".join(sorted(ch for ch, c in counts.items() if c == 1 and ch not in batch))
     rhs = batch + singles                       # numpy: ellipsis dims first, then once-only letters
   else:
+    if E and "..." not in rhs:
+      raise ValueError("einsum: inputs carry '...' dims but the output subscript omits '...' (numpy rejects this)")
     rhs = rhs.replace("...", batch)
   return ",".join(new_ins) + "->" + rhs
 

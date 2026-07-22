@@ -255,8 +255,3 @@ def test_solve_triangular_large_entries():
   x = r.standard_normal(n); b = T @ x
   y = L.solve_triangular(f16(T), f16(b))
   assert np.isfinite(y).all() and relerr(y, x) <= 1e-2
-
-@pytest.mark.parametrize("cond,tol", [(1e1, 2e-2), (1e2, 8e-2)])
-def test_bicgstab_general_solve(cond, tol):
-  A = _square(10, cond, int(cond) + 5); x = np.random.default_rng(3).standard_normal(10)
-  assert relerr(L.bicgstab(f16(A), f16(A @ x), iters=40), x) <= tol

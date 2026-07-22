@@ -572,39 +572,7 @@ def _diag_dominant(n, cond_scale, seed):
   return A16, b16, xref
 
 
-# Determinants, pseudoinverse, triangular solve, BiCGSTAB - composed from the routines above.
-
-def bicgstab(A, b, iters: int = 40):
-  """Solve A x = b for general (nonsymmetric) A by BiCGSTAB (van der Vorst 1992) with fixed `iters`,
-  the recurrence unrolled into one program. Denominator dots carry a small additive guard; fp16
-  breakdown surfaces as a non-finite iterate and falls back to zeros like the other solvers."""
-  A16 = np.asarray(A, f16); n = A16.shape[0]
-  AT = np.ascontiguousarray(A16.T); onen = np.ones((n, 1), f16)
-  b0 = np.asarray(b, np.float64).reshape(-1)
-  bn = float(np.linalg.norm(b0)) or 1.0                    # unit-scale b: keeps iterates in fp16 range
-  b16 = (b0 / bn).astype(f16).reshape(1, n)
-  bT = af.input((1, n))
-  dot = lambda u, v: (u * v) @ onen
-  Ax = lambda v: v @ AT
-  x, r = bT * 0.0, bT
-  rhat = bT                                                # fixed shadow residual r0^
-  rho, p = dot(bT, bT), bT
-  for _ in range(iters):
-    v = Ax(p)
-    alpha = rho / dot(rhat, v).adds(1e-7)
-    s = r - alpha * v
-    t = Ax(s)
-    omega = dot(t, s) / dot(t, t).adds(1e-7)
-    x = x + alpha * p + omega * s
-    r = s - omega * t
-    rho_new = dot(rhat, r)
-    beta = (rho_new / rho.adds(1e-7)) * (alpha / omega.adds(1e-7))
-    p = r + beta * (p - omega * v)
-    rho = rho_new
-  y = _solve_once(x, b16).ravel()
-  if not np.isfinite(y).all(): y = np.zeros(n)
-  return (y * bn).astype(np.float32)
-
+# Determinants, pseudoinverse, triangular solve - composed from the routines above.
 
 def solve_triangular(A, b, lower: bool = True):
   """Solve T x = b for triangular T by substitution on the ANE, without forming the inverse

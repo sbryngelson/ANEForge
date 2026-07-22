@@ -31,8 +31,13 @@ def test_implicit_output_puts_batch_first():
   # numpy implicit mode: ellipsis dims lead the output
   _check("...ij,...jk", (2, 4, 5), (2, 5, 3))
 
-def test_explicit_output_can_reduce_batch():
-  _check("...i,...i->i", (3, 4), (3, 4))
+def test_empty_ellipsis_output_without_dots():
+  # E=0: the ellipsis matches zero dims, so an output without '...' is fine (numpy allows this)
+  _check("...i,...i->i", (4,), (4,))
+
+def test_output_dropping_nonempty_ellipsis_rejects():  # numpy semantics: ValueError
+  with pytest.raises(ValueError):
+    einsum("...i,...i->i", af.input((3, 4)), af.input((3, 4)))
 
 def test_expansion_is_pure_rewrite():
   class _T:  # shape-only stand-in
