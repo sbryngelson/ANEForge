@@ -312,6 +312,29 @@ def _relerr(y, ref):
   return float(d / (n + 1e-30))
 
 
+def welch(x, fs: float = 1.0, nperseg: int = 256, noverlap=None, window: str = "hann",
+          scaling: str = "density"):
+  """Welch power spectral density from the on-ANE `stft`: window, segment, average the squared
+  magnitudes, normalize. Matches `scipy.signal.welch(..., detrend=False)` (no per-segment
+  detrending). `scaling`: 'density' (1/(fs*sum(w^2))) or 'spectrum' (1/sum(w)^2); the one-sided
+  spectrum doubles interior bins. Returns (f, Pxx)."""
+  if nperseg & (nperseg - 1):
+    raise ValueError("welch: nperseg must be a power of two (the staged on-ANE FFT pads to one, which would shift the bins)")
+  if noverlap is None: noverlap = nperseg // 2
+  w = get_window(window, nperseg)
+  Zr, Zi = stft(x, win=nperseg, hop=nperseg - noverlap, window=window)   # [n_freq, n_frames], FFTs on the engine
+  P = (Zr.astype(np.float64) ** 2 + Zi.astype(np.float64) ** 2).mean(axis=1)
+  if scaling == "density":
+    P /= fs * float(np.sum(w.astype(np.float64) ** 2))
+  elif scaling == "spectrum":
+    P /= float(np.sum(w.astype(np.float64))) ** 2
+  else:
+    raise ValueError(f"welch: scaling={scaling!r} (use 'density' or 'spectrum')")
+  P[1:-1 if nperseg % 2 == 0 else None] *= 2.0             # one-sided: double all but DC (and Nyquist if present)
+  f = np.arange(P.shape[0], dtype=np.float64) * (fs / nperseg)
+  return f, P.astype(np.float32)
+
+
 def _selftest():
   ss: Any = None  # pre-bound so pyright sees it as bound below (guarded by have_scipy)
   try:

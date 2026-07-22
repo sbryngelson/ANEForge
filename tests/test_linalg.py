@@ -215,3 +215,43 @@ def test_lu_pivoted():                  # P A = L U with on-engine argmax pivoti
   assert relerr(P @ A, Lp @ Up) <= 3e-3
   assert np.allclose(P.sum(0), 1) and np.allclose(P.sum(1), 1)   # P is a permutation
   assert np.allclose(np.tril(Up, -1), 0)                          # U upper-triangular
+
+
+# ------------- det/slogdet, pinv, solve_triangular, bicgstab ------------- #
+
+@pytest.mark.parametrize("cond", [1e1, 1e2])
+def test_det_matches_numpy(cond):
+  A = _square(8, cond, int(cond) + 41)
+  ref = np.linalg.det(A)
+  assert abs(L.det(f16(A)) - ref) / (abs(ref) + 1e-30) <= 5e-2
+
+def test_slogdet_matches_numpy():
+  A = _square(8, 1e2, 43) * 3.0                       # scaled so the raw product is fp16-hostile
+  sr, lr = np.linalg.slogdet(A)
+  sg, lg = L.slogdet(f16(A))
+  assert sg == sr and abs(lg - lr) <= 5e-2 * max(1.0, abs(lr))
+
+def test_pinv_rank_k_matches_numpy():
+  r = np.random.default_rng(7)
+  Ul = np.linalg.qr(r.standard_normal((40, 6)))[0]; Vr = np.linalg.qr(r.standard_normal((30, 6)))[0]
+  A = (Ul * np.geomspace(8, 1, 6)) @ Vr.T             # exactly rank 6
+  P = L.pinv(f16(A), k=6)
+  assert relerr(P, np.linalg.pinv(A)) <= 5e-2
+  assert relerr(A @ P @ A, A) <= 5e-2                 # Moore-Penrose: A P A = A
+
+@pytest.mark.parametrize("lower", [True, False])
+def test_solve_triangular(lower):
+  r = np.random.default_rng(11); n = 8
+  T = np.tril(r.standard_normal((n, n))) + np.eye(n) * 4.0
+  if not lower: T = T.T
+  x = r.standard_normal(n); b = T @ x
+  assert relerr(L.solve_triangular(f16(T), f16(b), lower=lower), x) <= 5e-3
+
+def test_solve_triangular_large_entries():
+  # entries above the slice-x16 saturation threshold: the routed accessor keeps the solve finite
+  r = np.random.default_rng(12); n = 6
+  T = np.tril(r.standard_normal((n, n))) + np.eye(n) * 6.0
+  T = T / np.abs(T).max() * 5000.0
+  x = r.standard_normal(n); b = T @ x
+  y = L.solve_triangular(f16(T), f16(b))
+  assert np.isfinite(y).all() and relerr(y, x) <= 1e-2
