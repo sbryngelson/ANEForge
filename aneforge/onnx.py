@@ -625,6 +625,12 @@ def _avgpool(node, ins, a, i):
 def _gap(node, ins, a, i): return ins[0].mean((2, 3))     # keepdims -> [N,C,1,1]
 @onnx_op("GlobalMaxPool")
 def _gmp(node, ins, a, i): return ins[0].amax((2, 3))     # keepdims -> [N,C,1,1]
+@onnx_op("GlobalLpPool")
+def _glp(node, ins, a, i):
+  p = int(a.get("p", 2))
+  if p == 1: return ins[0].l1_norm((2, 3))                # keepdims -> [N,C,1,1]
+  if p == 2: return ins[0].sum_square((2, 3)).sqrt()
+  raise NotImplementedError(f"ONNX GlobalLpPool: only p=1 and p=2 are supported (got p={p})")
 
 @onnx_op("Gemm")
 def _gemm(node, ins, a, i):

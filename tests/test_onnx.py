@@ -911,6 +911,23 @@ def test_global_max_pool_matches_onnxruntime():
   got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
   assert np.abs(got - onnx_run(m, x)).max() < 1e-2
 
+def test_global_lp_pool_builds():
+  m = _model([helper.make_node("GlobalLpPool", ["x"], ["y"], p=1)], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 1, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3, 1, 1) and out.op == "reduce_l1_norm"
+
+def test_global_lp_pool_matches_onnxruntime():
+  rng = np.random.default_rng(2); x = rng.standard_normal((1, 3, 8, 8)).astype(np.float32)
+  for p in (1, 2):
+    m = _model([helper.make_node("GlobalLpPool", ["x"], ["y"], p=p)], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 1, 1])])
+    got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+    ref = onnx_run(m, x)
+    err = np.abs(got - ref).max() / (np.abs(ref).max() + 1e-12)
+    assert err < 1e-2, f"p={p}: relerr {err:.2e}"
+
+def test_global_lp_pool_rejects_other_p():
+  m = _model([helper.make_node("GlobalLpPool", ["x"], ["y"], p=3)], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 1, 1])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
 def test_comparison_ops_build():
   for op, want in [("Equal", "equal"), ("Greater", "greater"), ("GreaterOrEqual", "greater_equal"),
                    ("Less", "less"), ("LessOrEqual", "less_equal")]:
