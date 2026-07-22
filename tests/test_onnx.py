@@ -1086,3 +1086,62 @@ def test_slice_partial_reverse_raises():  # only full-axis flips are supported a
   m = _model([helper.make_node("Slice", ["x", "st", "en", "ax", "sp"], ["y"])],
              [_vi("x", [1, 8])], [_vi("y", [1, 3])], inits=[st, en, ax, sp])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+
+# -- tier-2: Pad (4 modes), Cast, Shrink, OneHot -- #
+
+def test_pad_modes_match_onnxruntime():  # constant/edge/reflect at opset 13, wrap at 21
+  rng = np.random.default_rng(20); x = rng.standard_normal((1, 2, 4, 4)).astype(np.float32)
+  pd = onnx.numpy_helper.from_array(np.array([0, 0, 1, 2, 0, 0, 2, 1], np.int64), "pd")
+  cv = onnx.numpy_helper.from_array(np.array(1.5, np.float32), "cv")
+  for mode, opset in (("constant", 13), ("edge", 13), ("reflect", 13), ("wrap", 21)):
+    ins_names = ["x", "pd", "cv"] if mode == "constant" else ["x", "pd"]
+    inits = [pd, cv] if mode == "constant" else [pd]
+    m = _model([helper.make_node("Pad", ins_names, ["y"], mode=mode)],
+               [_vi("x", [1, 2, 4, 4])], [_vi("y", [1, 2, 7, 7])], inits=inits, opset=opset)
+    got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+    ref = np.asarray(onnx_run(m, x))
+    assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-2, f"mode={mode}"
+
+def test_pad_axes_input_builds():  # opset 18 axes input restricts which dims pad
+  pd = onnx.numpy_helper.from_array(np.array([1, 1], np.int64), "pd")
+  axc = onnx.numpy_helper.from_array(np.array([3], np.int64), "ax")
+  m = _model([helper.make_node("Pad", ["x", "pd", "", "ax"], ["y"], mode="edge")],
+             [_vi("x", [1, 2, 4, 4])], [_vi("y", [1, 2, 4, 6])], inits=[pd, axc], opset=18)
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 2, 4, 6)
+
+def test_cast_float_identity_and_const_fold():
+  m = _model([helper.make_node("Cast", ["x"], ["c"], to=TensorProto.FLOAT16),
+              helper.make_node("Relu", ["c"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  ins, out = af.onnx_to_tensor(m); assert out.op == "relu" and out.srcs[0] is ins[0]   # cast was identity
+  c = onnx.numpy_helper.from_array(np.array([1.7, -2.7], np.float32), "c0")
+  m = _model([helper.make_node("Cast", ["c0"], ["ci"], to=TensorProto.INT64),
+              helper.make_node("Cast", ["ci"], ["cf"], to=TensorProto.FLOAT),
+              helper.make_node("Add", ["x", "cf"], ["y"])], [_vi("x", [1, 2])], [_vi("y", [1, 2])], inits=[c])
+  x = np.zeros((1, 2), np.float32)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.array([[1.0, -2.0]])).max() < 1e-3   # trunc toward zero
+
+def test_cast_tensor_to_int_truncates():  # sign(x)*floor(|x|) matches ORT's toward-zero truncation
+  x = np.array([[1.7, -1.7, 2.2, -0.4]], np.float32)
+  m = _model([helper.make_node("Cast", ["x"], ["ci"], to=TensorProto.INT32),
+              helper.make_node("Cast", ["ci"], ["y"], to=TensorProto.FLOAT)], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-3
+
+def test_shrink_matches_onnxruntime():
+  x = np.linspace(-2.0, 2.0, 16).astype(np.float32).reshape(1, 16)
+  m = _model([helper.make_node("Shrink", ["x"], ["y"], lambd=0.7, bias=0.3)], [_vi("x", [1, 16])], [_vi("y", [1, 16])])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-2
+
+def test_onehot_tensor_matches_onnxruntime():
+  idx = np.array([[0, 2, 1, 3]], np.float32)   # fed as fp16 to the ANE, int64 to ORT
+  dep = onnx.numpy_helper.from_array(np.array(4, np.int64), "dep")
+  val = onnx.numpy_helper.from_array(np.array([0.25, 2.0], np.float32), "val")
+  m = _model([helper.make_node("OneHot", ["x", "dep", "val"], ["y"], axis=-1)],
+             [helper.make_tensor_value_info("x", TensorProto.INT64, [1, 4])], [_vi("y", [1, 4, 4])], inits=[dep, val])
+  got = np.asarray(af.load_onnx(m)(idx.astype(np.float16))).astype(np.float32)
+  import onnxruntime
+  ref = np.asarray(onnxruntime.InferenceSession(m.SerializeToString()).run(None, {"x": idx.astype(np.int64)})[0])
+  assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-2

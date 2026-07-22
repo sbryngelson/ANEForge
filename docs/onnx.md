@@ -41,18 +41,18 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Category | ONNX ops |
 | --- | --- |
 | Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `Selu`, `Celu`, `Mish`, `Softsign`, `ThresholdedRelu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf`, `HardSigmoid`, `HardSwish` |
-| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported), `Abs`, `Neg`, `Sign`, `Reciprocal`, `Sin`, `Cos`, `Atan`, `Softplus`, `Floor`, `Ceil`, `Round`, `Min`, `Max`, `Sum`, `Mean` (variadic), `Where`, `Tile` |
+| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported), `Abs`, `Neg`, `Sign`, `Reciprocal`, `Sin`, `Cos`, `Atan`, `Softplus`, `Floor`, `Ceil`, `Round`, `Min`, `Max`, `Sum`, `Mean` (variadic), `Where`, `Tile`, `Shrink` |
 | Comparison / logic | `Equal`, `Greater`, `GreaterOrEqual`, `Less`, `LessOrEqual`, `Not` |
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool`, `GlobalMaxPool` |
 | Linear | `Gemm` (full `alpha`/`beta`/`transA`/`transB`), `MatMul`, `Einsum` (matmul-reducible equations) |
 | Normalization | `BatchNormalization`, `InstanceNormalization`, `LayerNormalization`, `GroupNormalization`, `RMSNormalization`, `LpNormalization` (p=1/2) |
-| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze` (incl. squeeze-all), `Unsqueeze`, `Concat`, `Split`, `Expand`, `SpaceToDepth`, `DepthToSpace`, `Slice` (step 1; step -1 as a full-axis flip), `Shape`, `Trilu` |
+| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze` (incl. squeeze-all), `Unsqueeze`, `Concat`, `Split`, `Expand`, `SpaceToDepth`, `DepthToSpace`, `Slice` (step 1; step -1 as a full-axis flip), `Shape`, `Trilu`, `Pad` (constant/edge/reflect/wrap) |
 | Normalization (cross-channel) | `LRN` |
 | Resampling | `Resize` (nearest / linear) |
 | Reduction | `ReduceMax`, `ReduceMin`, `ReduceSum`, `ReduceMean`, `ReduceL1`, `ReduceL2`, `ReduceLogSum`, `ReduceLogSumExp`, `ReduceSumSquare`, `CumSum` |
 | Indexing | `Gather` (static indices), `ArgMax`, `ArgMin`, `TopK` (2D, values only) |
 | Quantization | `DequantizeLinear`, `QuantizeLinear` (QDQ int8) |
-| Misc | `Softmax`, `LogSoftmax`, `Constant`, `ConstantOfShape`, `Range`, `EyeLike`, `Identity`, `Dropout` (inference no-op) |
+| Misc | `Softmax`, `LogSoftmax`, `Constant`, `ConstantOfShape`, `Range`, `EyeLike`, `Identity`, `Dropout` (inference no-op), `Cast` (import-level), `OneHot` (constant depth/values) |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
 `Shape`/`Gather`/dynamic-`Reshape` plumbing into static initializers before import.
@@ -103,6 +103,15 @@ mis-lower:
   pass `compress="int8"` to keep them on the ANE int8 weight datapath. Matches onnxruntime
   on-device (cosine ~1.0).
 - **Gelu:** exact erf-gelu only; `approximate="tanh"` raises.
+- **Boolean algebra has no ANE path.** `And`/`Or`/`Xor` cannot be implemented: MIL's
+  `logical_and`/`logical_or`/`logical_xor` (and general `cast`, which would allow a
+  bool->fp16 workaround) do not compile for the ANE backend (see the on-device MIL
+  vocabulary sweep). `IsNaN` is also out: fp16 NaN payloads do not survive the
+  datapath, so `x != x` reads false on-device. Comparisons and `Not` are the
+  supported boolean surface.
+- **Cast** folds constants and treats float->float on an activation as identity (the
+  engine computes fp16 regardless); float->int truncates toward zero as
+  `sign(x)*floor(|x|)`, exact within fp16 integer range.
 - **PRelu:** slope is a per-channel initializer (`[C]`, `[C,1,1]`, or scalar, flattened
   to `[C]`); input must be rank>=3 `[N,C,...]`.
 - **InstanceNormalization:** `[N,C,H,W]` input with `scale`/`B` initializers `[C]`.
