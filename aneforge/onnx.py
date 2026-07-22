@@ -129,10 +129,11 @@ def _run_nodes(g, vals, inits):
   for node in g.node:
     if node.op_type not in _ONNX:
       raise NotImplementedError(f"ONNX op '{node.op_type}' not supported")
-    ins = [vals.get(n) for n in node.input]
+    ins = [vals.get(n) if n else None for n in node.input]        # "" marks an omitted optional input
     outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
     outs = outs if isinstance(outs, (list, tuple)) else [outs]
-    for name, val in zip(node.output, outs): vals[name] = val
+    for name, val in zip(node.output, outs):
+      if name: vals[name] = val                                   # "" marks an unused optional output
 
 def _run_subgraph(sub, binding, inits):
   """Import a subgraph (If branch / Loop body): outer-scope names resolve per ONNX scoping, the
@@ -943,3 +944,116 @@ def _topk_h(node, ins, a, i):
   if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX TopK: data-dependent k (non-constant) not supported")
   k = int(np.asarray(ins[1]).ravel()[0])
   return _topk(x, k, largest=bool(int(a.get("largest", 1))))
+
+
+# -- recurrent layers: LSTM / GRU / RNN unrolled over the static sequence length -- #
+
+_RNN_DEFAULT_ACTS = {"LSTM": ["sigmoid", "tanh", "tanh"], "GRU": ["sigmoid", "tanh"], "RNN": ["tanh"]}
+
+def _rnn_prep(node, ins, a, n_gates):
+  """Shared RNN-family validation/unpacking. Returns (x, dirs, W, R, B, h0, c0, seq, batch, isz, H)."""
+  op = node.op_type; x = ins[0]
+  if not isinstance(x, Tensor): raise NotImplementedError(f"ONNX {op}: constant X not supported")
+  if int(a.get("layout", 0)): raise NotImplementedError(f"ONNX {op}: layout=1 not supported")
+  if a.get("clip") is not None: raise NotImplementedError(f"ONNX {op}: clip not supported")
+  acts = a.get("activations")
+  if acts is not None:
+    want = _RNN_DEFAULT_ACTS[op]
+    got = [(v.decode() if isinstance(v, bytes) else v).lower() for v in acts]
+    if got != want * (len(got) // len(want)) or len(got) % len(want):
+      raise NotImplementedError(f"ONNX {op}: non-default activations {got} not supported")
+  for k, what in ((5, "initial_h"), (6, "initial_c")):
+    if len(ins) > k and isinstance(ins[k], Tensor):
+      raise NotImplementedError(f"ONNX {op}: tensor {what} not supported (constant or absent only)")
+  seq, batch, isz = x.shape
+  H = int(a["hidden_size"])
+  d = _sattr(a, "direction", "forward")
+  dirs = {"forward": [False], "reverse": [True], "bidirectional": [False, True]}.get(d)
+  if dirs is None: raise NotImplementedError(f"ONNX {op}: direction={d!r} not supported")
+  W = np.asarray(ins[1], np.float32); R = np.asarray(ins[2], np.float32)
+  B = np.asarray(ins[3], np.float32) if len(ins) > 3 and ins[3] is not None else np.zeros((len(dirs), 2 * n_gates * H), np.float32)
+  if len(ins) > 4 and ins[4] is not None:
+    sl = np.asarray(ins[4]).ravel()
+    if not (sl == seq).all(): raise NotImplementedError(f"ONNX {op}: per-sample sequence_lens not supported")
+  h0 = np.asarray(ins[5], np.float32) if len(ins) > 5 and ins[5] is not None else np.zeros((len(dirs), batch, H), np.float32)
+  c0 = np.asarray(ins[6], np.float32) if len(ins) > 6 and ins[6] is not None else np.zeros((len(dirs), batch, H), np.float32)
+  if op == "LSTM" and len(ins) > 7 and ins[7] is not None and np.any(np.asarray(ins[7])):
+    raise NotImplementedError("ONNX LSTM: peephole connections (P) not supported")
+  return x, dirs, W, R, B, h0, c0, seq, batch, isz, H
+
+def _rnn_assemble(ys_dirs, h_dirs, c_dirs):
+  """Stack per-direction results: Y [seq, nd, b, H], Y_h [nd, b, H], Y_c [nd, b, H]."""
+  from .graph import concat as _cat
+  ydirs = []
+  for ys in ys_dirs:                             # ys: per-timestep [b, H] in time order
+    steps = [h.expand_dims((0, 1)) for h in ys]  # -> [1, 1, b, H]
+    ydirs.append(_cat(steps, axis=0) if len(steps) > 1 else steps[0])
+  Y = _cat(ydirs, axis=1) if len(ydirs) > 1 else ydirs[0]
+  hs = [h.expand_dims((0,)) for h in h_dirs]
+  Yh = _cat(hs, axis=0) if len(hs) > 1 else hs[0]
+  if c_dirs is None: return Y, Yh
+  cs = [c.expand_dims((0,)) for c in c_dirs]
+  return Y, Yh, _cat(cs, axis=0) if len(cs) > 1 else cs[0]
+
+def _xt(x, t, batch, isz):
+  return x.slice_by_size([t, 0, 0], [1, batch, isz]).reshape(batch, isz)
+
+@onnx_op("LSTM")
+def _lstm(node, ins, a, i):
+  """LSTM unrolled: per step two fused linears ([b,4H] gates, iofc order), sliced per gate. Forward,
+  reverse, and bidirectional; default activations; constant weights/initial states; no peepholes/clip."""
+  x, dirs, W, R, B, h0, c0, seq, batch, isz, H = _rnn_prep(node, ins, a, 4)
+  def g(t2, k): return t2.slice_by_size([0, k * H], [batch, H])
+  ys_dirs, h_dirs, c_dirs = [], [], []
+  for d, rev in enumerate(dirs):
+    bsum = B[d][:4 * H] + B[d][4 * H:]
+    h, c = _baked(h0[d].astype(np.float16)), _baked(c0[d].astype(np.float16))
+    ys: list = [None] * seq
+    for t in (range(seq - 1, -1, -1) if rev else range(seq)):
+      gt = _xt(x, t, batch, isz).linear(W[d], bsum) + h.linear(R[d], None)
+      it, ot, ft = g(gt, 0).sigmoid(), g(gt, 1).sigmoid(), g(gt, 2).sigmoid()
+      c = ft * c + it * g(gt, 3).tanh()
+      h = ot * c.tanh()
+      ys[t] = h
+    ys_dirs.append(ys); h_dirs.append(h); c_dirs.append(c)
+  return list(_rnn_assemble(ys_dirs, h_dirs, c_dirs))
+
+@onnx_op("GRU")
+def _gru(node, ins, a, i):
+  """GRU unrolled (zrh gate order); both linear_before_reset forms; same scope as LSTM."""
+  x, dirs, W, R, B, h0, _, seq, batch, isz, H = _rnn_prep(node, ins, a, 3)
+  lbr = int(a.get("linear_before_reset", 0))
+  def g(t2, k): return t2.slice_by_size([0, k * H], [batch, H])
+  ys_dirs, h_dirs = [], []
+  for d, rev in enumerate(dirs):
+    Wb, Rb = B[d][:3 * H], B[d][3 * H:]
+    h = _baked(h0[d].astype(np.float16))
+    ys: list = [None] * seq
+    for t in (range(seq - 1, -1, -1) if rev else range(seq)):
+      xg = _xt(x, t, batch, isz).linear(W[d], Wb)
+      hg = h.linear(R[d], Rb if lbr else None)
+      z = (g(xg, 0) + g(hg, 0)).sigmoid()
+      r = (g(xg, 1) + g(hg, 1)).sigmoid()
+      if lbr:
+        hh = (g(xg, 2) + r * g(hg, 2)).tanh()
+      else:
+        hh = (g(xg, 2) + (r * h).linear(R[d][2 * H:], Rb[2 * H:])).tanh()
+      h = z * h + (z * -1.0 + 1.0) * hh
+      ys[t] = h
+    ys_dirs.append(ys); h_dirs.append(h)
+  return list(_rnn_assemble(ys_dirs, h_dirs, None))
+
+@onnx_op("RNN")
+def _rnn_h(node, ins, a, i):
+  """Vanilla tanh RNN unrolled; same scope as LSTM."""
+  x, dirs, W, R, B, h0, _, seq, batch, isz, H = _rnn_prep(node, ins, a, 1)
+  ys_dirs, h_dirs = [], []
+  for d, rev in enumerate(dirs):
+    bsum = B[d][:H] + B[d][H:]
+    h = _baked(h0[d].astype(np.float16))
+    ys: list = [None] * seq
+    for t in (range(seq - 1, -1, -1) if rev else range(seq)):
+      h = (_xt(x, t, batch, isz).linear(W[d], bsum) + h.linear(R[d], None)).tanh()
+      ys[t] = h
+    ys_dirs.append(ys); h_dirs.append(h)
+  return list(_rnn_assemble(ys_dirs, h_dirs, None))

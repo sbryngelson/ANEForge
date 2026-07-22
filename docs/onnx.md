@@ -40,7 +40,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 
 | Category | ONNX ops |
 | --- | --- |
-| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `Selu`, `Celu`, `Mish`, `Softsign`, `ThresholdedRelu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf`, `HardSigmoid`, `HardSwish` |
+| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `Selu`, `Celu`, `Mish`, `Softsign`, `ThresholdedRelu`, `LeakyRelu`, `PRelu`, `Gelu` (exact + tanh-approximate), `Erf`, `HardSigmoid`, `HardSwish` |
 | Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported), `Abs`, `Neg`, `Sign`, `Reciprocal`, `Sin`, `Cos`, `Atan`, `Softplus`, `Floor`, `Ceil`, `Round`, `Min`, `Max`, `Sum`, `Mean` (variadic), `Where`, `Tile`, `Shrink` |
 | Comparison / logic | `Equal`, `Greater`, `GreaterOrEqual`, `Less`, `LessOrEqual`, `Not` |
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool`, `GlobalMaxPool` |
@@ -54,6 +54,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Quantization | `DequantizeLinear`, `QuantizeLinear` (QDQ int8) |
 | Misc | `Softmax`, `LogSoftmax`, `Constant`, `ConstantOfShape`, `Range`, `EyeLike`, `Identity`, `Dropout` (inference no-op), `Cast` (import-level), `OneHot` (constant depth/values) |
 | Control flow | `If` (constant condition), `Loop` (static trip count, unrolled) |
+| Recurrent | `LSTM`, `GRU`, `RNN` (unrolled; forward/reverse/bidirectional, default activations) |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
 `Shape`/`Gather`/dynamic-`Reshape` plumbing into static initializers before import.
@@ -103,7 +104,12 @@ mis-lower:
   carries any relu/saturation the quantizer fused in). Weights run at fp16 by default;
   pass `compress="int8"` to keep them on the ANE int8 weight datapath. Matches onnxruntime
   on-device (cosine ~1.0).
-- **Gelu:** exact erf-gelu only; `approximate="tanh"` raises.
+- **Gelu:** exact erf-gelu, plus the tanh approximation decomposed to primitives (#92).
+- **Recurrent layers unroll.** `LSTM`/`GRU`/`RNN` unroll over the static sequence
+  length into one program (two fused gate matmuls per step). Forward, reverse, and
+  bidirectional; both GRU `linear_before_reset` forms. Constant weights and initial
+  states; default activations only; `clip`, peepholes (`P`), per-sample
+  `sequence_lens`, and `layout=1` raise.
 - **Control flow folds at import.** `If` requires a constant condition (the taken branch
   imports inline; the other is never built) and `Loop` a constant trip count with a
   constant-true condition (the body unrolls into one program; scan outputs stack along a

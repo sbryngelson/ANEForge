@@ -1218,3 +1218,49 @@ def test_loop_without_trip_count_raises():  # while-style loops cannot unroll st
   n = helper.make_node("Loop", ["", "c0", "acc0"], ["acc_final"], body=body)
   m = _model([n], [_vi("x", [1, 4])], [_vi("acc_final", [1, 4])], inits=[ci, a0])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+
+# -- recurrent layers: LSTM / GRU / RNN unrolled -- #
+
+def _rnn_model(op, seq, b, isz, H, direction="forward", n_gates=4, out="Y", **attrs):
+  import zlib
+  rng = np.random.default_rng(zlib.crc32(f"{op}-{direction}".encode()))   # deterministic (hash() is salted)
+  nd = 2 if direction == "bidirectional" else 1
+  W = _init(rng.standard_normal((nd, n_gates * H, isz)) * 0.4, "W")
+  R = _init(rng.standard_normal((nd, n_gates * H, H)) * 0.4, "R")
+  B = _init(rng.standard_normal((nd, 2 * n_gates * H)) * 0.2, "B")
+  outs = {"Y": _vi("Y", [seq, nd, b, H]), "Y_h": _vi("Y_h", [nd, b, H])}
+  names = ["Y", "Y_h", "Y_c"][:3 if op == "LSTM" else 2]
+  n = helper.make_node(op, ["x", "W", "R", "B"], names, hidden_size=H, direction=direction, **attrs)
+  return _model([n], [_vi("x", [seq, b, isz])], [outs[out]], inits=[W, R, B])
+
+def _rnn_check(m, seq, b, isz, tol):
+  rng = np.random.default_rng(0); x = (rng.standard_normal((seq, b, isz))).astype(np.float32)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  ref = np.asarray(onnx_run(m, x))
+  assert got.shape == ref.shape, f"{got.shape} != {ref.shape}"
+  assert np.abs(got - ref).max() < tol, f"max err {np.abs(got - ref).max():.4f}"
+
+def test_lstm_forward_matches_onnxruntime():
+  _rnn_check(_rnn_model("LSTM", 4, 2, 3, 5), 4, 2, 3, 5e-2)
+
+def test_lstm_bidirectional_matches_onnxruntime():
+  _rnn_check(_rnn_model("LSTM", 4, 2, 3, 5, direction="bidirectional"), 4, 2, 3, 5e-2)
+
+def test_lstm_yh_output_matches_onnxruntime():
+  _rnn_check(_rnn_model("LSTM", 4, 2, 3, 5, out="Y_h"), 4, 2, 3, 5e-2)
+
+def test_gru_both_reset_forms_match_onnxruntime():
+  for lbr in (0, 1):
+    m = _rnn_model("GRU", 4, 2, 3, 5, n_gates=3, linear_before_reset=lbr)
+    _rnn_check(m, 4, 2, 3, 5e-2)
+
+def test_rnn_reverse_matches_onnxruntime():
+  _rnn_check(_rnn_model("RNN", 4, 2, 3, 5, direction="reverse", n_gates=1), 4, 2, 3, 5e-2)
+
+def test_lstm_peephole_raises():
+  m = _rnn_model("LSTM", 2, 1, 3, 4)
+  P = onnx.numpy_helper.from_array(np.ones((1, 12), np.float32), "P")
+  m.graph.initializer.append(P)
+  m.graph.node[0].input.extend(["", "", "", "P"])   # seq_lens, initial_h, initial_c omitted; P present
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
