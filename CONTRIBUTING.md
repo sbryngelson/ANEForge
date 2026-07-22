@@ -21,7 +21,13 @@ Report security issues privately, not in a public issue: see
 
 ## Changes
 
-Operator-coverage gaps are the place to start: anything in
+For a first contribution, take an issue labeled
+[`good first issue`](https://github.com/sbryngelson/ANEForge/labels/good%20first%20issue):
+each one names the file, the composition path, and the reference implementation
+to test against, and any Apple Silicon Mac is hardware enough. CI cannot reach
+an ANE, so note in the pull request that the on-device tests passed locally.
+
+Beyond those, operator-coverage gaps are the place to start: anything in
 [`docs/capabilities.md`](docs/capabilities.md) not yet covered, via the four-step
 path in [`docs/development.md`](docs/development.md#adding-an-operator). Open an
 issue first for larger or architectural changes.

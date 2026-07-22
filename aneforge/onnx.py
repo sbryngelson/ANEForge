@@ -109,13 +109,11 @@ def onnx_to_tensor(path, approx_resize=False):
     for vi in g.input:
       if vi.name in inits: continue              # initializers also listed as inputs in some exporters
       t = _input(_shape(vi)); vals[vi.name] = t; graph_inputs.append(t)
-    for node in g.node:                          # ONNX node list is topologically ordered
-      if node.op_type not in _ONNX:
-        raise NotImplementedError(f"ONNX op '{node.op_type}' not supported")
-      ins = [vals.get(n) for n in node.input]
-      outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
-      outs = outs if isinstance(outs, (list, tuple)) else [outs]
-      for name, val in zip(node.output, outs): vals[name] = val
+    _SCOPES.append(vals)                         # visible to If/Loop subgraphs (ONNX outer-scope names)
+    try:
+      _run_nodes(g, vals, inits)
+    finally:
+      _SCOPES.pop()
     name = g.output[0].name
     if name not in vals: raise ValueError(f"onnx: graph output '{name}' was never produced")
     out = vals[name]
@@ -123,6 +121,78 @@ def onnx_to_tensor(path, approx_resize=False):
     return graph_inputs, out
   finally:
     _APPROX_RESIZE = prev
+
+_SCOPES: list[dict] = []                         # enclosing-graph value environments, innermost last
+
+def _run_nodes(g, vals, inits):
+  """Run a (sub)graph's topologically-ordered node list against the value environment `vals`."""
+  for node in g.node:
+    if node.op_type not in _ONNX:
+      raise NotImplementedError(f"ONNX op '{node.op_type}' not supported")
+    ins = [vals.get(n) for n in node.input]
+    outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
+    outs = outs if isinstance(outs, (list, tuple)) else [outs]
+    for name, val in zip(node.output, outs): vals[name] = val
+
+def _run_subgraph(sub, binding, inits):
+  """Import a subgraph (If branch / Loop body): outer-scope names resolve per ONNX scoping, the
+  subgraph's formal inputs bind to `binding`, and its output values are returned in order."""
+  from onnx import numpy_helper
+  vals = dict(_SCOPES[-1]) if _SCOPES else {}
+  vals.update({t.name: numpy_helper.to_array(t) for t in sub.initializer})
+  vals.update(binding)
+  _SCOPES.append(vals)
+  try:
+    _run_nodes(sub, vals, inits)
+  finally:
+    _SCOPES.pop()
+  outs = []
+  for o in sub.output:
+    if o.name not in vals: raise ValueError(f"onnx: subgraph output '{o.name}' was never produced")
+    outs.append(vals[o.name])
+  return outs
+
+@onnx_op("If")
+def _if(node, ins, a, i):
+  """If with a CONSTANT condition: the taken branch imports inline (the other is never built).
+  A data-dependent condition has no ANE path (programs are single static graphs)."""
+  if isinstance(ins[0], Tensor):
+    raise NotImplementedError("ONNX If: data-dependent condition not supported (constant conditions fold at import)")
+  cond = bool(np.asarray(ins[0]).ravel()[0])
+  return _run_subgraph(a["then_branch"] if cond else a["else_branch"], {}, i)
+
+@onnx_op("Loop")
+def _loop(node, ins, a, i):
+  """Loop with a STATIC trip count: the body unrolls at import (M copies of its ops in one program).
+  Requires constant M, a constant-true (or absent) condition, and a body that keeps it true;
+  scan outputs stack along a new leading axis, per the ONNX spec."""
+  M = ins[0] if len(ins) > 0 else None
+  if isinstance(M, Tensor): raise NotImplementedError("ONNX Loop: data-dependent trip count not supported")
+  if M is None: raise NotImplementedError("ONNX Loop: a trip count is required (while-style loops cannot unroll)")
+  M = int(np.asarray(M).ravel()[0])
+  if M > 1024: raise NotImplementedError(f"ONNX Loop: trip count {M} too large to unroll into one program")
+  cond = ins[1] if len(ins) > 1 else None
+  if cond is not None and (isinstance(cond, Tensor) or not bool(np.asarray(cond).ravel()[0])):
+    raise NotImplementedError("ONNX Loop: only a constant-true (or absent) condition unrolls")
+  body = a["body"]; carried = list(ins[2:])
+  n_car = len(carried); n_scan = len(body.output) - 1 - n_car
+  scans: list[list] = [[] for _ in range(n_scan)]
+  for it in range(M):
+    binding = {body.input[0].name: np.array(it, np.int64), body.input[1].name: np.array(True)}
+    for k, v in enumerate(carried): binding[body.input[2 + k].name] = v
+    outs = _run_subgraph(body, binding, i)
+    cond_out = outs[0]
+    if isinstance(cond_out, Tensor) or not bool(np.asarray(cond_out).ravel()[0] if cond_out is not None else True):
+      raise NotImplementedError("ONNX Loop: the body's condition output must stay constant-true to unroll")
+    carried = outs[1:1 + n_car]
+    for k in range(n_scan): scans[k].append(outs[1 + n_car + k])
+  from .graph import concat as _cat
+  stacked = []
+  for parts in scans:                            # scan outputs concatenate along a new leading axis
+    if all(_isc(p) for p in parts): stacked.append(np.stack([np.asarray(p) for p in parts])); continue
+    ts = [(p if isinstance(p, Tensor) else _baked(np.asarray(p, np.float16))).expand_dims((0,)) for p in parts]
+    stacked.append(_cat(ts, axis=0) if len(ts) > 1 else ts[0])
+  return carried + stacked
 
 def onnx_to_features(path):
   """Import a classifier and return `(inputs, features)` where `features` is the input to the final
@@ -289,6 +359,24 @@ def _gelu(node, ins, a, i):
   return ins[0].gelu()
 @onnx_op("PRelu")
 def _prelu(node, ins, a, i): return ins[0].prelu(np.asarray(ins[1]).reshape(-1))   # slope=ins[1], [C,1,1]->[C]
+@onnx_op("Selu")
+def _selu(node, ins, a, i):
+  """selu = gamma * elu(x, alpha) exactly (ONNX defaults are the Klambauer et al. constants)."""
+  alpha = float(a.get("alpha", 1.6732632423543772)); gamma = float(a.get("gamma", 1.0507009873554805))
+  return ins[0].elu(alpha) * gamma
+@onnx_op("Celu")
+def _celu(node, ins, a, i):
+  """celu(x, alpha) = alpha * elu(x/alpha, 1): the positive branch recovers x, the negative alpha*(exp(x/alpha)-1)."""
+  alpha = float(a.get("alpha", 1.0))
+  return (ins[0] * (1.0 / alpha)).elu(1.0) * alpha
+@onnx_op("Mish")
+def _mish(node, ins, a, i): return ins[0] * ins[0].softplus().tanh()
+@onnx_op("Softsign")
+def _softsign(node, ins, a, i): return ins[0].softsign()
+@onnx_op("ThresholdedRelu")
+def _thresholded_relu(node, ins, a, i): return ins[0].thresholded_relu(float(a.get("alpha", 1.0)))
+@onnx_op("Atan")
+def _atan(node, ins, a, i): return ins[0].atan()
 @onnx_op("Pow")
 def _pow(node, ins, a, i): x, y = _binops(ins); return x.pow(y)
 @onnx_op("InstanceNormalization")
@@ -393,6 +481,106 @@ def _pad4(pads):                               # ONNX conv pads=[top,left,bottom
   p = [int(v) for v in pads]
   return p[0] if len(set(p)) == 1 else (p[0], p[2], p[1], p[3])
 
+def _pad_axis(x, ax, before, after, mode, value):
+  """Pad one axis by concatenating border blocks: const blocks, repeated edge slices, a reversed
+  interior slice (reflect), or the opposite end (wrap). All static; reflect requires pad < dim."""
+  from .graph import concat as _cat
+  def _sl(begin, size):
+    b = [0] * len(x.shape); s = list(x.shape); b[ax] = begin; s[ax] = size
+    return x.slice_by_size(b, s)
+  def _blk(n):
+    shp = list(x.shape); shp[ax] = n                 # only [ax] differs, so the pre-pad shape is right for both borders
+    return _baked(np.full(shp, value, np.float16))
+  dim = x.shape[ax]
+  if mode == "constant":
+    # nested 2-part concats: a 3-part concat with two const borders fails to lower once a second
+    # padded axis stacks on top (Espresso "not implemented"); pairwise concats compile and are exact
+    y = x
+    if after: y = _cat([y, _blk(after)], axis=ax)
+    if before: y = _cat([_blk(before), y], axis=ax)
+    return y
+  if mode == "edge":
+    parts = [_sl(0, 1)] * before + [x] + [_sl(dim - 1, 1)] * after
+  elif mode == "reflect":
+    if before >= dim or after >= dim: raise NotImplementedError(f"ONNX Pad reflect: pad {before}/{after} >= dim {dim}")
+    parts = ([_sl(1, before).reverse(ax)] if before else []) + [x] + ([_sl(dim - 1 - after, after).reverse(ax)] if after else [])
+  elif mode == "wrap":
+    parts = ([_sl(dim - before, before)] if before else []) + [x] + ([_sl(0, after)] if after else [])
+  else:
+    raise NotImplementedError(f"ONNX Pad: mode={mode!r} not supported")
+  return _cat(parts, axis=ax) if len(parts) > 1 else x
+
+@onnx_op("Pad")
+def _pad_h(node, ins, a, i):
+  """Pad (opset 13+): constant/edge/reflect/wrap via static concat of border blocks; pads/axes must be constant."""
+  mode = _sattr(a, "mode", "constant")
+  if len(ins) > 1 and isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Pad: data-dependent pads not supported")
+  pads = [int(v) for v in np.asarray(ins[1]).ravel()] if len(ins) > 1 and ins[1] is not None \
+    else [int(v) for v in a.get("pads", [])]
+  value = float(a.get("value", 0.0))                 # opset<11 attr form
+  if len(ins) > 2 and ins[2] is not None:
+    if isinstance(ins[2], Tensor): raise NotImplementedError("ONNX Pad: data-dependent constant_value not supported")
+    value = float(np.asarray(ins[2]).ravel()[0])
+  if _isc(ins[0]):                                   # constant pad folds
+    d = np.asarray(ins[0]); r = d.ndim
+    axes = [int(v) % r for v in np.asarray(ins[3]).ravel()] if len(ins) > 3 and ins[3] is not None else list(range(r))
+    width = [(0, 0)] * r
+    for k, ax in enumerate(axes): width[ax] = (pads[k], pads[k + len(axes)])
+    if mode == "constant": return np.pad(d, width, constant_values=value)
+    return np.pad(d, width, mode)  # type: ignore[arg-type]  # np.pad stubs over-constrain mode to a callable protocol
+  x = ins[0]; r = len(x.shape)
+  axes = [int(v) % r for v in np.asarray(ins[3]).ravel()] if len(ins) > 3 and ins[3] is not None else list(range(r))
+  if len(pads) != 2 * len(axes): raise ValueError(f"ONNX Pad: pads {pads} does not match axes {axes}")
+  for k, ax in enumerate(axes):
+    before, after = pads[k], pads[k + len(axes)]
+    if before or after: x = _pad_axis(x, ax, before, after, mode, value)
+  return x
+
+@onnx_op("Cast")
+def _cast(node, ins, a, i):
+  """Cast at import level: constants convert; a float->float cast on an activation is identity (the engine
+  computes fp16 regardless); float->int truncates toward zero as sign(x)*floor(|x|) (exact within fp16 range)."""
+  from onnx import helper
+  to = helper.tensor_dtype_to_np_dtype(int(a["to"]))
+  if _isc(ins[0]): return np.asarray(ins[0]).astype(to)
+  if np.issubdtype(to, np.floating): return ins[0]
+  if np.issubdtype(to, np.integer): return ins[0].sign() * ins[0].abs().floor()
+  raise NotImplementedError(f"ONNX Cast: target dtype {to} not supported on the ANE (fp16 datapath)")
+
+@onnx_op("Shrink")
+def _shrink(node, ins, a, i):
+  """Shrink: x-bias above lambd, x+bias below -lambd, else 0 - nested select against baked thresholds."""
+  from .graph import select as _select
+  x = ins[0]; bias = float(a.get("bias", 0.0)); lambd = float(a.get("lambd", 0.5))
+  lc = _baked(np.full(x.shape, lambd, np.float16)); nlc = _baked(np.full(x.shape, -lambd, np.float16))
+  zero = _baked(np.zeros(x.shape, np.float16))
+  return _select(x.greater(lc), x + (-bias), _select(x.less(nlc), x + bias, zero))
+
+@onnx_op("OneHot")
+def _onehot(node, ins, a, i):
+  """OneHot: compare the index tensor against a baked arange along the inserted axis, then select
+  on/off values. depth and values must be constant; a TENSOR index must be non-negative and in range
+  (out-of-range simply never matches -> all off), and indices are exact in fp16 up to 2048."""
+  from .graph import select as _select
+  if isinstance(ins[1], Tensor) or isinstance(ins[2], Tensor):
+    raise NotImplementedError("ONNX OneHot: data-dependent depth/values not supported")
+  depth = int(np.asarray(ins[1]).ravel()[0]); off_v, on_v = (float(v) for v in np.asarray(ins[2]).ravel())
+  if depth > 2048: raise NotImplementedError(f"ONNX OneHot: depth {depth} exceeds exact fp16 integer range")
+  if _isc(ins[0]):
+    idx = np.asarray(ins[0]).astype(np.int64)
+    pos0 = int(a.get("axis", -1)) % (idx.ndim + 1)
+    idxw = np.where(idx < 0, idx + depth, idx)               # ONNX: negatives wrap, out-of-range -> all off
+    valid = ((idxw >= 0) & (idxw < depth)).astype(np.float32)
+    hot = np.eye(depth, dtype=np.float32)[np.clip(idxw, 0, depth - 1)] * valid[..., None]
+    return (off_v + (on_v - off_v) * np.moveaxis(hot, -1, pos0)).astype(np.float32)
+  x = ins[0]; r = len(x.shape); pos = int(a.get("axis", -1)) % (r + 1)
+  xe = x.expand_dims((pos,))
+  rng_shape = [1] * (r + 1); rng_shape[pos] = depth
+  rng = _baked(np.arange(depth, dtype=np.float16).reshape(rng_shape))
+  out_shape = tuple(depth if k == pos else d for k, d in enumerate(xe.shape))
+  on = _baked(np.full(out_shape, on_v, np.float16)); off = _baked(np.full(out_shape, off_v, np.float16))
+  return _select(xe.equal(rng), on, off)
+
 @onnx_op("DequantizeLinear")
 def _dequant(node, ins, a, i):
   """int8/uint8 weight -> dequantized fp32 const (per-channel along `axis`); on an activation it is identity (the ANE computes in fp16)."""
@@ -454,6 +642,14 @@ def _matmul(node, ins, a, i):
   if not isinstance(ins[0], Tensor): raise NotImplementedError("ONNX MatMul: a constant first operand is not supported")
   b = ins[1]
   return ins[0] @ (np.asarray(b) if not isinstance(b, Tensor) else b)
+@onnx_op("Einsum")
+def _einsum_h(node, ins, a, i):
+  """Routes to aneforge.einsum (matmul-reducible specs; diagonal/ellipsis reject as EinsumUnsupported)."""
+  from .einsum import einsum as _es
+  eq = _sattr(a, "equation", None)
+  if not eq: raise ValueError("ONNX Einsum: missing equation attribute")
+  ts = [v if isinstance(v, Tensor) else _baked(np.asarray(v, np.float32)) for v in ins]
+  return _es(eq, *ts)  # type: ignore[arg-type]  # einsum.py imports Tensor absolutely; same class at runtime
 @onnx_op("BatchNormalization")
 def _bnorm(node, ins, a, i):
   x, s, bb, mean, var = ins[0], np.asarray(ins[1]), np.asarray(ins[2]), np.asarray(ins[3]), np.asarray(ins[4])
@@ -466,6 +662,27 @@ def _layernorm(node, ins, a, i):
   bias = np.asarray(ins[2]).reshape(-1) if len(ins) > 2 and ins[2] is not None else np.zeros_like(scale)
   m, d = prod(x.shape[:ax]) or 1, prod(x.shape[ax:])
   return x.reshape(m, d).layer_norm(scale, bias, float(a.get("epsilon", 1e-5))).reshape(*x.shape)
+@onnx_op("LpNormalization")
+def _lpnorm(node, ins, a, i):
+  """p=2 maps to the native per-axis l2_norm; p=1 divides by the keepdims L1 reduce."""
+  x = ins[0]; ax = int(a.get("axis", -1)) % len(x.shape); p = int(a.get("p", 2))
+  if p == 2: return x.l2_norm(ax)
+  if p == 1: return x / x.l1_norm((ax,))
+  raise NotImplementedError(f"ONNX LpNormalization: p={p} not supported (only 1/2)")
+@onnx_op("GroupNormalization")
+def _groupnorm(node, ins, a, i):
+  """GroupNormalization (opset 21 semantics: per-channel scale/bias) on NCHW via native group_norm."""
+  x = ins[0]
+  if len(x.shape) != 4: raise NotImplementedError("ONNX GroupNormalization: 4D NCHW inputs only")
+  return x.group_norm(np.asarray(ins[1]).reshape(-1), np.asarray(ins[2]).reshape(-1),
+                      int(a["num_groups"]), eps=float(a.get("epsilon", 1e-5)))
+@onnx_op("RMSNormalization")
+def _rmsnorm(node, ins, a, i):
+  """RMSNorm over the trailing axes [axis:], like the LayerNormalization handler: 2-D view, native rms_norm, reshape back."""
+  x = ins[0]; ax = int(a.get("axis", -1)) % len(x.shape)
+  scale = np.asarray(ins[1]).reshape(-1)
+  m, d = prod(x.shape[:ax]) or 1, prod(x.shape[ax:])
+  return x.reshape(m, d).rms_norm(scale, eps=float(a.get("epsilon", 1e-5))).reshape(*x.shape)
 @onnx_op("Reshape")
 def _reshape(node, ins, a, i):
   shape = [int(v) for v in np.asarray(ins[1])]
@@ -483,7 +700,9 @@ def _transpose(node, ins, a, i):
 def _squeeze(node, ins, a, i):
   axes = a.get("axes")                               # opset<13 attr; opset>=13 axes input
   if axes is None and len(ins) > 1 and ins[1] is not None: axes = [int(v) for v in np.asarray(ins[1])]
-  if axes is None: raise NotImplementedError("ONNX Squeeze: squeeze-all (no axes) not supported")
+  if axes is None:                                   # squeeze-all: static shapes make it well-defined
+    axes = [k for k, d in enumerate(ins[0].shape) if d == 1]
+    if not axes: return ins[0]
   return ins[0].squeeze(tuple(axes))
 @onnx_op("Unsqueeze")
 def _unsqueeze(node, ins, a, i):
@@ -495,6 +714,26 @@ def _concat_h(node, ins, a, i):
   if all(_isc(v) for v in ins):                                             # concat of constant shape pieces folds
     return np.concatenate([np.atleast_1d(np.asarray(v)) for v in ins], axis=int(a["axis"]))
   return _concat(list(ins), axis=int(a["axis"]))
+@onnx_op("Split")
+def _split_h(node, ins, a, i):
+  """Split along `axis`: equal parts use the native split; uneven sizes (the `split` attr/input) slice."""
+  x = ins[0]; ax = int(a.get("axis", 0)) % len(x.shape)
+  sizes = a.get("split")
+  if sizes is None and len(ins) > 1 and ins[1] is not None:
+    if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Split: data-dependent split sizes not supported")
+    sizes = [int(v) for v in np.asarray(ins[1]).ravel()]
+  if sizes is None:                                  # equal parts from the output count (last chunk may be smaller)
+    n = int(a.get("num_outputs", len(node.output))); chunk = -(-x.shape[ax] // n)
+    sizes = [chunk] * (n - 1) + [x.shape[ax] - chunk * (n - 1)]
+  if sum(sizes) != x.shape[ax]: raise ValueError(f"ONNX Split: sizes {sizes} do not cover axis {ax} of {x.shape}")
+  if len(set(sizes)) == 1:
+    from .graph import split as _gsplit
+    return _gsplit(x, len(sizes), axis=ax)
+  outs, off = [], 0
+  for s in sizes:
+    begin = [0] * len(x.shape); size = list(x.shape); begin[ax] = off; size[ax] = s
+    outs.append(x.slice_by_size(begin, size)); off += s
+  return outs
 @onnx_op("Shape")
 def _shape_op(node, ins, a, i):
   """Static shape as an int64 constant (the channel-shuffle shape subgraph folds at import)."""
@@ -510,12 +749,19 @@ def _slice(node, ins, a, i):
     d = np.asarray(ins[0]); sl = [slice(None)] * d.ndim
     for ax, s0, e0, st0 in zip(axes, starts, ends, steps): sl[ax % d.ndim] = slice(s0, e0, st0)
     return d[tuple(sl)]
-  if any(st != 1 for st in steps): raise NotImplementedError("ONNX Slice: step != 1 on a tensor not supported")
   x = ins[0]; rank = len(x.shape); begin = [0] * rank; size = list(x.shape)   # activation slice -> static slice_by_size
-  for ax, s0, e0 in zip(axes, starts, ends):
+  rev = []
+  for ax, s0, e0, st0 in zip(axes, starts, ends, steps):
     ax %= rank; dim = x.shape[ax]
+    if st0 == -1:                                    # full-extent flip -> native reverse (partial reversed slices stay unsupported)
+      full = (s0 == -1 or s0 >= dim - 1) and e0 < -dim
+      if not full: raise NotImplementedError("ONNX Slice: step=-1 is supported only as a full-axis flip")
+      rev.append(ax); continue
+    if st0 != 1: raise NotImplementedError(f"ONNX Slice: step={st0} on a tensor not supported")
     s0 = s0 + dim if s0 < 0 else min(s0, dim); e0 = e0 + dim if e0 < 0 else min(e0, dim)
     begin[ax] = max(0, s0); size[ax] = max(0, e0 - begin[ax])
+  if rev: x = x.reverse(tuple(rev))
+  if begin == [0] * rank and size == list(x.shape): return x
   return x.slice_by_size(begin, size)
 @onnx_op("Softmax")
 def _softmax(node, ins, a, i): return ins[0].softmax(int(a.get("axis", -1)))
@@ -530,6 +776,41 @@ def _const(node, ins, a, i):
   return numpy_helper.to_array(a["value"])         # returns np.ndarray (folded by consumers)
 @onnx_op("Identity")
 def _identity(node, ins, a, i): return ins[0]      # pass-through (Tensor or array)
+@onnx_op("ConstantOfShape")
+def _const_of_shape(node, ins, a, i):
+  """Constant fill from a static shape input; folds like Constant (consumers bake it)."""
+  if isinstance(ins[0], Tensor): raise NotImplementedError("ONNX ConstantOfShape: data-dependent shape not supported")
+  shape = tuple(int(v) for v in np.asarray(ins[0]).ravel())
+  v = a.get("value")
+  if v is None: return np.zeros(shape, np.float32)
+  from onnx import numpy_helper
+  arr = numpy_helper.to_array(v)
+  return np.full(shape, arr.ravel()[0], dtype=arr.dtype)
+@onnx_op("Range")
+def _range(node, ins, a, i):
+  """Constant-input Range folds to np.arange (shape-arithmetic plumbing)."""
+  if any(isinstance(v, Tensor) for v in ins[:3]): raise NotImplementedError("ONNX Range: data-dependent bounds not supported")
+  s, l, d = (np.asarray(v).ravel()[0] for v in ins[:3])
+  return np.arange(s, l, d)
+@onnx_op("EyeLike")
+def _eyelike(node, ins, a, i):
+  """Identity matrix of the input's (static) shape; only the shape is consumed, so a Tensor input is fine."""
+  shape = ins[0].shape if isinstance(ins[0], Tensor) else np.asarray(ins[0]).shape
+  if len(shape) != 2: raise NotImplementedError("ONNX EyeLike: 2D inputs only")
+  return np.eye(shape[0], shape[1], k=int(a.get("k", 0)), dtype=np.float32)
+@onnx_op("Trilu")
+def _trilu(node, ins, a, i):
+  """Upper/lower triangle. A constant folds; a Tensor multiplies by the baked 0/1 triangle mask."""
+  k = 0
+  if len(ins) > 1 and ins[1] is not None:
+    if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Trilu: data-dependent k not supported")
+    k = int(np.asarray(ins[1]).ravel()[0])
+  tri = np.triu if int(a.get("upper", 1)) else np.tril
+  if _isc(ins[0]): return tri(np.asarray(ins[0]), k)
+  x = ins[0]
+  if len(x.shape) < 2: raise NotImplementedError("ONNX Trilu: rank >= 2 required")
+  mask = tri(np.ones(x.shape[-2:], np.float16), k)
+  return x * _baked(np.ascontiguousarray(np.broadcast_to(mask, x.shape)))
 @onnx_op("Dropout")
 def _dropout(node, ins, a, i):
   """Inference no-op. Rejects training mode and a declared mask output (both training-time artifacts)."""
@@ -600,6 +881,16 @@ def _rmin(node, ins, a, i): return _reduce_op(ins, a, Tensor.amin)
 def _rsum(node, ins, a, i): return _reduce_op(ins, a, Tensor.sum)
 @onnx_op("ReduceMean")
 def _rmean(node, ins, a, i): return _reduce_op(ins, a, Tensor.mean)
+@onnx_op("ReduceL1")
+def _rl1(node, ins, a, i): return _reduce_op(ins, a, Tensor.l1_norm)
+@onnx_op("ReduceL2")
+def _rl2(node, ins, a, i): return _reduce_op(ins, a, lambda x, axes: x.sum_square(axes).sqrt())
+@onnx_op("ReduceLogSum")
+def _rlogsum(node, ins, a, i): return _reduce_op(ins, a, Tensor.log_sum)
+@onnx_op("ReduceLogSumExp")
+def _rlse(node, ins, a, i): return _reduce_op(ins, a, Tensor.reduce_log_sum_exp)
+@onnx_op("ReduceSumSquare")
+def _rss(node, ins, a, i): return _reduce_op(ins, a, Tensor.sum_square)
 @onnx_op("CumSum")
 def _cumsum(node, ins, a, i):
   """CumSum along `axis` (input 1, constant), via the tril-ones matmul lowering; a non-last axis is
@@ -631,6 +922,16 @@ def _argmax_h(node, ins, a, i):
   if int(a.get("select_last_index", 0)): raise NotImplementedError("ONNX ArgMax: select_last_index=1 not supported")
   ax = int(a.get("axis", 0)) % 2
   y = x.argmax(ax)
+  if not int(a.get("keepdims", 1)): y = y.squeeze(ax)
+  return y
+@onnx_op("ArgMin")
+def _argmin_h(node, ins, a, i):
+  """ArgMin as argmax(-x) (same 2D [C,W] bridge and index encoding as ArgMax)."""
+  x = ins[0]
+  if len(x.shape) != 2: raise NotImplementedError("ONNX ArgMin: only 2D inputs supported on the ANE")
+  if int(a.get("select_last_index", 0)): raise NotImplementedError("ONNX ArgMin: select_last_index=1 not supported")
+  ax = int(a.get("axis", 0)) % 2
+  y = (x * -1.0).argmax(ax)
   if not int(a.get("keepdims", 1)): y = y.squeeze(ax)
   return y
 @onnx_op("TopK")
