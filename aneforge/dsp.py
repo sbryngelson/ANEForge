@@ -44,13 +44,42 @@ def blackman(M: int, sym: bool = False) -> np.ndarray:
           + a2 * np.cos(4.0 * np.pi * n / denom)).astype(np.float32)
 
 
-_WINDOWS = {"hann": hann, "hamming": hamming, "blackman": blackman}
+def kaiser(M: int, beta: float = 8.6, sym: bool = False) -> np.ndarray:
+  """Kaiser window (I0 Bessel ratio, np.i0). Default beta=8.6 is Blackman-like. `sym=False` = periodic (STFT) form."""
+  if M == 1: return np.ones(1, np.float32)
+  n = np.arange(M)
+  alpha = ((M - 1) if sym else M) / 2.0
+  return (np.i0(beta * np.sqrt(1.0 - ((n - alpha) / alpha) ** 2)) / np.i0(beta)).astype(np.float32)
+
+
+def bartlett(M: int, sym: bool = False) -> np.ndarray:
+  """Bartlett (triangular, zero endpoints) window. `sym=False` = periodic (STFT) form."""
+  if M == 1: return np.ones(1, np.float32)
+  n = np.arange(M)
+  half = ((M - 1) if sym else M) / 2.0
+  return (1.0 - np.abs(n - half) / half).astype(np.float32)
+
+
+def tukey(M: int, alpha: float = 0.5, sym: bool = False) -> np.ndarray:
+  """Tukey (tapered cosine) window; alpha is the taper fraction (0 = boxcar, 1 = hann). `sym=False` = periodic form."""
+  if M == 1: return np.ones(1, np.float32)
+  if alpha <= 0: return np.ones(M, np.float32)
+  if alpha >= 1: return hann(M, sym=sym)
+  N = M if sym else M + 1                                # periodic = symmetric on M+1 points, last dropped
+  r = np.arange(N) / (N - 1)
+  t = np.minimum(r, 1.0 - r)                             # distance to the nearer edge; taper is symmetric
+  w = np.where(t < alpha / 2.0, 0.5 * (1.0 + np.cos(np.pi * (2.0 * t / alpha - 1.0))), 1.0)
+  return w[:M].astype(np.float32)
+
+
+_WINDOWS = {"hann": hann, "hamming": hamming, "blackman": blackman,
+            "kaiser": kaiser, "bartlett": bartlett, "tukey": tukey}
 
 
 def get_window(window, M: int) -> np.ndarray:
   """Resolve `window` (name str, 'boxcar'/None for rectangular, or an array) to a length-M fp32 coefficient vector."""
-  if window in (None, "boxcar", "rect"):
-    return np.ones(M, np.float32)
+  if window is None or (isinstance(window, str) and window in ("boxcar", "rect")):
+    return np.ones(M, np.float32)                        # `in` on the tuple would choke on array inputs
   if isinstance(window, str):
     if window not in _WINDOWS:
       raise ValueError(f"unknown window {window!r}; choose from {list(_WINDOWS)} or 'boxcar'")
@@ -297,7 +326,7 @@ def iir_filter(x, b, a, n_taps: int = 256):
 
 
 __all__ = [
-  "hann", "hamming", "blackman", "get_window",
+  "hann", "hamming", "blackman", "kaiser", "bartlett", "tukey", "get_window",
   "fir_filter", "fft_convolve", "freq_filter", "stft", "spectrogram",
   "correlate", "autocorrelate", "iir_filter",
 ]
