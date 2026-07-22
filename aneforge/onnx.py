@@ -245,8 +245,35 @@ def _where(node, ins, a, i):
   from .graph import select as _select
   return _select(ins[0], ins[1] if isinstance(ins[1], Tensor) else _baked(ins[1]),
                  ins[2] if isinstance(ins[2], Tensor) else _baked(ins[2]))
+@onnx_op("Equal", "Greater", "GreaterOrEqual", "Less", "LessOrEqual")
+def _compare(node, ins, a, i):
+  """Elementwise comparison -> a BOOL tensor (feeds Where/Not); a constant operand bakes in."""
+  x, y = _binops(ins)
+  meth = {"Equal": "equal", "Greater": "greater", "GreaterOrEqual": "greater_equal",
+          "Less": "less", "LessOrEqual": "less_equal"}[node.op_type]
+  return getattr(x, meth)(y)
+@onnx_op("Not")
+def _not(node, ins, a, i): return ins[0].logical_not()
 @onnx_op("Tile")
 def _tile(node, ins, a, i): return ins[0].tile([int(v) for v in np.asarray(ins[1])])
+@onnx_op("Expand")
+def _expand(node, ins, a, i):
+  """Broadcast-to-shape via expand_dims + tile; the target shape (input 1) must be constant. ONNX
+  semantics: the output shape is broadcast(input.shape, shape), so a target dim of 1 keeps the input dim."""
+  if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Expand: data-dependent shape not supported")
+  shape = [int(v) for v in np.asarray(ins[1]).ravel()]
+  if _isc(ins[0]):                                   # constant (shape-arithmetic) expand folds
+    x0 = np.asarray(ins[0]); return np.broadcast_to(x0, np.broadcast_shapes(x0.shape, tuple(shape)))
+  x = ins[0]; xs = list(x.shape)
+  if len(shape) < len(xs): shape = [1] * (len(xs) - len(shape)) + shape
+  if len(shape) > len(xs):
+    x = x.expand_dims(tuple(range(len(shape) - len(xs)))); xs = [1] * (len(shape) - len(xs)) + xs
+  reps = []
+  for dx, dt in zip(xs, shape):
+    if dt in (1, dx): reps.append(1)
+    elif dx == 1: reps.append(dt)
+    else: raise ValueError(f"ONNX Expand: cannot broadcast {tuple(xs)} to {tuple(shape)}")
+  return x.tile(reps) if any(r != 1 for r in reps) else x
 @onnx_op("Elu")
 def _elu(node, ins, a, i): return ins[0].elu(float(a.get("alpha", 1.0)))
 @onnx_op("LeakyRelu")
@@ -289,6 +316,14 @@ def _div(node, ins, a, i):
     x0, x1 = np.asarray(ins[0]), np.asarray(ins[1])
     return x0 // x1 if np.issubdtype(x0.dtype, np.integer) else x0 / x1     # ONNX integer Div truncates
   x, y = _binops(ins); return x / y
+@onnx_op("Sum", "Mean")
+def _sum_mean(node, ins, a, i):
+  """Variadic elementwise Sum/Mean: folded with add; Mean scales by 1/N (a constant, exact)."""
+  if all(_isc(v) for v in ins):                                                # shape arithmetic folds
+    s = reduce(lambda p, q: p + q, (np.asarray(v) for v in ins))
+    return s / len(ins) if node.op_type == "Mean" else s
+  y = reduce(lambda p, q: p + q, (v if isinstance(v, Tensor) else _baked(v) for v in ins))
+  return y * (1.0 / len(ins)) if node.op_type == "Mean" else y
 @onnx_op("HardSigmoid")
 def _hardsigmoid(node, ins, a, i):
   """ONNX HardSigmoid = clip(alpha*x + beta, 0, 1); defaults alpha=0.2, beta=0.5."""
@@ -397,13 +432,20 @@ def _avgpool(node, ins, a, i):
                          exclude_pad=not int(a.get("count_include_pad", 0)))   # ONNX default count_include_pad=0 -> exclude pad cells
 @onnx_op("GlobalAveragePool")
 def _gap(node, ins, a, i): return ins[0].mean((2, 3))     # keepdims -> [N,C,1,1]
+@onnx_op("GlobalMaxPool")
+def _gmp(node, ins, a, i): return ins[0].amax((2, 3))     # keepdims -> [N,C,1,1]
 
 @onnx_op("Gemm")
 def _gemm(node, ins, a, i):
-  if float(a.get("alpha", 1.0)) != 1.0 or float(a.get("beta", 1.0)) != 1.0 or int(a.get("transA", 0)):
-    raise NotImplementedError("ONNX Gemm: only alpha=1, beta=1, transA=0 supported")
-  x = ins[0]; W = np.asarray(ins[1]); B = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else None
+  """Y = alpha*op(A)@op(B) + beta*C. alpha folds into the weight and beta into the bias (both constants),
+  so the general form still lowers to one linear; transA is a transpose on the activation."""
+  x = ins[0]
+  if int(a.get("transA", 0)): x = x.transpose((1, 0))
+  W = np.asarray(ins[1]); B = np.asarray(ins[2]) if len(ins) > 2 and ins[2] is not None else None
   if not int(a.get("transB", 0)): W = W.T            # x.linear expects [out,in]
+  alpha, beta = float(a.get("alpha", 1.0)), float(a.get("beta", 1.0))
+  if alpha != 1.0: W = (W * alpha).astype(W.dtype)
+  if beta != 1.0 and B is not None: B = (B * beta).astype(B.dtype)
   return x.linear(W, B)
 @onnx_op("MatMul")
 def _matmul(node, ins, a, i):
@@ -475,12 +517,24 @@ def _slice(node, ins, a, i):
   return x.slice_by_size(begin, size)
 @onnx_op("Softmax")
 def _softmax(node, ins, a, i): return ins[0].softmax(int(a.get("axis", -1)))
+@onnx_op("LogSoftmax")
+def _logsoftmax(node, ins, a, i):
+  """log_softmax = x - logsumexp(x, axis): the native stable reduce, where log(softmax(x)) underflows fp16."""
+  x = ins[0]; ax = int(a.get("axis", -1)) % len(x.shape)
+  return x - x.reduce_log_sum_exp((ax,))
 @onnx_op("Constant")
 def _const(node, ins, a, i):
   from onnx import numpy_helper
   return numpy_helper.to_array(a["value"])         # returns np.ndarray (folded by consumers)
 @onnx_op("Identity")
 def _identity(node, ins, a, i): return ins[0]      # pass-through (Tensor or array)
+@onnx_op("Dropout")
+def _dropout(node, ins, a, i):
+  """Inference no-op. Rejects training mode and a declared mask output (both training-time artifacts)."""
+  if len(node.output) > 1: raise NotImplementedError("ONNX Dropout: mask output not supported")
+  if len(ins) > 2 and ins[2] is not None and bool(np.asarray(ins[2])):
+    raise NotImplementedError("ONNX Dropout: training_mode=1 not supported")
+  return ins[0]
 @onnx_op("LRN")
 def _lrn(node, ins, a, i):
   """LRN; ANE local_response_norm folds alpha/size internally, so ONNX alpha maps raw and k=bias (validated on-device)."""
@@ -544,6 +598,17 @@ def _rmin(node, ins, a, i): return _reduce_op(ins, a, Tensor.amin)
 def _rsum(node, ins, a, i): return _reduce_op(ins, a, Tensor.sum)
 @onnx_op("ReduceMean")
 def _rmean(node, ins, a, i): return _reduce_op(ins, a, Tensor.mean)
+@onnx_op("CumSum")
+def _cumsum(node, ins, a, i):
+  """CumSum along `axis` (input 1, constant), via the tril-ones matmul lowering; a non-last axis is
+  transposed to last and back (the swap perm is its own inverse)."""
+  if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX CumSum: data-dependent axis not supported")
+  if int(a.get("exclusive", 0)) or int(a.get("reverse", 0)):
+    raise NotImplementedError("ONNX CumSum: exclusive/reverse not supported")
+  x = ins[0]; r = len(x.shape); ax = int(np.asarray(ins[1])) % r
+  if ax == r - 1: return x.cumsum(-1)
+  perm = list(range(r)); perm[ax], perm[-1] = perm[-1], perm[ax]
+  return x.transpose(perm).cumsum(-1).transpose(perm)
 @onnx_op("Gather")
 def _gather_h(node, ins, a, i):
   """Static-index gather along `axis`; constant scalar/1-D integer indices only (data-dependent indices have no ANE path)."""
