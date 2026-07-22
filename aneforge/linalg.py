@@ -572,6 +572,95 @@ def _diag_dominant(n, cond_scale, seed):
   return A16, b16, xref
 
 
+# Determinants, pseudoinverse, triangular solve, BiCGSTAB - composed from the routines above.
+
+def bicgstab(A, b, iters: int = 40):
+  """Solve A x = b for general (nonsymmetric) A by BiCGSTAB (van der Vorst 1992) with fixed `iters`,
+  the recurrence unrolled into one program. Denominator dots carry a small additive guard; fp16
+  breakdown surfaces as a non-finite iterate and falls back to zeros like the other solvers."""
+  A16 = np.asarray(A, f16); n = A16.shape[0]
+  AT = np.ascontiguousarray(A16.T); onen = np.ones((n, 1), f16)
+  b0 = np.asarray(b, np.float64).reshape(-1)
+  bn = float(np.linalg.norm(b0)) or 1.0                    # unit-scale b: keeps iterates in fp16 range
+  b16 = (b0 / bn).astype(f16).reshape(1, n)
+  bT = af.input((1, n))
+  dot = lambda u, v: (u * v) @ onen
+  Ax = lambda v: v @ AT
+  x, r = bT * 0.0, bT
+  rhat = bT                                                # fixed shadow residual r0^
+  rho, p = dot(bT, bT), bT
+  for _ in range(iters):
+    v = Ax(p)
+    alpha = rho / dot(rhat, v).adds(1e-7)
+    s = r - alpha * v
+    t = Ax(s)
+    omega = dot(t, s) / dot(t, t).adds(1e-7)
+    x = x + alpha * p + omega * s
+    r = s - omega * t
+    rho_new = dot(rhat, r)
+    beta = (rho_new / rho.adds(1e-7)) * (alpha / omega.adds(1e-7))
+    p = r + beta * (p - omega * v)
+    rho = rho_new
+  y = _solve_once(x, b16).ravel()
+  if not np.isfinite(y).all(): y = np.zeros(n)
+  return (y * bn).astype(np.float32)
+
+
+def solve_triangular(A, b, lower: bool = True):
+  """Solve T x = b for triangular T by substitution on the ANE, without forming the inverse
+  (the routed accessor keeps large entries finite, as in cholesky/lu)."""
+  A16 = np.asarray(A, f16); n = A16.shape[0]
+  b16 = np.asarray(b, f16).reshape(n, 1)
+  At = af.input((n, n)); bt = af.input((n, 1))
+  el = _els_routed(At, n)
+  bl = lambda i: bt.slice_by_size([i, 0], [1, 1])          # height-axis slice: begin stays 0 on the last axis
+  X: dict = {}
+  for i in (range(n) if lower else range(n - 1, -1, -1)):
+    s = bl(i)
+    for k in (range(i) if lower else range(i + 1, n)): s = s - el(i, k) * X[k]
+    X[i] = s / el(i, i)
+  out = af.concat([X[i] for i in range(n)], axis=0)
+  return _solve_once(out, A16, b16).ravel().astype(np.float32)
+
+
+def _perm_parity(perm) -> float:
+  """+1/-1 parity of a permutation via cycle decomposition."""
+  seen = np.zeros(len(perm), bool); sign = 1.0
+  for i in range(len(perm)):
+    if seen[i]: continue
+    j, clen = i, 0
+    while not seen[j]: seen[j] = True; j = int(perm[j]); clen += 1
+    if clen % 2 == 0: sign = -sign
+  return sign
+
+
+def det(A):
+  """det(A) via the on-ANE pivoted LU (P A = L U): permutation parity times prod(diag U)."""
+  P, _, U = lu_pivoted(A)
+  sign = _perm_parity(np.argmax(P, axis=1))
+  return float(sign * np.prod(np.diag(U).astype(np.float64)))
+
+
+def slogdet(A):
+  """(sign, log|det A|) via the on-ANE pivoted LU; the log-sum form stays finite where the raw
+  product over/underflows. Returns (0.0, -inf) for a singular U diagonal, like numpy."""
+  P, _, U = lu_pivoted(A)
+  d = np.diag(U).astype(np.float64)
+  if np.any(d == 0.0): return 0.0, float("-inf")
+  sign = _perm_parity(np.argmax(P, axis=1)) * float(np.prod(np.sign(d)))
+  return float(sign), float(np.sum(np.log(np.abs(d))))
+
+
+def pinv(A, k: int, oversample: int = 5, power_iters: int = 2, rcond: float = 1e-3):
+  """Rank-k pseudoinverse via randomized_svd: V diag(1/s) U^T with a relative cutoff on small
+  singular values. Rank-k by construction - for a full-rank dense pinv use a dense library."""
+  U, S, Vt = randomized_svd(A, k, oversample=oversample, power_iters=power_iters)
+  keep = S > rcond * (S[0] if S.size and S[0] > 0 else 1.0)
+  if not np.any(keep): return np.zeros((A.shape[1], A.shape[0]), np.float32)
+  W = (Vt[keep].T / S[keep]).astype(np.float32)            # [n, r]
+  return _ane_gemm(W.astype(f16), np.ascontiguousarray(U[:, keep].T, np.float32).astype(f16)).astype(np.float32)
+
+
 def main():
   print("=" * 90)
   print("aneforge.linalg - ITERATIVE linear algebra on the ANE  (matmuls=ANE, RNG/QR/SVD/loop=HOST)")

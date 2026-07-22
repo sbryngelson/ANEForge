@@ -17,6 +17,51 @@ class EinsumUnsupported(NotImplementedError):
 
 # equation parsing
 
+def _expand_ellipsis(equation: str, operands) -> str:
+  """Rewrite '...' into explicit batch letters (right-aligned per operand rank) so the v1 parser
+  never sees an ellipsis. Implicit output follows numpy's rule (ellipsis dims first, then the
+  once-only letters alphabetically). Ellipsis dims must match exactly - size-1 broadcast between
+  operands' ellipsis dims needs expand semantics the lowering does not have, and rejects."""
+  eq = equation.replace(" ", "")
+  if "..." not in eq: return eq
+  lhs, rhs = eq.split("->") if "->" in eq else (eq, None)
+  ins = lhs.split(",")
+  if len(ins) != len(operands):
+    raise ValueError(f"einsum: equation '{equation}' has {len(ins)} operand(s) "
+             f"but {len(operands)} tensor(s) were given")
+  ranks = []
+  for s, op in zip(ins, operands):
+    if "..." in s:
+      e = len(op.shape) - len(s.replace("...", ""))
+      if e < 0: raise ValueError(f"einsum: subscript '{s}' has more indices than operand rank {len(op.shape)}")
+      ranks.append(e)
+    else:
+      ranks.append(0)
+  E = max(ranks)
+  used = set(eq.replace(".", "").replace(",", "").replace("->", ""))
+  import string
+  pool = [c for c in string.ascii_letters if c not in used]
+  if len(pool) < E: raise EinsumUnsupported("einsum: not enough free letters to expand '...'")
+  batch = "".join(pool[:E])
+  sizes: dict[str, int] = {}
+  new_ins = []
+  for s, op, e in zip(ins, operands, ranks):
+    bletters = batch[E - e:] if "..." in s else ""
+    new_ins.append(s.replace("...", bletters))
+    for ch, d in zip(bletters, op.shape[:e]):
+      if ch in sizes and sizes[ch] != d:
+        raise EinsumUnsupported(f"einsum: ellipsis dims disagree ({sizes[ch]} vs {d}) - "
+                    "size-1 broadcast across '...' is unsupported")
+      sizes[ch] = d
+  if rhs is None:
+    counts = Counter("".join(new_ins))
+    singles = "".join(sorted(ch for ch, c in counts.items() if c == 1 and ch not in batch))
+    rhs = batch + singles                       # numpy: ellipsis dims first, then once-only letters
+  else:
+    rhs = rhs.replace("...", batch)
+  return ",".join(new_ins) + "->" + rhs
+
+
 def _parse(equation: str, n_operands: int) -> tuple[list[str], str]:
   """Return (input_subscripts, output_subscript); implied output is indices appearing once, alphabetical (numpy's rule)."""
   eq = equation.replace(" ", "")
@@ -166,12 +211,14 @@ def _expand_to(t: Tensor, present: list, target: list, _sizes) -> Tensor:
 # public API
 
 def einsum(equation: str, *operands: Tensor) -> Tensor:
-  """numpy-style einsum lowered to aneforge ops (matmul-reducible patterns); rejects diagonal/trace, repeated output indices, and ellipsis."""
+  """numpy-style einsum lowered to aneforge ops (matmul-reducible patterns, incl. '...' batch
+  dims); rejects diagonal/trace and repeated output indices."""
   if not operands:
     raise ValueError("einsum: at least one operand is required")
   if not all(isinstance(o, Tensor) for o in operands):
     raise TypeError("einsum: all operands must be aneforge Tensors (build them with af.input)")
 
+  equation = _expand_ellipsis(equation, operands)
   ins, out = _parse(equation, len(operands))
   for s, t in zip(ins, operands):
     if len(s) != len(t.shape):
