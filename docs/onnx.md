@@ -40,18 +40,19 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 
 | Category | ONNX ops |
 | --- | --- |
-| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf`, `HardSigmoid`, `HardSwish` |
-| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported), `Abs`, `Neg`, `Sign`, `Reciprocal`, `Sin`, `Cos`, `Softplus`, `Floor`, `Ceil`, `Round`, `Min`, `Max`, `Where`, `Tile` |
-| Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool` |
-| Linear | `Gemm`, `MatMul` |
-| Normalization | `BatchNormalization`, `InstanceNormalization` |
-| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze`, `Unsqueeze`, `Concat`, `SpaceToDepth`, `DepthToSpace`, `Slice`, `Shape` |
+| Activations | `Relu`, `Sigmoid`, `Tanh`, `Clip` (`(0,6)`->relu6, `(0,inf)`->relu), `Elu`, `Selu`, `Celu`, `Mish`, `Softsign`, `ThresholdedRelu`, `LeakyRelu`, `PRelu`, `Gelu` (exact/erf only), `Erf`, `HardSigmoid`, `HardSwish` |
+| Elementwise | `Add`, `Sub`, `Mul`, `Div`, `Pow`, `Exp`, `Log`, `Sqrt` (constant operands supported), `Abs`, `Neg`, `Sign`, `Reciprocal`, `Sin`, `Cos`, `Atan`, `Softplus`, `Floor`, `Ceil`, `Round`, `Min`, `Max`, `Sum`, `Mean` (variadic), `Where`, `Tile` |
+| Comparison / logic | `Equal`, `Greater`, `GreaterOrEqual`, `Less`, `LessOrEqual`, `Not` |
+| Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool`, `GlobalMaxPool` |
+| Linear | `Gemm` (full `alpha`/`beta`/`transA`/`transB`), `MatMul`, `Einsum` (matmul-reducible equations) |
+| Normalization | `BatchNormalization`, `InstanceNormalization`, `LayerNormalization`, `GroupNormalization`, `RMSNormalization`, `LpNormalization` (p=1/2) |
+| Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze` (incl. squeeze-all), `Unsqueeze`, `Concat`, `Split`, `Expand`, `SpaceToDepth`, `DepthToSpace`, `Slice` (step 1; step -1 as a full-axis flip), `Shape`, `Trilu` |
 | Normalization (cross-channel) | `LRN` |
 | Resampling | `Resize` (nearest / linear) |
-| Reduction | `ReduceMax`, `ReduceMin`, `ReduceSum`, `ReduceMean` |
-| Indexing | `Gather` (static indices), `ArgMax`, `TopK` (2D, values only) |
+| Reduction | `ReduceMax`, `ReduceMin`, `ReduceSum`, `ReduceMean`, `ReduceL1`, `ReduceL2`, `ReduceLogSum`, `ReduceLogSumExp`, `ReduceSumSquare`, `CumSum` |
+| Indexing | `Gather` (static indices), `ArgMax`, `ArgMin`, `TopK` (2D, values only) |
 | Quantization | `DequantizeLinear`, `QuantizeLinear` (QDQ int8) |
-| Misc | `Softmax`, `Constant`, `Identity` |
+| Misc | `Softmax`, `LogSoftmax`, `Constant`, `ConstantOfShape`, `Range`, `EyeLike`, `Identity`, `Dropout` (inference no-op) |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
 `Shape`/`Gather`/dynamic-`Reshape` plumbing into static initializers before import.

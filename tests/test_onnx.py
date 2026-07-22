@@ -5,9 +5,9 @@ from _helpers import requires_ane  # noqa: F401  (on-device gate for later op te
 
 pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 
-def _model(nodes, inputs, outputs, inits=()):
+def _model(nodes, inputs, outputs, inits=(), opset=13):
   g = helper.make_graph(nodes, "g", inputs, outputs, list(inits))
-  m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13)])
+  m = helper.make_model(g, opset_imports=[helper.make_opsetid("", opset)])
   m.ir_version = 9
   return m
 
@@ -308,10 +308,10 @@ def test_hardsigmoid_builds():
   m = _model([helper.make_node("HardSigmoid", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "clip"
 
-def test_squeeze_no_axes_raises():  # squeeze-all has no static lowering
+def test_squeeze_no_axes_squeezes_all_unit_dims():  # static shapes make squeeze-all well-defined
   n = helper.make_node("Squeeze", ["x"], ["y"])
-  m = _model([n], [_vi("x", [1, 1, 4])], [_vi("y", [4])])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  m = _model([n], [_vi("x", [1, 4, 1, 3])], [_vi("y", [4, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (4, 3)
 
 def test_maxpool_ceil_mode_builds():  # ceil_mode rounds the output size up (native MIL ceil_mode)
   n = helper.make_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2], strides=[2, 2], ceil_mode=1)
@@ -960,3 +960,129 @@ def test_expand_rank_raise_builds():  # shape with higher rank prepends axes: (4
   shp = onnx.numpy_helper.from_array(np.array([2, 4], np.int64), "s")
   m = _model([helper.make_node("Expand", ["x", "s"], ["y"])], [_vi("x", [4])], [_vi("y", [2, 4])], inits=[shp])
   _, out = af.onnx_to_tensor(m); assert out.shape == (2, 4)
+
+
+# -- tier-1 coverage: activations, reduces, Split, const folds, norms, Einsum, Slice flip, ArgMin -- #
+
+def test_tier1_activations_match_onnxruntime():
+  rng = np.random.default_rng(10); x = (rng.standard_normal((1, 32)) * 2).astype(np.float32)
+  cases = [("Selu", {}, 13), ("Celu", {"alpha": 2.0}, 13), ("Softsign", {}, 13),
+           ("ThresholdedRelu", {"alpha": 0.5}, 13), ("Atan", {}, 13), ("Mish", {}, 18)]
+  for op, attrs, opset in cases:
+    m = _model([helper.make_node(op, ["x"], ["y"], **attrs)], [_vi("x", [1, 32])], [_vi("y", [1, 32])], opset=opset)
+    got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+    ref = np.asarray(onnx_run(m, x))
+    assert np.abs(got - ref).max() < 2e-2, f"{op}: {np.abs(got - ref).max()}"
+
+def test_tier1_reduces_match_onnxruntime():  # axes attr form (opset 13); positive input keeps ReduceLogSum defined
+  rng = np.random.default_rng(11); x = (np.abs(rng.standard_normal((1, 4, 8))) + 0.1).astype(np.float32)
+  for op in ("ReduceL1", "ReduceL2", "ReduceLogSum", "ReduceLogSumExp", "ReduceSumSquare"):
+    for keep in (1, 0):
+      m = _model([helper.make_node(op, ["x"], ["y"], axes=[2], keepdims=keep)],
+                 [_vi("x", [1, 4, 8])], [_vi("y", [1, 4, 1] if keep else [1, 4])])
+      got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+      ref = np.asarray(onnx_run(m, x))
+      assert got.shape == ref.shape and np.abs(got - ref).max() < 5e-2, f"{op} keepdims={keep}"
+
+def test_argmin_matches_onnxruntime():  # argmax(-x) bridge; compare index values as floats
+  rng = np.random.default_rng(12); x = rng.standard_normal((4, 16)).astype(np.float32)
+  m = _model([helper.make_node("ArgMin", ["x"], ["y"], axis=1)], [_vi("x", [4, 16])],
+             [helper.make_tensor_value_info("y", TensorProto.INT64, [4, 1])])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  ref = np.asarray(onnx_run(m, x)).astype(np.float32)
+  assert got.shape == ref.shape and np.abs(got - ref).max() < 0.5
+
+def test_split_equal_concat_roundtrip_matches_onnxruntime():  # native split path
+  rng = np.random.default_rng(13); x = rng.standard_normal((1, 8, 4)).astype(np.float32)
+  nodes = [helper.make_node("Split", ["x"], ["a", "b"], axis=1),
+           helper.make_node("Concat", ["b", "a"], ["y"], axis=1)]   # swap halves so the split is observable
+  m = _model(nodes, [_vi("x", [1, 8, 4])], [_vi("y", [1, 8, 4])])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-2
+
+def test_split_uneven_sizes_builds():  # split input (opset 13) with uneven sizes -> slice path
+  sp = onnx.numpy_helper.from_array(np.array([3, 5], np.int64), "sp")
+  nodes = [helper.make_node("Split", ["x", "sp"], ["a", "b"], axis=1),
+           helper.make_node("Concat", ["b", "a"], ["y"], axis=1)]
+  m = _model(nodes, [_vi("x", [1, 8])], [_vi("y", [1, 8])], inits=[sp])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 8)
+
+def test_constantofshape_range_eyelike_fold():  # const generators fold and bake into consumers
+  cofs = helper.make_node("ConstantOfShape", ["s"], ["c"],
+                          value=onnx.numpy_helper.from_array(np.array([2.5], np.float32), "v"))
+  s = onnx.numpy_helper.from_array(np.array([1, 4], np.int64), "s")
+  m = _model([cofs, helper.make_node("Add", ["x", "c"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])], inits=[s])
+  x = np.ones((1, 4), np.float32)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - 3.5).max() < 1e-2
+  st = onnx.numpy_helper.from_array(np.array(0.0, np.float32), "st")
+  li = onnx.numpy_helper.from_array(np.array(4.0, np.float32), "li")
+  de = onnx.numpy_helper.from_array(np.array(1.0, np.float32), "de")
+  m = _model([helper.make_node("Range", ["st", "li", "de"], ["r"]),
+              helper.make_node("Add", ["x", "r"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])], inits=[st, li, de])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - (1.0 + np.arange(4))).max() < 1e-2
+  m = _model([helper.make_node("EyeLike", ["x"], ["e"]), helper.make_node("Add", ["x", "e"], ["y"])],
+             [_vi("x", [4, 4])], [_vi("y", [4, 4])])
+  x4 = np.zeros((4, 4), np.float32)
+  got = np.asarray(af.load_onnx(m)(x4.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.eye(4)).max() < 1e-3
+
+def test_trilu_tensor_matches_onnxruntime():  # mask-multiply path on an activation
+  rng = np.random.default_rng(14); x = rng.standard_normal((1, 6, 6)).astype(np.float32)
+  m = _model([helper.make_node("Trilu", ["x"], ["y"], upper=0)], [_vi("x", [1, 6, 6])], [_vi("y", [1, 6, 6])], opset=14)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-2
+
+def test_lpnormalization_matches_onnxruntime():
+  rng = np.random.default_rng(15); x = rng.standard_normal((2, 16)).astype(np.float32)
+  for p in (2, 1):
+    m = _model([helper.make_node("LpNormalization", ["x"], ["y"], axis=-1, p=p)], [_vi("x", [2, 16])], [_vi("y", [2, 16])])
+    got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+    assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 2e-2, f"p={p}"
+
+def test_groupnorm_matches_onnxruntime():  # opset 21 per-channel scale/bias
+  rng = np.random.default_rng(16); x = rng.standard_normal((1, 4, 4, 4)).astype(np.float32)
+  sc = _init(np.abs(rng.standard_normal(4)) + 0.5, "sc"); bi = _init(rng.standard_normal(4), "bi")
+  m = _model([helper.make_node("GroupNormalization", ["x", "sc", "bi"], ["y"], num_groups=2)],
+             [_vi("x", [1, 4, 4, 4])], [_vi("y", [1, 4, 4, 4])], inits=[sc, bi], opset=21)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 5e-2
+
+def test_rmsnormalization_matches_reference():  # numpy reference (keeps the test independent of ORT opset-23 support)
+  rng = np.random.default_rng(17); x = rng.standard_normal((2, 16)).astype(np.float32)
+  sc = _init(np.abs(rng.standard_normal(16)) + 0.5, "sc")
+  m = _model([helper.make_node("RMSNormalization", ["x", "sc"], ["y"])], [_vi("x", [2, 16])], [_vi("y", [2, 16])],
+             inits=[sc], opset=23)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  scv = onnx.numpy_helper.to_array(sc)
+  ref = x / np.sqrt((x ** 2).mean(-1, keepdims=True) + 1e-5) * scv
+  assert np.abs(got - ref).max() < 3e-2
+
+def test_einsum_matmul_matches_onnxruntime():
+  rng = np.random.default_rng(18); x = rng.standard_normal((4, 8)).astype(np.float32)
+  w = _init(rng.standard_normal((8, 6)), "w")
+  m = _model([helper.make_node("Einsum", ["x", "w"], ["y"], equation="ij,jk->ik")],
+             [_vi("x", [4, 8])], [_vi("y", [4, 6])], inits=[w])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 5e-2
+
+def test_slice_full_flip_matches_onnxruntime():  # step=-1 over the whole axis -> native reverse
+  rng = np.random.default_rng(19); x = rng.standard_normal((1, 8)).astype(np.float32)
+  st = onnx.numpy_helper.from_array(np.array([-1], np.int64), "st")
+  en = onnx.numpy_helper.from_array(np.array([np.iinfo(np.int64).min], np.int64), "en")
+  ax = onnx.numpy_helper.from_array(np.array([1], np.int64), "ax")
+  sp = onnx.numpy_helper.from_array(np.array([-1], np.int64), "sp")
+  m = _model([helper.make_node("Slice", ["x", "st", "en", "ax", "sp"], ["y"])],
+             [_vi("x", [1, 8])], [_vi("y", [1, 8])], inits=[st, en, ax, sp])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-3
+
+def test_slice_partial_reverse_raises():  # only full-axis flips are supported at step=-1
+  st = onnx.numpy_helper.from_array(np.array([5], np.int64), "st")
+  en = onnx.numpy_helper.from_array(np.array([2], np.int64), "en")
+  ax = onnx.numpy_helper.from_array(np.array([1], np.int64), "ax")
+  sp = onnx.numpy_helper.from_array(np.array([-1], np.int64), "sp")
+  m = _model([helper.make_node("Slice", ["x", "st", "en", "ax", "sp"], ["y"])],
+             [_vi("x", [1, 8])], [_vi("y", [1, 3])], inits=[st, en, ax, sp])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)

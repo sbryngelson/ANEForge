@@ -287,6 +287,24 @@ def _gelu(node, ins, a, i):
   return ins[0].gelu()
 @onnx_op("PRelu")
 def _prelu(node, ins, a, i): return ins[0].prelu(np.asarray(ins[1]).reshape(-1))   # slope=ins[1], [C,1,1]->[C]
+@onnx_op("Selu")
+def _selu(node, ins, a, i):
+  """selu = gamma * elu(x, alpha) exactly (ONNX defaults are the Klambauer et al. constants)."""
+  alpha = float(a.get("alpha", 1.6732632423543772)); gamma = float(a.get("gamma", 1.0507009873554805))
+  return ins[0].elu(alpha) * gamma
+@onnx_op("Celu")
+def _celu(node, ins, a, i):
+  """celu(x, alpha) = alpha * elu(x/alpha, 1): the positive branch recovers x, the negative alpha*(exp(x/alpha)-1)."""
+  alpha = float(a.get("alpha", 1.0))
+  return (ins[0] * (1.0 / alpha)).elu(1.0) * alpha
+@onnx_op("Mish")
+def _mish(node, ins, a, i): return ins[0] * ins[0].softplus().tanh()
+@onnx_op("Softsign")
+def _softsign(node, ins, a, i): return ins[0].softsign()
+@onnx_op("ThresholdedRelu")
+def _thresholded_relu(node, ins, a, i): return ins[0].thresholded_relu(float(a.get("alpha", 1.0)))
+@onnx_op("Atan")
+def _atan(node, ins, a, i): return ins[0].atan()
 @onnx_op("Pow")
 def _pow(node, ins, a, i): x, y = _binops(ins); return x.pow(y)
 @onnx_op("InstanceNormalization")
@@ -452,6 +470,14 @@ def _matmul(node, ins, a, i):
   if not isinstance(ins[0], Tensor): raise NotImplementedError("ONNX MatMul: a constant first operand is not supported")
   b = ins[1]
   return ins[0] @ (np.asarray(b) if not isinstance(b, Tensor) else b)
+@onnx_op("Einsum")
+def _einsum_h(node, ins, a, i):
+  """Routes to aneforge.einsum (matmul-reducible specs; diagonal/ellipsis reject as EinsumUnsupported)."""
+  from .einsum import einsum as _es
+  eq = _sattr(a, "equation", None)
+  if not eq: raise ValueError("ONNX Einsum: missing equation attribute")
+  ts = [v if isinstance(v, Tensor) else _baked(np.asarray(v, np.float32)) for v in ins]
+  return _es(eq, *ts)  # type: ignore[arg-type]  # einsum.py imports Tensor absolutely; same class at runtime
 @onnx_op("BatchNormalization")
 def _bnorm(node, ins, a, i):
   x, s, bb, mean, var = ins[0], np.asarray(ins[1]), np.asarray(ins[2]), np.asarray(ins[3]), np.asarray(ins[4])
@@ -464,6 +490,27 @@ def _layernorm(node, ins, a, i):
   bias = np.asarray(ins[2]).reshape(-1) if len(ins) > 2 and ins[2] is not None else np.zeros_like(scale)
   m, d = prod(x.shape[:ax]) or 1, prod(x.shape[ax:])
   return x.reshape(m, d).layer_norm(scale, bias, float(a.get("epsilon", 1e-5))).reshape(*x.shape)
+@onnx_op("LpNormalization")
+def _lpnorm(node, ins, a, i):
+  """p=2 maps to the native per-axis l2_norm; p=1 divides by the keepdims L1 reduce."""
+  x = ins[0]; ax = int(a.get("axis", -1)) % len(x.shape); p = int(a.get("p", 2))
+  if p == 2: return x.l2_norm(ax)
+  if p == 1: return x / x.l1_norm((ax,))
+  raise NotImplementedError(f"ONNX LpNormalization: p={p} not supported (only 1/2)")
+@onnx_op("GroupNormalization")
+def _groupnorm(node, ins, a, i):
+  """GroupNormalization (opset 21 semantics: per-channel scale/bias) on NCHW via native group_norm."""
+  x = ins[0]
+  if len(x.shape) != 4: raise NotImplementedError("ONNX GroupNormalization: 4D NCHW inputs only")
+  return x.group_norm(np.asarray(ins[1]).reshape(-1), np.asarray(ins[2]).reshape(-1),
+                      int(a["num_groups"]), eps=float(a.get("epsilon", 1e-5)))
+@onnx_op("RMSNormalization")
+def _rmsnorm(node, ins, a, i):
+  """RMSNorm over the trailing axes [axis:], like the LayerNormalization handler: 2-D view, native rms_norm, reshape back."""
+  x = ins[0]; ax = int(a.get("axis", -1)) % len(x.shape)
+  scale = np.asarray(ins[1]).reshape(-1)
+  m, d = prod(x.shape[:ax]) or 1, prod(x.shape[ax:])
+  return x.reshape(m, d).rms_norm(scale, eps=float(a.get("epsilon", 1e-5))).reshape(*x.shape)
 @onnx_op("Reshape")
 def _reshape(node, ins, a, i):
   shape = [int(v) for v in np.asarray(ins[1])]
@@ -481,7 +528,9 @@ def _transpose(node, ins, a, i):
 def _squeeze(node, ins, a, i):
   axes = a.get("axes")                               # opset<13 attr; opset>=13 axes input
   if axes is None and len(ins) > 1 and ins[1] is not None: axes = [int(v) for v in np.asarray(ins[1])]
-  if axes is None: raise NotImplementedError("ONNX Squeeze: squeeze-all (no axes) not supported")
+  if axes is None:                                   # squeeze-all: static shapes make it well-defined
+    axes = [k for k, d in enumerate(ins[0].shape) if d == 1]
+    if not axes: return ins[0]
   return ins[0].squeeze(tuple(axes))
 @onnx_op("Unsqueeze")
 def _unsqueeze(node, ins, a, i):
@@ -493,6 +542,26 @@ def _concat_h(node, ins, a, i):
   if all(_isc(v) for v in ins):                                             # concat of constant shape pieces folds
     return np.concatenate([np.atleast_1d(np.asarray(v)) for v in ins], axis=int(a["axis"]))
   return _concat(list(ins), axis=int(a["axis"]))
+@onnx_op("Split")
+def _split_h(node, ins, a, i):
+  """Split along `axis`: equal parts use the native split; uneven sizes (the `split` attr/input) slice."""
+  x = ins[0]; ax = int(a.get("axis", 0)) % len(x.shape)
+  sizes = a.get("split")
+  if sizes is None and len(ins) > 1 and ins[1] is not None:
+    if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Split: data-dependent split sizes not supported")
+    sizes = [int(v) for v in np.asarray(ins[1]).ravel()]
+  if sizes is None:                                  # equal parts from the output count (last chunk may be smaller)
+    n = int(a.get("num_outputs", len(node.output))); chunk = -(-x.shape[ax] // n)
+    sizes = [chunk] * (n - 1) + [x.shape[ax] - chunk * (n - 1)]
+  if sum(sizes) != x.shape[ax]: raise ValueError(f"ONNX Split: sizes {sizes} do not cover axis {ax} of {x.shape}")
+  if len(set(sizes)) == 1:
+    from .graph import split as _gsplit
+    return _gsplit(x, len(sizes), axis=ax)
+  outs, off = [], 0
+  for s in sizes:
+    begin = [0] * len(x.shape); size = list(x.shape); begin[ax] = off; size[ax] = s
+    outs.append(x.slice_by_size(begin, size)); off += s
+  return outs
 @onnx_op("Shape")
 def _shape_op(node, ins, a, i):
   """Static shape as an int64 constant (the channel-shuffle shape subgraph folds at import)."""
@@ -508,12 +577,19 @@ def _slice(node, ins, a, i):
     d = np.asarray(ins[0]); sl = [slice(None)] * d.ndim
     for ax, s0, e0, st0 in zip(axes, starts, ends, steps): sl[ax % d.ndim] = slice(s0, e0, st0)
     return d[tuple(sl)]
-  if any(st != 1 for st in steps): raise NotImplementedError("ONNX Slice: step != 1 on a tensor not supported")
   x = ins[0]; rank = len(x.shape); begin = [0] * rank; size = list(x.shape)   # activation slice -> static slice_by_size
-  for ax, s0, e0 in zip(axes, starts, ends):
+  rev = []
+  for ax, s0, e0, st0 in zip(axes, starts, ends, steps):
     ax %= rank; dim = x.shape[ax]
+    if st0 == -1:                                    # full-extent flip -> native reverse (partial reversed slices stay unsupported)
+      full = (s0 == -1 or s0 >= dim - 1) and e0 < -dim
+      if not full: raise NotImplementedError("ONNX Slice: step=-1 is supported only as a full-axis flip")
+      rev.append(ax); continue
+    if st0 != 1: raise NotImplementedError(f"ONNX Slice: step={st0} on a tensor not supported")
     s0 = s0 + dim if s0 < 0 else min(s0, dim); e0 = e0 + dim if e0 < 0 else min(e0, dim)
     begin[ax] = max(0, s0); size[ax] = max(0, e0 - begin[ax])
+  if rev: x = x.reverse(tuple(rev))
+  if begin == [0] * rank and size == list(x.shape): return x
   return x.slice_by_size(begin, size)
 @onnx_op("Softmax")
 def _softmax(node, ins, a, i): return ins[0].softmax(int(a.get("axis", -1)))
@@ -528,6 +604,41 @@ def _const(node, ins, a, i):
   return numpy_helper.to_array(a["value"])         # returns np.ndarray (folded by consumers)
 @onnx_op("Identity")
 def _identity(node, ins, a, i): return ins[0]      # pass-through (Tensor or array)
+@onnx_op("ConstantOfShape")
+def _const_of_shape(node, ins, a, i):
+  """Constant fill from a static shape input; folds like Constant (consumers bake it)."""
+  if isinstance(ins[0], Tensor): raise NotImplementedError("ONNX ConstantOfShape: data-dependent shape not supported")
+  shape = tuple(int(v) for v in np.asarray(ins[0]).ravel())
+  v = a.get("value")
+  if v is None: return np.zeros(shape, np.float32)
+  from onnx import numpy_helper
+  arr = numpy_helper.to_array(v)
+  return np.full(shape, arr.ravel()[0], dtype=arr.dtype)
+@onnx_op("Range")
+def _range(node, ins, a, i):
+  """Constant-input Range folds to np.arange (shape-arithmetic plumbing)."""
+  if any(isinstance(v, Tensor) for v in ins[:3]): raise NotImplementedError("ONNX Range: data-dependent bounds not supported")
+  s, l, d = (np.asarray(v).ravel()[0] for v in ins[:3])
+  return np.arange(s, l, d)
+@onnx_op("EyeLike")
+def _eyelike(node, ins, a, i):
+  """Identity matrix of the input's (static) shape; only the shape is consumed, so a Tensor input is fine."""
+  shape = ins[0].shape if isinstance(ins[0], Tensor) else np.asarray(ins[0]).shape
+  if len(shape) != 2: raise NotImplementedError("ONNX EyeLike: 2D inputs only")
+  return np.eye(shape[0], shape[1], k=int(a.get("k", 0)), dtype=np.float32)
+@onnx_op("Trilu")
+def _trilu(node, ins, a, i):
+  """Upper/lower triangle. A constant folds; a Tensor multiplies by the baked 0/1 triangle mask."""
+  k = 0
+  if len(ins) > 1 and ins[1] is not None:
+    if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Trilu: data-dependent k not supported")
+    k = int(np.asarray(ins[1]).ravel()[0])
+  tri = np.triu if int(a.get("upper", 1)) else np.tril
+  if _isc(ins[0]): return tri(np.asarray(ins[0]), k)
+  x = ins[0]
+  if len(x.shape) < 2: raise NotImplementedError("ONNX Trilu: rank >= 2 required")
+  mask = tri(np.ones(x.shape[-2:], np.float16), k)
+  return x * _baked(np.ascontiguousarray(np.broadcast_to(mask, x.shape)))
 @onnx_op("Dropout")
 def _dropout(node, ins, a, i):
   """Inference no-op. Rejects training mode and a declared mask output (both training-time artifacts)."""
@@ -598,6 +709,16 @@ def _rmin(node, ins, a, i): return _reduce_op(ins, a, Tensor.amin)
 def _rsum(node, ins, a, i): return _reduce_op(ins, a, Tensor.sum)
 @onnx_op("ReduceMean")
 def _rmean(node, ins, a, i): return _reduce_op(ins, a, Tensor.mean)
+@onnx_op("ReduceL1")
+def _rl1(node, ins, a, i): return _reduce_op(ins, a, Tensor.l1_norm)
+@onnx_op("ReduceL2")
+def _rl2(node, ins, a, i): return _reduce_op(ins, a, lambda x, axes: x.sum_square(axes).sqrt())
+@onnx_op("ReduceLogSum")
+def _rlogsum(node, ins, a, i): return _reduce_op(ins, a, Tensor.log_sum)
+@onnx_op("ReduceLogSumExp")
+def _rlse(node, ins, a, i): return _reduce_op(ins, a, Tensor.reduce_log_sum_exp)
+@onnx_op("ReduceSumSquare")
+def _rss(node, ins, a, i): return _reduce_op(ins, a, Tensor.sum_square)
 @onnx_op("CumSum")
 def _cumsum(node, ins, a, i):
   """CumSum along `axis` (input 1, constant), via the tril-ones matmul lowering; a non-last axis is
@@ -629,6 +750,16 @@ def _argmax_h(node, ins, a, i):
   if int(a.get("select_last_index", 0)): raise NotImplementedError("ONNX ArgMax: select_last_index=1 not supported")
   ax = int(a.get("axis", 0)) % 2
   y = x.argmax(ax)
+  if not int(a.get("keepdims", 1)): y = y.squeeze(ax)
+  return y
+@onnx_op("ArgMin")
+def _argmin_h(node, ins, a, i):
+  """ArgMin as argmax(-x) (same 2D [C,W] bridge and index encoding as ArgMax)."""
+  x = ins[0]
+  if len(x.shape) != 2: raise NotImplementedError("ONNX ArgMin: only 2D inputs supported on the ANE")
+  if int(a.get("select_last_index", 0)): raise NotImplementedError("ONNX ArgMin: select_last_index=1 not supported")
+  ax = int(a.get("axis", 0)) % 2
+  y = (x * -1.0).argmax(ax)
   if not int(a.get("keepdims", 1)): y = y.squeeze(ax)
   return y
 @onnx_op("TopK")
