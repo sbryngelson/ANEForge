@@ -13,6 +13,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly drift watch: this project links private Apple framework symbols, so a macOS or
+  # Xcode update on the hosted images can break the dispatch-dylib build with no code change
+  # on our side. Re-running CI on a schedule turns "did Apple break us" into an automated
+  # signal instead of something noticed at the next commit. Mondays 07:00 UTC.
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:   # allow a manual run (e.g. to exercise the scheduled path on demand)
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -127,8 +134,15 @@ jobs:
       - run: mkdocs build --strict
 
   macos:
-    name: macOS build + smoke (Apple Silicon, no ANE)
-    runs-on: macos-14
+    name: macOS build + smoke (${{ matrix.os }}, no ANE)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # one OS image breaking must not mask the others' status
+      matrix:
+        # macos-14 = oldest supported (README: macOS 14+); macos-15 = current; macos-latest
+        # auto-tracks the newest hosted image, so a future macOS/Xcode bump is caught by the
+        # weekly run without editing this list. latest may alias 15 today; the overlap is cheap.
+        os: [macos-14, macos-15, macos-latest]
     steps:
       - uses: actions/checkout@v6
         with:
