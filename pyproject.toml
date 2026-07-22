@@ -81,7 +81,7 @@ mlperf = [
 # suites need real ANE hardware to run.
 dev = [
     "ruff",
-    "pyright==1.1.410",  # type checker; pinned so a new release can't add errors out from under CI
+    "pyright==1.1.411",  # type checker; pinned so a new release can't add errors out from under CI
     "pylint",            # CI 2-space + trailing-whitespace lock (W0311/C0303); see .github/workflows/ci.yml
     "pre-commit",        # local hooks mirroring CI; see .pre-commit-config.yaml
     "pytest",
