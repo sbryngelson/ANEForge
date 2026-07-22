@@ -1,6 +1,6 @@
 # Documentation build dependencies (Read the Docs / local `mkdocs serve`).
-mkdocs>=1.6,<2
-mkdocs-material>=9.5,<10
+mkdocs>=1.6.1,<2
+mkdocs-material>=9.7.7,<10
 # API reference generated from the package's docstrings by static source analysis
 # (griffe), so the build never imports the package or its private-framework dylib.
-mkdocstrings[python]>=0.26
+mkdocstrings[python]>=1.0.6
