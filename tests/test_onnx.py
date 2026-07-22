@@ -351,10 +351,20 @@ def test_gelu_builds():  # default approximate="none" -> exact erf-gelu
   m = _model([helper.make_node("Gelu", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "gelu"
 
-def test_gelu_tanh_raises():  # tanh approximation is not implemented
+def test_gelu_tanh_builds_as_primitive_graph():
   n = helper.make_node("Gelu", ["x"], ["y"], approximate="tanh")
   m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m)
+  assert out.shape == (1, 3) and out.op == "mul"
+
+def test_gelu_tanh_matches_closed_form():
+  n = helper.make_node("Gelu", ["x"], ["y"], approximate="tanh")
+  m = _model([n], [_vi("x", [1, 17])], [_vi("y", [1, 17])])
+  x = np.linspace(-4.0, 4.0, 17, dtype=np.float16).reshape(1, 17)
+  xf = x.astype(np.float64)
+  ref = 0.5 * xf * (1.0 + np.tanh(np.sqrt(2.0 / np.pi) * (xf + 0.044715 * xf**3)))
+  got = np.asarray(af.load_onnx(m)(x)).astype(np.float64)
+  assert np.max(np.abs(got - ref)) < 3e-2
 
 def test_prelu_builds():  # slope is the 2nd input ([C,1,1] flattened to [C])
   slope = _init(np.ones((4, 1, 1)), "slope")

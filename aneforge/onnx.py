@@ -280,10 +280,12 @@ def _elu(node, ins, a, i): return ins[0].elu(float(a.get("alpha", 1.0)))
 def _lrelu(node, ins, a, i): return ins[0].leaky_relu(float(a.get("alpha", 0.01)))
 @onnx_op("Gelu")
 def _gelu(node, ins, a, i):
-  """ONNX Gelu (opset 20); exact erf-gelu only ('approximate=tanh' unsupported)."""
+  """ONNX Gelu (opset 20); preserve exact gelu or decompose the tanh approximation."""
   ap = a.get("approximate")
   if ap is not None and (ap.decode() if isinstance(ap, bytes) else ap) == "tanh":
-    raise NotImplementedError("ONNX Gelu: approximate='tanh' not supported (only exact/erf)")
+    x = ins[0]
+    inner = (x + x.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
+    return (x * 0.5) * inner.tanh().adds(1.0)
   return ins[0].gelu()
 @onnx_op("PRelu")
 def _prelu(node, ins, a, i): return ins[0].prelu(np.asarray(ins[1]).reshape(-1))   # slope=ins[1], [C,1,1]->[C]
