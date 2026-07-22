@@ -59,6 +59,7 @@ def test_emitter_accepts_compress_mode():
   assert em8.compress == "int8"
 
 
+@requires_ane
 def test_compress_none_matches_int8_false_mil():
   """compress=None must be byte-identical to the historical int8=False path."""
   import aneforge as af

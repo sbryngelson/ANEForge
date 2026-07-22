@@ -5,6 +5,8 @@ from aneforge.llm import LlamaConfig, LayerSpec, LlamaPrefill
 from aneforge.moe import _moe, _moe_adapter
 from _helpers import requires_ane
 
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
+
 
 def _cfg(dim=32, E=8, k=2):
   return LlamaConfig(dim=dim, n_layers=1, n_heads=4, n_kv_heads=2, ffn_dim=16, vocab=16,

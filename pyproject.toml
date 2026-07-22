@@ -118,6 +118,12 @@ packages = ["aneforge"]
 # Collect only the tracked correctness suites. The RE/paper test tooling (fuzzers,
 # capability census) lives in the gitignored utils/ dir and is intentionally excluded.
 testpaths = ["tests"]
+# Device tests carry the `requires_ane` marker (registered here + in tests/conftest.py):
+# CI runs `pytest -m "not requires_ane"` to collect only the hardware-free suites, and the
+# conftest hook auto-skips any that are still collected on a machine without the ANE.
+markers = [
+  "requires_ane: needs real ANE hardware; auto-skipped when the e5rt dylib is unavailable",
+]
 # Run each test in its own forked subprocess: every compile allocates an ANE program
 # and a single process accumulates them across the suite (the training/streaming tests
 # build hundreds), approaching the per-PID program limit and causing sporadic

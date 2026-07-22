@@ -11,6 +11,9 @@ from _corpus import _build_graph
 
 from aneforge import _targets as T
 from aneforge._compile import _lower_fused_to_dir, cross_compile_check
+from _helpers import requires_ane
+
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 
 ARCHS = [("h13", 2), ("h14", 3), ("h15", 4), ("h16s", 5)]
 

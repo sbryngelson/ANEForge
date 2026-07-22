@@ -3,6 +3,8 @@ import aneforge as af
 from aneforge.llm import LlamaConfig, LlamaPrefill, prefill_block, rope, rope_tables, _weights_from_state_dict, _cfg_from_hf
 from _helpers import requires_ane, make_random_llama_model as _random_model
 
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
+
 
 def test_rope_tables_shape():
   cos, sin = rope_tables(8, 16)

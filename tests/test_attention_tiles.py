@@ -1,6 +1,9 @@
 """Attention query-tile autotune: heuristic by default, output-invariant across counts, cached."""
 import os
 import tempfile
+from _helpers import requires_ane
+
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 os.environ["ANEFORGE_CACHE_DIR"] = tempfile.mkdtemp()      # hermetic: no prior tuned values
 
 import numpy as np

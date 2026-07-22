@@ -108,8 +108,11 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]"
-      # The compile-backoff rate-limiter is a pure unit test (fake clock, no ANE).
-      - run: pytest tests/test_compile_breaker.py -q
+      # Every hardware-free suite. Device tests carry the `requires_ane` marker and are
+      # deselected here; what remains runs off-device (rate-limiter, cost-model projections,
+      # op catalog, target/family tables, build guards, graph-rewrite identities, route and
+      # preflight reconciliation, ...). New unmarked suites are picked up automatically.
+      - run: pytest -m "not requires_ane" -q
 
   docs:
     name: docs (mkdocs build)
@@ -144,6 +147,7 @@ jobs:
       - run: sh aneforge/_lib/build.sh
       - run: python -m compileall -q aneforge
       - run: pip install -e ".[dev]"
-      # Import + graph build on macOS, and the hardware-free unit test.
+      # Import + graph build on macOS, and every hardware-free suite (device tests, marked
+      # `requires_ane`, are deselected; the ANE is never dispatched on this runner).
       - run: python -c "import aneforge as af; print('aneforge', af.__version__); af.input((1, 3, 8, 8))"
-      - run: pytest tests/test_compile_breaker.py -q
+      - run: pytest -m "not requires_ane" -q

@@ -51,4 +51,10 @@ def ane_available() -> bool:
     return False
 
 
-requires_ane = pytest.mark.skipif(not ane_available(), reason="ANE/e5rt dylib unavailable")
+# A real, selectable marker (not a bare skipif): CI runs `pytest -m "not requires_ane"`
+# to collect only the hardware-free suites, and conftest's collection hook auto-skips any
+# requires_ane test that is still collected on a machine without the ANE (so a plain
+# `pytest` run off-device skips rather than errors). Applied per test (@requires_ane) or
+# per module (pytestmark = requires_ane). The ane_available() probe runs once in the hook,
+# not at import, so importing this helper never triggers a dylib build.
+requires_ane = pytest.mark.requires_ane
