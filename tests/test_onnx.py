@@ -292,11 +292,11 @@ def test_conv_auto_pad_raises():
   m = _model([n], [_vi("x", [1, 3, 32, 32])], [_vi("y", [1, 8, 32, 32])], inits=[w])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
-def test_gemm_alpha_raises():
+def test_gemm_alpha_beta_builds():  # alpha/beta fold into the constant weight/bias -> still one linear
   w = _init(np.zeros((10, 16)), "W"); b = _init(np.zeros(10), "B")
-  n = helper.make_node("Gemm", ["x", "W", "B"], ["y"], transB=1, alpha=2.0)
+  n = helper.make_node("Gemm", ["x", "W", "B"], ["y"], transB=1, alpha=2.0, beta=0.5)
   m = _model([n], [_vi("x", [1, 16])], [_vi("y", [1, 10])], inits=[w, b])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 10)
 
 def test_add_constant_operand_builds():  # a constant operand bakes in as a fused const_array
   c = _init(np.zeros((1, 3)), "c")
@@ -866,3 +866,97 @@ def test_resize_half_pixel_approx_close():  # the opt-in approximation is ~0.99 
   got = np.asarray(af.load_onnx(m, approx_resize=True)(x.astype(np.float16))).astype(np.float32).ravel()
   ref = np.asarray(onnx_run(m, x)).astype(np.float32).ravel()
   cos = _cos(got, ref); assert cos > 0.95, f"half-pixel approx Resize ANE vs onnxruntime cosine={cos}"
+
+
+# -- starter ops: Dropout, Sum/Mean, GlobalMaxPool, comparisons, CumSum, LogSoftmax, Gemm, Expand -- #
+
+def test_dropout_is_identity():  # inference no-op: passes its input straight through
+  m = _model([helper.make_node("Dropout", ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  ins, out = af.onnx_to_tensor(m); assert out is ins[0]
+
+def test_dropout_mask_output_raises():  # a declared mask output is a training-time artifact
+  m = _model([helper.make_node("Dropout", ["x"], ["y", "mask"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_sum_mean_variadic_build():  # 3-input fold
+  for op in ("Sum", "Mean"):
+    m = _model([helper.make_node(op, ["a", "b", "c"], ["y"])],
+               [_vi("a", [1, 4]), _vi("b", [1, 4]), _vi("c", [1, 4])], [_vi("y", [1, 4])])
+    _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4)
+
+def test_mean_matches_onnxruntime():  # constant operands bake in; 1/N scale is exact
+  rng = np.random.default_rng(0); x = rng.standard_normal((1, 8)).astype(np.float32)
+  c1 = _init(rng.standard_normal((1, 8)), "c1"); c2 = _init(rng.standard_normal((1, 8)), "c2")
+  m = _model([helper.make_node("Mean", ["x", "c1", "c2"], ["y"])], [_vi("x", [1, 8])], [_vi("y", [1, 8])], inits=[c1, c2])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - onnx_run(m, x)).max() < 1e-2
+
+def test_global_max_pool_builds():
+  m = _model([helper.make_node("GlobalMaxPool", ["x"], ["y"])], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 1, 1])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3, 1, 1) and out.op == "reduce_max"
+
+def test_global_max_pool_matches_onnxruntime():
+  rng = np.random.default_rng(1); x = rng.standard_normal((1, 3, 8, 8)).astype(np.float32)
+  m = _model([helper.make_node("GlobalMaxPool", ["x"], ["y"])], [_vi("x", [1, 3, 8, 8])], [_vi("y", [1, 3, 1, 1])])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - onnx_run(m, x)).max() < 1e-2
+
+def test_comparison_ops_build():
+  for op, want in [("Equal", "equal"), ("Greater", "greater"), ("GreaterOrEqual", "greater_equal"),
+                   ("Less", "less"), ("LessOrEqual", "less_equal")]:
+    m = _model([helper.make_node(op, ["a", "b"], ["y"])], [_vi("a", [1, 4]), _vi("b", [1, 4])], [_vi("y", [1, 4])])
+    _, out = af.onnx_to_tensor(m); assert out.op == want, f"{op} -> {out.op}"
+
+def test_not_builds():
+  m = _model([helper.make_node("Greater", ["a", "b"], ["c"]), helper.make_node("Not", ["c"], ["y"])],
+             [_vi("a", [1, 4]), _vi("b", [1, 4])], [_vi("y", [1, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.op == "logical_not"
+
+def test_greater_where_matches_onnxruntime():  # Greater(x, c) selecting via Where == elementwise max vs ORT
+  rng = np.random.default_rng(2); x = rng.standard_normal((1, 16)).astype(np.float32)
+  c = _init(rng.standard_normal((1, 16)), "c")
+  m = _model([helper.make_node("Greater", ["x", "c"], ["cond"]), helper.make_node("Where", ["cond", "x", "c"], ["y"])],
+             [_vi("x", [1, 16])], [_vi("y", [1, 16])], inits=[c])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - onnx_run(m, x)).max() < 1e-2
+
+def test_cumsum_matches_onnxruntime():  # last axis and (via the transpose wrap) axis 0
+  rng = np.random.default_rng(3); x = rng.standard_normal((4, 8)).astype(np.float32)
+  for ax in (1, 0):
+    axc = onnx.numpy_helper.from_array(np.array(ax, np.int64), "ax")
+    m = _model([helper.make_node("CumSum", ["x", "ax"], ["y"])], [_vi("x", [4, 8])], [_vi("y", [4, 8])], inits=[axc])
+    got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+    assert np.abs(got - onnx_run(m, x)).max() < 2e-2, f"axis={ax}"
+
+def test_cumsum_exclusive_raises():
+  axc = onnx.numpy_helper.from_array(np.array(1, np.int64), "ax")
+  m = _model([helper.make_node("CumSum", ["x", "ax"], ["y"], exclusive=1)], [_vi("x", [4, 8])], [_vi("y", [4, 8])], inits=[axc])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def test_logsoftmax_matches_onnxruntime():  # spread logits: log(softmax) would underflow fp16, x - lse does not
+  x = np.linspace(-8.0, 8.0, 16).astype(np.float32).reshape(1, 16)
+  m = _model([helper.make_node("LogSoftmax", ["x"], ["y"])], [_vi("x", [1, 16])], [_vi("y", [1, 16])])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - onnx_run(m, x)).max() < 3e-2
+
+def test_gemm_alpha_beta_transA_matches_onnxruntime():  # Y = alpha*A.T@B + beta*C in one linear
+  rng = np.random.default_rng(4)
+  x = rng.standard_normal((16, 2)).astype(np.float32)
+  w = _init(rng.standard_normal((10, 16)), "W"); b = _init(rng.standard_normal(10), "B")
+  n = helper.make_node("Gemm", ["x", "W", "B"], ["y"], transA=1, transB=1, alpha=2.0, beta=0.5)
+  m = _model([n], [_vi("x", [16, 2])], [_vi("y", [2, 10])], inits=[w, b])
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert got.shape == (2, 10) and np.abs(got - onnx_run(m, x)).max() < 5e-2
+
+def test_expand_builds_and_matches_onnxruntime():  # (1,1,4) -> (1,3,4): expand_dims rank align + tile
+  rng = np.random.default_rng(5); x = rng.standard_normal((1, 1, 4)).astype(np.float32)
+  shp = onnx.numpy_helper.from_array(np.array([1, 3, 4], np.int64), "s")
+  m = _model([helper.make_node("Expand", ["x", "s"], ["y"])], [_vi("x", [1, 1, 4])], [_vi("y", [1, 3, 4])], inits=[shp])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3, 4)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - onnx_run(m, x)).max() < 1e-2
+
+def test_expand_rank_raise_builds():  # shape with higher rank prepends axes: (4,) -> (2, 4)
+  shp = onnx.numpy_helper.from_array(np.array([2, 4], np.int64), "s")
+  m = _model([helper.make_node("Expand", ["x", "s"], ["y"])], [_vi("x", [4])], [_vi("y", [2, 4])], inits=[shp])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (2, 4)
