@@ -1,4 +1,4 @@
-"""Growing Neural Cellular Automata (Mordvintsev et al., Distill 2020) trained on the ANE: a per-cell CNN rule grown from a seed via a gradient-checkpointed rollout (forward + backward on-engine, Adam host-side). Writes docs/assets/neural_ca.png if Pillow is present. Run: python3 examples/train_neural_ca.py"""
+"""Growing Neural Cellular Automata (Mordvintsev et al., Distill 2020) trained on the ANE: a per-cell CNN rule grown from a seed via a gradient-checkpointed rollout (forward + backward on-engine, Adam host-side). Writes docs/assets/neural_ca.webp if Pillow is present. Run: python3 examples/train_neural_ca.py"""
 import sys
 import time
 from pathlib import Path
@@ -249,9 +249,9 @@ def render(frames, total_energy):
         e = total_energy * min(1.0, i / max(1, len(frames) - 1))
         ims.append(telemetry(im, e))
     durs = [ANIM_MS] * len(ims); durs[0] = ANIM_START; durs[-1] = ANIM_HOLD
-    ims[0].save(assets / "neural_ca.png", save_all=True, append_images=ims[1:],
-                duration=durs, loop=0)
-    return f"docs/assets/neural_ca.png (APNG, {len(ims)} frames, full colour)"
+    ims[0].save(assets / "neural_ca.webp", save_all=True, append_images=ims[1:],
+                duration=durs, loop=0, quality=85)
+    return f"docs/assets/neural_ca.webp (animated WebP, {len(ims)} frames, full colour)"
 
 
 if __name__ == "__main__":

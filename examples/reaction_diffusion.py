@@ -16,7 +16,7 @@ TEAL, RUST, DIM, BOLD, GREY, R = (
 CHECK = f"{TEAL}OK{R}"
 
 # simulation parameters
-N = 448                 # grid (periodic); supersampled, then resolved down for a crisp APNG
+N = 448                 # grid (periodic); supersampled, then resolved down for a crisp animation
 DU, DV = 0.16, 0.08     # diffusion of U, V
 F, K = 0.042, 0.061     # feed / kill: a branching-labyrinth (circuit-trace) regime
 DT = 1.0                # timestep
@@ -203,9 +203,9 @@ def render(frames, total_energy, vmax=1.0):
         e = total_energy * min(1.0, i * FRAME_STRIDE / STEPS)
         ims.append(telemetry(im, e))
     durs = [ANIM_MS] * len(ims); durs[0] = ANIM_START; durs[-1] = ANIM_HOLD
-    ims[0].save(assets / "reaction_diffusion.png", save_all=True, append_images=ims[1:],
-                duration=durs, loop=0)
-    return f"docs/assets/reaction_diffusion.png (APNG, {len(ims)} frames, full colour)"
+    ims[0].save(assets / "reaction_diffusion.webp", save_all=True, append_images=ims[1:],
+                duration=durs, loop=0, quality=85)
+    return f"docs/assets/reaction_diffusion.webp (animated WebP, {len(ims)} frames, full colour)"
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ DT = 1.5e-3            # timestep
 STEPS = 2200           # advection steps
 FRAME_STRIDE = 32      # capture an animation frame every this many steps
 ANE_RAIL_W = 1.48      # RE-measured sustained ANE rail, W (see demos/power_efficiency.py)
-ANIM_SIZE, ANIM_MS = 256, 115                    # APNG: full-colour at the native grid
+ANIM_SIZE, ANIM_MS = 256, 115                    # animation: full-colour at the native grid
 ANIM_START, ANIM_HOLD = 1900, 1500               # hold the wordmark, then the final field (ms)
 
 # 'inferno'-style perceptual colormap (matplotlib), as a small anchor table.
@@ -225,7 +225,7 @@ def telemetry(im, energy):
 
 
 def render(frames, total_energy):
-    """Write the dye-dissolve as an APNG: full 24-bit colour, no palette or dither
+    """Write the dye-dissolve as an animated WebP: full 24-bit colour, no palette or dither
     (a GIF would band these continuous-tone fields). A corner readout ticks up the
     engine energy as the run proceeds. Animates in the browser; the first frame, the
     legible wordmark, is the still poster. Needs Pillow."""
@@ -242,9 +242,9 @@ def render(frames, total_energy):
         e = total_energy * min(1.0, i * FRAME_STRIDE / STEPS)        # energy so far
         ims.append(telemetry(im, e))
     durs = [ANIM_MS] * len(ims); durs[0] = ANIM_START; durs[-1] = ANIM_HOLD
-    ims[0].save(assets / "fluid_vorticity.png", save_all=True, append_images=ims[1:],
-                duration=durs, loop=0)
-    return f"docs/assets/fluid_vorticity.png (APNG, {len(ims)} frames, full colour)"
+    ims[0].save(assets / "fluid_vorticity.webp", save_all=True, append_images=ims[1:],
+                duration=durs, loop=0, quality=85)
+    return f"docs/assets/fluid_vorticity.webp (animated WebP, {len(ims)} frames, full colour)"
 
 
 if __name__ == "__main__":
