@@ -1145,3 +1145,66 @@ def test_onehot_tensor_matches_onnxruntime():
   import onnxruntime
   ref = np.asarray(onnxruntime.InferenceSession(m.SerializeToString()).run(None, {"x": idx.astype(np.int64)})[0])
   assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-2
+
+
+# -- control flow: constant-condition If, static-trip Loop unrolling -- #
+
+def test_if_constant_cond_imports_taken_branch():  # branches read outer-scope x; only the taken one is built
+  for cond_v, want in ((True, "relu"), (False, "sigmoid")):
+    then_g = helper.make_graph([helper.make_node("Relu", ["x"], ["ty"])], "t", [], [_vi("ty", [1, 4])])
+    else_g = helper.make_graph([helper.make_node("Sigmoid", ["x"], ["ey"])], "e", [], [_vi("ey", [1, 4])])
+    ci = onnx.numpy_helper.from_array(np.array(cond_v), "c")
+    n = helper.make_node("If", ["c"], ["y"], then_branch=then_g, else_branch=else_g)
+    m = _model([n], [_vi("x", [1, 4])], [_vi("y", [1, 4])], inits=[ci])
+    _, out = af.onnx_to_tensor(m); assert out.op == want, f"cond={cond_v} -> {out.op}"
+
+def test_if_tensor_cond_raises():
+  then_g = helper.make_graph([helper.make_node("Relu", ["x"], ["ty"])], "t", [], [_vi("ty", [1, 4])])
+  else_g = helper.make_graph([helper.make_node("Sigmoid", ["x"], ["ey"])], "e", [], [_vi("ey", [1, 4])])
+  nodes = [helper.make_node("Greater", ["x", "x"], ["c"]),
+           helper.make_node("If", ["c"], ["y"], then_branch=then_g, else_branch=else_g)]
+  m = _model(nodes, [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def _loop_model(out_name):
+  body = helper.make_graph(
+    [helper.make_node("Identity", ["cin"], ["cout"]),
+     helper.make_node("Add", ["acc", "x"], ["acc_out"]),         # x resolves from the OUTER scope
+     helper.make_node("Identity", ["acc_out"], ["scan"])],
+    "body",
+    [helper.make_tensor_value_info("it", TensorProto.INT64, []),
+     helper.make_tensor_value_info("cin", TensorProto.BOOL, []),
+     _vi("acc", [1, 4])],
+    [helper.make_tensor_value_info("cout", TensorProto.BOOL, []), _vi("acc_out", [1, 4]), _vi("scan", [1, 4])])
+  mi = onnx.numpy_helper.from_array(np.array(3, np.int64), "M")
+  ci = onnx.numpy_helper.from_array(np.array(True), "c0")
+  a0 = onnx.numpy_helper.from_array(np.zeros((1, 4), np.float32), "acc0")
+  n = helper.make_node("Loop", ["M", "c0", "acc0"], ["acc_final", "scan_all"], body=body)
+  outs = {"acc_final": _vi("acc_final", [1, 4]), "scan_all": _vi("scan_all", [3, 1, 4])}
+  return _model([n], [_vi("x", [1, 4])], [outs[out_name]], inits=[mi, ci, a0])
+
+def test_loop_unrolls_and_matches_onnxruntime():  # carried accumulator: 3 iterations of acc += x
+  x = np.array([[1.0, 2.0, 3.0, 4.0]], np.float32)
+  m = _loop_model("acc_final")
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-2   # = 3*x
+
+def test_loop_scan_output_stacks_matches_onnxruntime():  # scan outputs concatenate along a new leading axis
+  x = np.array([[1.0, 2.0, 3.0, 4.0]], np.float32)
+  m = _loop_model("scan_all")
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  ref = np.asarray(onnx_run(m, x))
+  assert got.shape == ref.shape == (3, 1, 4) and np.abs(got - ref).max() < 1e-2
+
+def test_loop_without_trip_count_raises():  # while-style loops cannot unroll statically
+  body = helper.make_graph(
+    [helper.make_node("Identity", ["cin"], ["cout"]), helper.make_node("Identity", ["acc"], ["acc_out"])],
+    "body",
+    [helper.make_tensor_value_info("it", TensorProto.INT64, []),
+     helper.make_tensor_value_info("cin", TensorProto.BOOL, []), _vi("acc", [1, 4])],
+    [helper.make_tensor_value_info("cout", TensorProto.BOOL, []), _vi("acc_out", [1, 4])])
+  ci = onnx.numpy_helper.from_array(np.array(True), "c0")
+  a0 = onnx.numpy_helper.from_array(np.zeros((1, 4), np.float32), "acc0")
+  n = helper.make_node("Loop", ["", "c0", "acc0"], ["acc_final"], body=body)
+  m = _model([n], [_vi("x", [1, 4])], [_vi("acc_final", [1, 4])], inits=[ci, a0])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
