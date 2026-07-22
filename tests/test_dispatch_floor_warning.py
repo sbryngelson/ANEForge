@@ -4,6 +4,9 @@ import warnings
 import numpy as np
 
 import aneforge as af
+from _helpers import requires_ane
+
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 
 
 def _warned(build):

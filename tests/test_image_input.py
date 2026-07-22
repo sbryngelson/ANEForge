@@ -7,6 +7,8 @@ from _helpers import requires_ane
 
 import aneforge as af
 
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
+
 
 rng = np.random.default_rng(0)
 

@@ -9,6 +9,7 @@ import aneforge as af
 from aneforge import _compile
 from aneforge import _capabilities as cap
 from aneforge._rewrite import _BRIDGE_DECOMPOSERS, decompose_bridge
+from _helpers import requires_ane   # the four route-equivalence tests compile+run; the reconciliation tests are pure
 
 
 # fp16 op-noise ceiling: well above per-op rounding, far below a semantic break
@@ -72,6 +73,7 @@ def _check_route(build_bridge, shapes, x, label):
   return re
 
 
+@requires_ane
 def test_sdpa_route_equivalent():
   rng = np.random.default_rng(1)
   H, S, D = 4, 8, 16
@@ -83,6 +85,7 @@ def test_sdpa_route_equivalent():
   print(f"  sdpa             relerr={re:.5g}")
 
 
+@requires_ane
 def test_minmax_norm_route_equivalent():
   rng = np.random.default_rng(2)
   for dim in ("Width", "Height"):
@@ -98,6 +101,7 @@ def test_minmax_norm_route_equivalent():
   print(f"  minmax_norm/degenerate  relerr={re:.5g}")
 
 
+@requires_ane
 def test_flatten_route_equivalent():
   rng = np.random.default_rng(3)
   C, H, W = 2, 3, 5
@@ -107,6 +111,7 @@ def test_flatten_route_equivalent():
   assert re == 0.0, "flatten<->reshape must be BIT-IDENTICAL"
 
 
+@requires_ane
 def test_lrn_route_equivalent():
   """native lrn bridge vs fused MIL local_response_norm; bit-equivalent by construction."""
   rng = np.random.default_rng(4)

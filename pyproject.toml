@@ -15,7 +15,7 @@ readme = "README.md"
 # annotations``, which requires Python >= 3.10. Developed/verified on Python 3.14.
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Spencer Bryngelson", email = "shb@gatech.edu" }]
 keywords = ["apple-neural-engine", "ane", "apple-silicon", "machine-learning", "inference", "espresso", "e5rt"]
 
@@ -81,7 +81,7 @@ mlperf = [
 # suites need real ANE hardware to run.
 dev = [
     "ruff",
-    "pyright==1.1.410",  # type checker; pinned so a new release can't add errors out from under CI
+    "pyright==1.1.411",  # type checker; pinned so a new release can't add errors out from under CI
     "pylint",            # CI 2-space + trailing-whitespace lock (W0311/C0303); see .github/workflows/ci.yml
     "pre-commit",        # local hooks mirroring CI; see .pre-commit-config.yaml
     "pytest",
@@ -118,6 +118,12 @@ packages = ["aneforge"]
 # Collect only the tracked correctness suites. The RE/paper test tooling (fuzzers,
 # capability census) lives in the gitignored utils/ dir and is intentionally excluded.
 testpaths = ["tests"]
+# Device tests carry the `requires_ane` marker (registered here + in tests/conftest.py):
+# CI runs `pytest -m "not requires_ane"` to collect only the hardware-free suites, and the
+# conftest hook auto-skips any that are still collected on a machine without the ANE.
+markers = [
+  "requires_ane: needs real ANE hardware; auto-skipped when the e5rt dylib is unavailable",
+]
 # Run each test in its own forked subprocess: every compile allocates an ANE program
 # and a single process accumulates them across the suite (the training/streaming tests
 # build hundreds), approaching the per-PID program limit and causing sporadic

@@ -6,6 +6,9 @@ import pytest
 
 from aneforge import autograd as agrad
 from test_autograd import _cos, _eval_grad_tensor
+from _helpers import requires_ane
+
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 
 SH = (4, 8)
 

@@ -54,18 +54,21 @@ def _saturation_warnings(graph, target):
   return [w for w in rec if "4094" in str(w.message) or "saturat" in str(w.message).lower()]
 
 
+@requires_ane
 def test_h13_last_axis_offset_slice_warns():
   # last-axis-offset slice routes through the H13 Q.4 DMA that saturates at 4094; must warn
   g = af.input((1, 8)).slice_by_size([0, 2], [1, 4])   # last-axis begin=2 > 0
   assert _saturation_warnings(g, "h13")
 
 
+@requires_ane
 def test_h13_zero_offset_slice_does_not_warn():
   # begin=0 on the last axis avoids the offset-DMA path entirely (exact on H13)
   g = af.input((1, 8)).slice_by_size([0, 0], [1, 4])
   assert not _saturation_warnings(g, "h13")
 
 
+@requires_ane
 def test_m5_offset_slice_does_not_warn():
   # the saturation is H13-specific; M5 (family 5) stays in plain fp16
   g = af.input((1, 8)).slice_by_size([0, 2], [1, 4])

@@ -3,6 +3,8 @@ from onnx import helper, TensorProto
 import aneforge as af
 from _helpers import requires_ane  # noqa: F401  (on-device gate for later op tests)
 
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
+
 def _model(nodes, inputs, outputs, inits=()):
   g = helper.make_graph(nodes, "g", inputs, outputs, list(inits))
   m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13)])

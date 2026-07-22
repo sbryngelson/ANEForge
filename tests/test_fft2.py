@@ -1,6 +1,9 @@
 """2-D FFT on the ANE: aneforge.fft.fft2/ifft2 as one fused program per transform."""
 from __future__ import annotations
 import os
+from _helpers import requires_ane
+
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import numpy as np
 import pytest

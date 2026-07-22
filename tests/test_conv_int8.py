@@ -7,6 +7,8 @@ import aneforge as af
 from aneforge import _compile as C
 from aneforge.graph import conv, input as ainput
 
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
+
 
 rng = np.random.default_rng(0)
 
