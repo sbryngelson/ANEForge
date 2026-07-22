@@ -351,10 +351,20 @@ def test_gelu_builds():  # default approximate="none" -> exact erf-gelu
   m = _model([helper.make_node("Gelu", ["x"], ["y"])], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
   _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3) and out.op == "gelu"
 
-def test_gelu_tanh_raises():  # tanh approximation is not implemented
+def test_gelu_tanh_builds_as_primitive_graph():
   n = helper.make_node("Gelu", ["x"], ["y"], approximate="tanh")
   m = _model([n], [_vi("x", [1, 3])], [_vi("y", [1, 3])])
-  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+  _, out = af.onnx_to_tensor(m)
+  assert out.shape == (1, 3) and out.op == "mul"
+
+def test_gelu_tanh_matches_closed_form():
+  n = helper.make_node("Gelu", ["x"], ["y"], approximate="tanh")
+  m = _model([n], [_vi("x", [1, 17])], [_vi("y", [1, 17])])
+  x = np.linspace(-4.0, 4.0, 17, dtype=np.float16).reshape(1, 17)
+  xf = x.astype(np.float64)
+  ref = 0.5 * xf * (1.0 + np.tanh(np.sqrt(2.0 / np.pi) * (xf + 0.044715 * xf**3)))
+  got = np.asarray(af.load_onnx(m)(x)).astype(np.float64)
+  assert np.max(np.abs(got - ref)) < 3e-2
 
 def test_prelu_builds():  # slope is the 2nd input ([C,1,1] flattened to [C])
   slope = _init(np.ones((4, 1, 1)), "slope")
@@ -1145,3 +1155,112 @@ def test_onehot_tensor_matches_onnxruntime():
   import onnxruntime
   ref = np.asarray(onnxruntime.InferenceSession(m.SerializeToString()).run(None, {"x": idx.astype(np.int64)})[0])
   assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-2
+
+
+# -- control flow: constant-condition If, static-trip Loop unrolling -- #
+
+def test_if_constant_cond_imports_taken_branch():  # branches read outer-scope x; only the taken one is built
+  for cond_v, want in ((True, "relu"), (False, "sigmoid")):
+    then_g = helper.make_graph([helper.make_node("Relu", ["x"], ["ty"])], "t", [], [_vi("ty", [1, 4])])
+    else_g = helper.make_graph([helper.make_node("Sigmoid", ["x"], ["ey"])], "e", [], [_vi("ey", [1, 4])])
+    ci = onnx.numpy_helper.from_array(np.array(cond_v), "c")
+    n = helper.make_node("If", ["c"], ["y"], then_branch=then_g, else_branch=else_g)
+    m = _model([n], [_vi("x", [1, 4])], [_vi("y", [1, 4])], inits=[ci])
+    _, out = af.onnx_to_tensor(m); assert out.op == want, f"cond={cond_v} -> {out.op}"
+
+def test_if_tensor_cond_raises():
+  then_g = helper.make_graph([helper.make_node("Relu", ["x"], ["ty"])], "t", [], [_vi("ty", [1, 4])])
+  else_g = helper.make_graph([helper.make_node("Sigmoid", ["x"], ["ey"])], "e", [], [_vi("ey", [1, 4])])
+  nodes = [helper.make_node("Greater", ["x", "x"], ["c"]),
+           helper.make_node("If", ["c"], ["y"], then_branch=then_g, else_branch=else_g)]
+  m = _model(nodes, [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def _loop_model(out_name):
+  body = helper.make_graph(
+    [helper.make_node("Identity", ["cin"], ["cout"]),
+     helper.make_node("Add", ["acc", "x"], ["acc_out"]),         # x resolves from the OUTER scope
+     helper.make_node("Identity", ["acc_out"], ["scan"])],
+    "body",
+    [helper.make_tensor_value_info("it", TensorProto.INT64, []),
+     helper.make_tensor_value_info("cin", TensorProto.BOOL, []),
+     _vi("acc", [1, 4])],
+    [helper.make_tensor_value_info("cout", TensorProto.BOOL, []), _vi("acc_out", [1, 4]), _vi("scan", [1, 4])])
+  mi = onnx.numpy_helper.from_array(np.array(3, np.int64), "M")
+  ci = onnx.numpy_helper.from_array(np.array(True), "c0")
+  a0 = onnx.numpy_helper.from_array(np.zeros((1, 4), np.float32), "acc0")
+  n = helper.make_node("Loop", ["M", "c0", "acc0"], ["acc_final", "scan_all"], body=body)
+  outs = {"acc_final": _vi("acc_final", [1, 4]), "scan_all": _vi("scan_all", [3, 1, 4])}
+  return _model([n], [_vi("x", [1, 4])], [outs[out_name]], inits=[mi, ci, a0])
+
+def test_loop_unrolls_and_matches_onnxruntime():  # carried accumulator: 3 iterations of acc += x
+  x = np.array([[1.0, 2.0, 3.0, 4.0]], np.float32)
+  m = _loop_model("acc_final")
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-2   # = 3*x
+
+def test_loop_scan_output_stacks_matches_onnxruntime():  # scan outputs concatenate along a new leading axis
+  x = np.array([[1.0, 2.0, 3.0, 4.0]], np.float32)
+  m = _loop_model("scan_all")
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  ref = np.asarray(onnx_run(m, x))
+  assert got.shape == ref.shape == (3, 1, 4) and np.abs(got - ref).max() < 1e-2
+
+def test_loop_without_trip_count_raises():  # while-style loops cannot unroll statically
+  body = helper.make_graph(
+    [helper.make_node("Identity", ["cin"], ["cout"]), helper.make_node("Identity", ["acc"], ["acc_out"])],
+    "body",
+    [helper.make_tensor_value_info("it", TensorProto.INT64, []),
+     helper.make_tensor_value_info("cin", TensorProto.BOOL, []), _vi("acc", [1, 4])],
+    [helper.make_tensor_value_info("cout", TensorProto.BOOL, []), _vi("acc_out", [1, 4])])
+  ci = onnx.numpy_helper.from_array(np.array(True), "c0")
+  a0 = onnx.numpy_helper.from_array(np.zeros((1, 4), np.float32), "acc0")
+  n = helper.make_node("Loop", ["", "c0", "acc0"], ["acc_final"], body=body)
+  m = _model([n], [_vi("x", [1, 4])], [_vi("acc_final", [1, 4])], inits=[ci, a0])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+
+# -- recurrent layers: LSTM / GRU / RNN unrolled -- #
+
+def _rnn_model(op, seq, b, isz, H, direction="forward", n_gates=4, out="Y", **attrs):
+  import zlib
+  rng = np.random.default_rng(zlib.crc32(f"{op}-{direction}".encode()))   # deterministic (hash() is salted)
+  nd = 2 if direction == "bidirectional" else 1
+  W = _init(rng.standard_normal((nd, n_gates * H, isz)) * 0.4, "W")
+  R = _init(rng.standard_normal((nd, n_gates * H, H)) * 0.4, "R")
+  B = _init(rng.standard_normal((nd, 2 * n_gates * H)) * 0.2, "B")
+  outs = {"Y": _vi("Y", [seq, nd, b, H]), "Y_h": _vi("Y_h", [nd, b, H])}
+  names = ["Y", "Y_h", "Y_c"][:3 if op == "LSTM" else 2]
+  n = helper.make_node(op, ["x", "W", "R", "B"], names, hidden_size=H, direction=direction, **attrs)
+  return _model([n], [_vi("x", [seq, b, isz])], [outs[out]], inits=[W, R, B])
+
+def _rnn_check(m, seq, b, isz, tol):
+  rng = np.random.default_rng(0); x = (rng.standard_normal((seq, b, isz))).astype(np.float32)
+  got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+  ref = np.asarray(onnx_run(m, x))
+  assert got.shape == ref.shape, f"{got.shape} != {ref.shape}"
+  assert np.abs(got - ref).max() < tol, f"max err {np.abs(got - ref).max():.4f}"
+
+def test_lstm_forward_matches_onnxruntime():
+  _rnn_check(_rnn_model("LSTM", 4, 2, 3, 5), 4, 2, 3, 5e-2)
+
+def test_lstm_bidirectional_matches_onnxruntime():
+  _rnn_check(_rnn_model("LSTM", 4, 2, 3, 5, direction="bidirectional"), 4, 2, 3, 5e-2)
+
+def test_lstm_yh_output_matches_onnxruntime():
+  _rnn_check(_rnn_model("LSTM", 4, 2, 3, 5, out="Y_h"), 4, 2, 3, 5e-2)
+
+def test_gru_both_reset_forms_match_onnxruntime():
+  for lbr in (0, 1):
+    m = _rnn_model("GRU", 4, 2, 3, 5, n_gates=3, linear_before_reset=lbr)
+    _rnn_check(m, 4, 2, 3, 5e-2)
+
+def test_rnn_reverse_matches_onnxruntime():
+  _rnn_check(_rnn_model("RNN", 4, 2, 3, 5, direction="reverse", n_gates=1), 4, 2, 3, 5e-2)
+
+def test_lstm_peephole_raises():
+  m = _rnn_model("LSTM", 2, 1, 3, 4)
+  P = onnx.numpy_helper.from_array(np.ones((1, 12), np.float32), "P")
+  m.graph.initializer.append(P)
+  m.graph.node[0].input.extend(["", "", "", "P"])   # seq_lens, initial_h, initial_c omitted; P present
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)

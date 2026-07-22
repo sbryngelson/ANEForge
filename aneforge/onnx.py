@@ -109,13 +109,11 @@ def onnx_to_tensor(path, approx_resize=False):
     for vi in g.input:
       if vi.name in inits: continue              # initializers also listed as inputs in some exporters
       t = _input(_shape(vi)); vals[vi.name] = t; graph_inputs.append(t)
-    for node in g.node:                          # ONNX node list is topologically ordered
-      if node.op_type not in _ONNX:
-        raise NotImplementedError(f"ONNX op '{node.op_type}' not supported")
-      ins = [vals.get(n) for n in node.input]
-      outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
-      outs = outs if isinstance(outs, (list, tuple)) else [outs]
-      for name, val in zip(node.output, outs): vals[name] = val
+    _SCOPES.append(vals)                         # visible to If/Loop subgraphs (ONNX outer-scope names)
+    try:
+      _run_nodes(g, vals, inits)
+    finally:
+      _SCOPES.pop()
     name = g.output[0].name
     if name not in vals: raise ValueError(f"onnx: graph output '{name}' was never produced")
     out = vals[name]
@@ -123,6 +121,79 @@ def onnx_to_tensor(path, approx_resize=False):
     return graph_inputs, out
   finally:
     _APPROX_RESIZE = prev
+
+_SCOPES: list[dict] = []                         # enclosing-graph value environments, innermost last
+
+def _run_nodes(g, vals, inits):
+  """Run a (sub)graph's topologically-ordered node list against the value environment `vals`."""
+  for node in g.node:
+    if node.op_type not in _ONNX:
+      raise NotImplementedError(f"ONNX op '{node.op_type}' not supported")
+    ins = [vals.get(n) if n else None for n in node.input]        # "" marks an omitted optional input
+    outs = _ONNX[node.op_type](node, ins, _attrs(node), inits)
+    outs = outs if isinstance(outs, (list, tuple)) else [outs]
+    for name, val in zip(node.output, outs):
+      if name: vals[name] = val                                   # "" marks an unused optional output
+
+def _run_subgraph(sub, binding, inits):
+  """Import a subgraph (If branch / Loop body): outer-scope names resolve per ONNX scoping, the
+  subgraph's formal inputs bind to `binding`, and its output values are returned in order."""
+  from onnx import numpy_helper
+  vals = dict(_SCOPES[-1]) if _SCOPES else {}
+  vals.update({t.name: numpy_helper.to_array(t) for t in sub.initializer})
+  vals.update(binding)
+  _SCOPES.append(vals)
+  try:
+    _run_nodes(sub, vals, inits)
+  finally:
+    _SCOPES.pop()
+  outs = []
+  for o in sub.output:
+    if o.name not in vals: raise ValueError(f"onnx: subgraph output '{o.name}' was never produced")
+    outs.append(vals[o.name])
+  return outs
+
+@onnx_op("If")
+def _if(node, ins, a, i):
+  """If with a CONSTANT condition: the taken branch imports inline (the other is never built).
+  A data-dependent condition has no ANE path (programs are single static graphs)."""
+  if isinstance(ins[0], Tensor):
+    raise NotImplementedError("ONNX If: data-dependent condition not supported (constant conditions fold at import)")
+  cond = bool(np.asarray(ins[0]).ravel()[0])
+  return _run_subgraph(a["then_branch"] if cond else a["else_branch"], {}, i)
+
+@onnx_op("Loop")
+def _loop(node, ins, a, i):
+  """Loop with a STATIC trip count: the body unrolls at import (M copies of its ops in one program).
+  Requires constant M, a constant-true (or absent) condition, and a body that keeps it true;
+  scan outputs stack along a new leading axis, per the ONNX spec."""
+  M = ins[0] if len(ins) > 0 else None
+  if isinstance(M, Tensor): raise NotImplementedError("ONNX Loop: data-dependent trip count not supported")
+  if M is None: raise NotImplementedError("ONNX Loop: a trip count is required (while-style loops cannot unroll)")
+  M = int(np.asarray(M).ravel()[0])
+  if M > 1024: raise NotImplementedError(f"ONNX Loop: trip count {M} too large to unroll into one program")
+  cond = ins[1] if len(ins) > 1 else None
+  if cond is not None and (isinstance(cond, Tensor) or not bool(np.asarray(cond).ravel()[0])):
+    raise NotImplementedError("ONNX Loop: only a constant-true (or absent) condition unrolls")
+  body = a["body"]; carried = list(ins[2:])
+  n_car = len(carried); n_scan = len(body.output) - 1 - n_car
+  scans: list[list] = [[] for _ in range(n_scan)]
+  for it in range(M):
+    binding = {body.input[0].name: np.array(it, np.int64), body.input[1].name: np.array(True)}
+    for k, v in enumerate(carried): binding[body.input[2 + k].name] = v
+    outs = _run_subgraph(body, binding, i)
+    cond_out = outs[0]
+    if isinstance(cond_out, Tensor) or not bool(np.asarray(cond_out).ravel()[0] if cond_out is not None else True):
+      raise NotImplementedError("ONNX Loop: the body's condition output must stay constant-true to unroll")
+    carried = outs[1:1 + n_car]
+    for k in range(n_scan): scans[k].append(outs[1 + n_car + k])
+  from .graph import concat as _cat
+  stacked = []
+  for parts in scans:                            # scan outputs concatenate along a new leading axis
+    if all(_isc(p) for p in parts): stacked.append(np.stack([np.asarray(p) for p in parts])); continue
+    ts = [(p if isinstance(p, Tensor) else _baked(np.asarray(p, np.float16))).expand_dims((0,)) for p in parts]
+    stacked.append(_cat(ts, axis=0) if len(ts) > 1 else ts[0])
+  return carried + stacked
 
 def onnx_to_features(path):
   """Import a classifier and return `(inputs, features)` where `features` is the input to the final
@@ -280,10 +351,12 @@ def _elu(node, ins, a, i): return ins[0].elu(float(a.get("alpha", 1.0)))
 def _lrelu(node, ins, a, i): return ins[0].leaky_relu(float(a.get("alpha", 0.01)))
 @onnx_op("Gelu")
 def _gelu(node, ins, a, i):
-  """ONNX Gelu (opset 20); exact erf-gelu only ('approximate=tanh' unsupported)."""
+  """ONNX Gelu (opset 20); preserve exact gelu or decompose the tanh approximation."""
   ap = a.get("approximate")
   if ap is not None and (ap.decode() if isinstance(ap, bytes) else ap) == "tanh":
-    raise NotImplementedError("ONNX Gelu: approximate='tanh' not supported (only exact/erf)")
+    x = ins[0]
+    inner = (x + x.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
+    return (x * 0.5) * inner.tanh().adds(1.0)
   return ins[0].gelu()
 @onnx_op("PRelu")
 def _prelu(node, ins, a, i): return ins[0].prelu(np.asarray(ins[1]).reshape(-1))   # slope=ins[1], [C,1,1]->[C]
@@ -871,3 +944,116 @@ def _topk_h(node, ins, a, i):
   if isinstance(ins[1], Tensor): raise NotImplementedError("ONNX TopK: data-dependent k (non-constant) not supported")
   k = int(np.asarray(ins[1]).ravel()[0])
   return _topk(x, k, largest=bool(int(a.get("largest", 1))))
+
+
+# -- recurrent layers: LSTM / GRU / RNN unrolled over the static sequence length -- #
+
+_RNN_DEFAULT_ACTS = {"LSTM": ["sigmoid", "tanh", "tanh"], "GRU": ["sigmoid", "tanh"], "RNN": ["tanh"]}
+
+def _rnn_prep(node, ins, a, n_gates):
+  """Shared RNN-family validation/unpacking. Returns (x, dirs, W, R, B, h0, c0, seq, batch, isz, H)."""
+  op = node.op_type; x = ins[0]
+  if not isinstance(x, Tensor): raise NotImplementedError(f"ONNX {op}: constant X not supported")
+  if int(a.get("layout", 0)): raise NotImplementedError(f"ONNX {op}: layout=1 not supported")
+  if a.get("clip") is not None: raise NotImplementedError(f"ONNX {op}: clip not supported")
+  acts = a.get("activations")
+  if acts is not None:
+    want = _RNN_DEFAULT_ACTS[op]
+    got = [(v.decode() if isinstance(v, bytes) else v).lower() for v in acts]
+    if got != want * (len(got) // len(want)) or len(got) % len(want):
+      raise NotImplementedError(f"ONNX {op}: non-default activations {got} not supported")
+  for k, what in ((5, "initial_h"), (6, "initial_c")):
+    if len(ins) > k and isinstance(ins[k], Tensor):
+      raise NotImplementedError(f"ONNX {op}: tensor {what} not supported (constant or absent only)")
+  seq, batch, isz = x.shape
+  H = int(a["hidden_size"])
+  d = _sattr(a, "direction", "forward")
+  dirs = {"forward": [False], "reverse": [True], "bidirectional": [False, True]}.get(d)
+  if dirs is None: raise NotImplementedError(f"ONNX {op}: direction={d!r} not supported")
+  W = np.asarray(ins[1], np.float32); R = np.asarray(ins[2], np.float32)
+  B = np.asarray(ins[3], np.float32) if len(ins) > 3 and ins[3] is not None else np.zeros((len(dirs), 2 * n_gates * H), np.float32)
+  if len(ins) > 4 and ins[4] is not None:
+    sl = np.asarray(ins[4]).ravel()
+    if not (sl == seq).all(): raise NotImplementedError(f"ONNX {op}: per-sample sequence_lens not supported")
+  h0 = np.asarray(ins[5], np.float32) if len(ins) > 5 and ins[5] is not None else np.zeros((len(dirs), batch, H), np.float32)
+  c0 = np.asarray(ins[6], np.float32) if len(ins) > 6 and ins[6] is not None else np.zeros((len(dirs), batch, H), np.float32)
+  if op == "LSTM" and len(ins) > 7 and ins[7] is not None and np.any(np.asarray(ins[7])):
+    raise NotImplementedError("ONNX LSTM: peephole connections (P) not supported")
+  return x, dirs, W, R, B, h0, c0, seq, batch, isz, H
+
+def _rnn_assemble(ys_dirs, h_dirs, c_dirs):
+  """Stack per-direction results: Y [seq, nd, b, H], Y_h [nd, b, H], Y_c [nd, b, H]."""
+  from .graph import concat as _cat
+  ydirs = []
+  for ys in ys_dirs:                             # ys: per-timestep [b, H] in time order
+    steps = [h.expand_dims((0, 1)) for h in ys]  # -> [1, 1, b, H]
+    ydirs.append(_cat(steps, axis=0) if len(steps) > 1 else steps[0])
+  Y = _cat(ydirs, axis=1) if len(ydirs) > 1 else ydirs[0]
+  hs = [h.expand_dims((0,)) for h in h_dirs]
+  Yh = _cat(hs, axis=0) if len(hs) > 1 else hs[0]
+  if c_dirs is None: return Y, Yh
+  cs = [c.expand_dims((0,)) for c in c_dirs]
+  return Y, Yh, _cat(cs, axis=0) if len(cs) > 1 else cs[0]
+
+def _xt(x, t, batch, isz):
+  return x.slice_by_size([t, 0, 0], [1, batch, isz]).reshape(batch, isz)
+
+@onnx_op("LSTM")
+def _lstm(node, ins, a, i):
+  """LSTM unrolled: per step two fused linears ([b,4H] gates, iofc order), sliced per gate. Forward,
+  reverse, and bidirectional; default activations; constant weights/initial states; no peepholes/clip."""
+  x, dirs, W, R, B, h0, c0, seq, batch, isz, H = _rnn_prep(node, ins, a, 4)
+  def g(t2, k): return t2.slice_by_size([0, k * H], [batch, H])
+  ys_dirs, h_dirs, c_dirs = [], [], []
+  for d, rev in enumerate(dirs):
+    bsum = B[d][:4 * H] + B[d][4 * H:]
+    h, c = _baked(h0[d].astype(np.float16)), _baked(c0[d].astype(np.float16))
+    ys: list = [None] * seq
+    for t in (range(seq - 1, -1, -1) if rev else range(seq)):
+      gt = _xt(x, t, batch, isz).linear(W[d], bsum) + h.linear(R[d], None)
+      it, ot, ft = g(gt, 0).sigmoid(), g(gt, 1).sigmoid(), g(gt, 2).sigmoid()
+      c = ft * c + it * g(gt, 3).tanh()
+      h = ot * c.tanh()
+      ys[t] = h
+    ys_dirs.append(ys); h_dirs.append(h); c_dirs.append(c)
+  return list(_rnn_assemble(ys_dirs, h_dirs, c_dirs))
+
+@onnx_op("GRU")
+def _gru(node, ins, a, i):
+  """GRU unrolled (zrh gate order); both linear_before_reset forms; same scope as LSTM."""
+  x, dirs, W, R, B, h0, _, seq, batch, isz, H = _rnn_prep(node, ins, a, 3)
+  lbr = int(a.get("linear_before_reset", 0))
+  def g(t2, k): return t2.slice_by_size([0, k * H], [batch, H])
+  ys_dirs, h_dirs = [], []
+  for d, rev in enumerate(dirs):
+    Wb, Rb = B[d][:3 * H], B[d][3 * H:]
+    h = _baked(h0[d].astype(np.float16))
+    ys: list = [None] * seq
+    for t in (range(seq - 1, -1, -1) if rev else range(seq)):
+      xg = _xt(x, t, batch, isz).linear(W[d], Wb)
+      hg = h.linear(R[d], Rb if lbr else None)
+      z = (g(xg, 0) + g(hg, 0)).sigmoid()
+      r = (g(xg, 1) + g(hg, 1)).sigmoid()
+      if lbr:
+        hh = (g(xg, 2) + r * g(hg, 2)).tanh()
+      else:
+        hh = (g(xg, 2) + (r * h).linear(R[d][2 * H:], Rb[2 * H:])).tanh()
+      h = z * h + (z * -1.0 + 1.0) * hh
+      ys[t] = h
+    ys_dirs.append(ys); h_dirs.append(h)
+  return list(_rnn_assemble(ys_dirs, h_dirs, None))
+
+@onnx_op("RNN")
+def _rnn_h(node, ins, a, i):
+  """Vanilla tanh RNN unrolled; same scope as LSTM."""
+  x, dirs, W, R, B, h0, _, seq, batch, isz, H = _rnn_prep(node, ins, a, 1)
+  ys_dirs, h_dirs = [], []
+  for d, rev in enumerate(dirs):
+    bsum = B[d][:H] + B[d][H:]
+    h = _baked(h0[d].astype(np.float16))
+    ys: list = [None] * seq
+    for t in (range(seq - 1, -1, -1) if rev else range(seq)):
+      h = (_xt(x, t, batch, isz).linear(W[d], bsum) + h.linear(R[d], None)).tanh()
+      ys[t] = h
+    ys_dirs.append(ys); h_dirs.append(h)
+  return list(_rnn_assemble(ys_dirs, h_dirs, None))
