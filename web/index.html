@@ -27,7 +27,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#17191b; --panel:#212427; --ink:#e7e6df; --soft:#abafac; --faint:#7f8480;
+    --bg:#17191b; --bg-alt:#1a1d20; --panel:#212427; --ink:#e7e6df; --soft:#abafac; --faint:#8b918c;
     --sea:#5fb3a8; --sea-deep:#7ec9bd; --rust:#d98044;
     --line:rgba(231,230,223,.16); --line-soft:rgba(231,230,223,.08);
     --code-fg:#d6dbd9; --btn:#2e6b69; --btn-deep:#245350;
@@ -53,10 +53,12 @@
   .brand{font-family:var(--mono); font-weight:600; font-size:1.02rem; color:var(--ink)}
   .brand b{color:var(--rust); font-weight:600}
   .brand:hover{text-decoration:none}
-  nav{display:flex; gap:24px; align-items:center; font-size:.9rem}
+  nav{display:flex; gap:20px; align-items:center; font-size:.9rem}
   nav a{color:var(--soft); font-weight:500}
   nav a:hover{color:var(--sea); text-decoration:none}
-  @media(max-width:560px){nav a.hide{display:none}}
+  nav a sup{font-size:.6em; color:var(--faint); margin-left:1px}
+  .navsep{width:1px; height:15px; background:var(--line)}
+  @media(max-width:680px){nav a.hide{display:none} .navsep{display:none}}
 
   .hero{padding:74px 0 60px; border-bottom:1px solid var(--line)}
   .hero .label{display:block; margin-bottom:20px}
@@ -89,13 +91,15 @@
   .glance .row span{white-space:nowrap}
 
   section{padding:58px 0; border-bottom:1px solid var(--line)}
+  main>section:nth-of-type(even){background:var(--bg-alt)}   /* alternating tint: gives the scroll a rhythm */
   h2{font-weight:600; font-size:1.5rem; letter-spacing:-.01em; max-width:24ch}
   .sub{color:var(--soft); max-width:62ch; margin-top:12px}
   .sub code{font-family:var(--mono); font-size:.9em; color:var(--sea-deep)}
 
   .trio{display:grid; grid-template-columns:repeat(3,1fr); gap:0; margin-top:34px; border:1px solid var(--line); border-radius:5px; overflow:hidden}
   @media(max-width:720px){.trio{grid-template-columns:1fr}}
-  .door{padding:24px 22px; border-right:1px solid var(--line)}
+  .door{padding:24px 22px; border-right:1px solid var(--line); transition:background .15s}
+  .door:hover{background:#262a2d}
   .door:last-child{border-right:0}
   @media(max-width:720px){.door{border-right:0; border-bottom:1px solid var(--line)} .door:last-child{border-bottom:0}}
   .door .k{font-family:var(--mono); font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; color:var(--sea)}
@@ -104,8 +108,9 @@
   .door a.go{font-family:var(--mono); font-size:.8rem; display:inline-block; margin-top:14px}
   .door a.go + a.go{margin-left:20px}
 
-  .caps{margin-top:30px; display:grid; grid-template-columns:1fr 1fr; gap:26px 40px}
-  @media(max-width:680px){.caps{grid-template-columns:1fr; gap:22px}}
+  .caps{margin-top:30px; columns:2; column-gap:40px}   /* balanced columns: items pack, no row-height coupling */
+  .cap{break-inside:avoid; margin-bottom:24px}
+  @media(max-width:680px){.caps{columns:1}}
   .cap h4{font-size:1rem; font-weight:600}
   .cap h4 em{font-style:normal; font-family:var(--mono); font-size:.85em; color:var(--rust); font-weight:500; margin-left:8px}
   .cap p{color:var(--soft); font-size:.92rem; margin-top:5px}
@@ -125,8 +130,9 @@
 
   .gallery{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; margin-top:34px}
   @media(max-width:720px){.gallery{grid-template-columns:1fr; gap:26px}}
-  .demo{border:1px solid var(--line); border-radius:5px; overflow:hidden; background:var(--panel); display:flex; flex-direction:column}
-  .demo img{width:100%; display:block; border-bottom:1px solid var(--line-soft)}
+  .demo{border:1px solid var(--line); border-radius:5px; overflow:hidden; background:var(--panel); display:flex; flex-direction:column; transition:border-color .15s}
+  .demo:hover{border-color:rgba(95,179,168,.45)}
+  .demo img{width:100%; height:auto; display:block; border-bottom:1px solid var(--line-soft)}
   .demo figcaption{padding:16px 18px}
   .demo h3{font-size:1.02rem; font-weight:600; margin-bottom:6px}
   .demo p{color:var(--soft); font-size:.86rem}
@@ -153,10 +159,14 @@
   <div class="wrap bar">
     <a class="brand" href="#top">ANE<b>Forge</b></a>
     <nav>
-      <a href="https://ane-guide.readthedocs.io">Guide</a>
-      <a href="https://arxiv.org/abs/2606.17090">Paper</a>
-      <a href="https://github.com/sbryngelson/ANEForge">GitHub</a>
-      <a href="https://aneforge.readthedocs.io">Docs</a>
+      <a href="#demos">Demos</a>
+      <a href="#mlperf" class="hide">MLPerf</a>
+      <a href="#install">Install</a>
+      <span class="navsep"></span>
+      <a href="https://github.com/sbryngelson/ANEForge">GitHub<sup>&#8599;</sup></a>
+      <a href="https://arxiv.org/abs/2606.17090" class="hide">Paper<sup>&#8599;</sup></a>
+      <a href="https://aneforge.readthedocs.io" class="hide">Docs<sup>&#8599;</sup></a>
+      <a href="https://ane-guide.readthedocs.io" class="hide">Guide<sup>&#8599;</sup></a>
     </nav>
   </div>
 </header>
@@ -202,37 +212,42 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
     </div>
   </div>
 
-  <section id="project">
+  <section id="demos">
     <div class="wrap">
-      <span class="label">Software, paper, guide</span>
-      <h2 style="margin-top:10px">The package, the paper behind it, and a guide to the engine.</h2>
-      <div class="trio">
-        <div class="door">
-          <div class="k">Software · MIT Licensed</div>
-          <h3>ANEForge</h3>
-          <p>The Python package. Build a graph, compile it to one ANE program, then run or train it. It handles quantized weights, native attention, resident state, and cross-compilation for 28 targets.</p>
-          <a class="go" href="https://github.com/sbryngelson/ANEForge">GitHub →</a>
-          <a class="go" href="https://aneforge.readthedocs.io">Docs →</a>
-        </div>
-        <div class="door">
-          <div class="k">arXiv · preprint</div>
-          <h3>The paper</h3>
-          <p>“Python for direct computation on the Apple Neural Engine.” The preprint behind the numbers on this page, with the dispatch path and the validation against reference in full.</p>
-          <a class="go" href="https://arxiv.org/abs/2606.17090">arXiv →</a>
-        </div>
-        <div class="door">
-          <div class="k">Book · web edition</div>
-          <h3>The guide</h3>
-          <p>A reverse-engineering account of the engine: the datapath, the compiler, the program format, the firmware, the kernel driver, and the cross-silicon target tables. Most of it is undocumented by Apple.</p>
-          <a class="go" href="https://ane-guide.readthedocs.io">Read →</a>
-        </div>
+      <span class="label">01 · Demos</span>
+      <h2 style="margin-top:10px">Simulations and learning, run and trained on the engine.</h2>
+      <p class="sub">Not just neural nets. Each of these compiles to ANE programs and runs end to end on the Neural Engine.</p>
+      <div class="gallery">
+        <figure class="demo">
+          <img src="./assets/fluid_vorticity.webp" width="512" height="512" alt="A passive dye shaped as the word ANEForge stirred into glowing filaments by a fluid simulation on the Apple Neural Engine" loading="lazy">
+          <figcaption>
+            <h3>Fluid simulation</h3>
+            <p>A dye painted as the word ANEForge, stirred by a 2-D incompressible Navier–Stokes flow. Every FFT in the pseudo-spectral loop runs on the engine, about 54 J at the 1.48 W rail.</p>
+            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/fluid_vorticity.py">reproduce →</a>
+          </figcaption>
+        </figure>
+        <figure class="demo">
+          <img src="./assets/reaction_diffusion.webp" width="384" height="384" alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine" loading="lazy">
+          <figcaption>
+            <h3>Reaction-diffusion</h3>
+            <p>Gray–Scott Turing patterns bloom from the word into a branching labyrinth. One program re-dispatches each step: a 3×3 Laplacian as a native ANE conv, the reactions as elementwise ops.</p>
+            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/reaction_diffusion.py">reproduce →</a>
+          </figcaption>
+        </figure>
+        <figure class="demo">
+          <img src="./assets/neural_ca.webp" width="384" height="384" alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel" loading="lazy">
+          <figcaption>
+            <h3>A network that grows</h3>
+            <p>A small CNN update rule, trained on the engine, grows a lizard from one seed pixel. The forward and backward passes both run on the ANE, so the rule is learned there, not just replayed.</p>
+            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/train_neural_ca.py">reproduce →</a>
+          </figcaption>
+        </figure>
       </div>
     </div>
   </section>
-
   <section id="what">
     <div class="wrap">
-      <span class="label">What it does</span>
+      <span class="label">02 · What it does</span>
       <h2 style="margin-top:10px">Training, LLMs, native layers, compression, and more.</h2>
       <p class="sub">Apple exposes the Neural Engine only through CoreML, and only for inference. ANEForge dispatches through the same private <code>aned</code> stack that CoreML uses internally, from a normal user process.</p>
       <div class="caps">
@@ -267,10 +282,9 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
       </div>
     </div>
   </section>
-
   <section id="compare">
     <div class="wrap">
-      <span class="label">How it compares</span>
+      <span class="label">03 · How it compares</span>
       <h2 style="margin-top:10px">CoreML is the only public route to the engine, and all it decides is whether to use it.</h2>
       <div class="tablewrap">
         <table>
@@ -285,10 +299,9 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
       <p class="caption" style="max-width:none">ANEForge compiles to the engine from an ordinary user process, with no entitlement and no SIP changes.</p>
     </div>
   </section>
-
   <section id="mlperf">
     <div class="wrap">
-      <span class="label">MLPerf</span>
+      <span class="label">04 · MLPerf</span>
       <h2 style="margin-top:10px; max-width:none">Where it lands:<br>the reference ResNet-50 against official MLPerf.</h2>
       <p class="sub">The MLPerf reference ResNet-50 on the engine, next to official MLPerf Inference results. Every competitor number is sourced to a public <code>mlcommons/inference_results</code> submission; the ANE row is unofficial and self-measured.</p>
       <div class="tablewrap">
@@ -319,44 +332,36 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
       <p class="caption" style="max-width:none">Passes the upstream MLCommons <code>submission_checker</code> (v5.1, all three edge scenarios VALID) at fp16 76.44% top-1, equal to fp32. On SingleStream latency the ANE is within ~1.2× of the Jetson AGX Orin at a fraction of the power; on Offline throughput it trails, because the program is batch-1 and compute-bound — at ~10 TFLOP/s it sits on the engine's applicable roofline. Power class is a device power envelope, not a MLPerf Power measurement. Sourced from <code>mlcommons/inference_results_v3.1</code> (Orin) and <code>v4.0</code> (H100).</p>
     </div>
   </section>
-
-  <section id="demos">
+  <section id="project">
     <div class="wrap">
-      <span class="label">Demos</span>
-      <h2 style="margin-top:10px">Simulations and learning, run and trained on the engine.</h2>
-      <p class="sub">Not just neural nets. Each of these compiles to ANE programs and runs end to end on the Neural Engine.</p>
-      <div class="gallery">
-        <figure class="demo">
-          <img src="./assets/fluid_vorticity.webp" alt="A passive dye shaped as the word ANEForge stirred into glowing filaments by a fluid simulation on the Apple Neural Engine" loading="lazy">
-          <figcaption>
-            <h3>Fluid simulation</h3>
-            <p>A dye painted as the word ANEForge, stirred by a 2-D incompressible Navier–Stokes flow. Every FFT in the pseudo-spectral loop runs on the engine, about 54 J at the 1.48 W rail.</p>
-            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/fluid_vorticity.py">reproduce →</a>
-          </figcaption>
-        </figure>
-        <figure class="demo">
-          <img src="./assets/reaction_diffusion.webp" alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine" loading="lazy">
-          <figcaption>
-            <h3>Reaction-diffusion</h3>
-            <p>Gray–Scott Turing patterns bloom from the word into a branching labyrinth. One program re-dispatches each step: a 3×3 Laplacian as a native ANE conv, the reactions as elementwise ops.</p>
-            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/reaction_diffusion.py">reproduce →</a>
-          </figcaption>
-        </figure>
-        <figure class="demo">
-          <img src="./assets/neural_ca.webp" alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel" loading="lazy">
-          <figcaption>
-            <h3>A network that grows</h3>
-            <p>A small CNN update rule, trained on the engine, grows a lizard from one seed pixel. The forward and backward passes both run on the ANE, so the rule is learned there, not just replayed.</p>
-            <a class="go" href="https://github.com/sbryngelson/ANEForge/blob/main/examples/train_neural_ca.py">reproduce →</a>
-          </figcaption>
-        </figure>
+      <span class="label">05 · Software, paper, guide</span>
+      <h2 style="margin-top:10px">The package, the paper behind it, and a guide to the engine.</h2>
+      <div class="trio">
+        <div class="door">
+          <div class="k">Software · MIT Licensed</div>
+          <h3>ANEForge</h3>
+          <p>The Python package. Build a graph, compile it to one ANE program, then run or train it. It handles quantized weights, native attention, resident state, and cross-compilation for 28 targets.</p>
+          <a class="go" href="https://github.com/sbryngelson/ANEForge">GitHub →</a>
+          <a class="go" href="https://aneforge.readthedocs.io">Docs →</a>
+        </div>
+        <div class="door">
+          <div class="k">arXiv · preprint</div>
+          <h3>The paper</h3>
+          <p>“Python for direct computation on the Apple Neural Engine.” The preprint behind the numbers on this page, with the dispatch path and the validation against reference in full.</p>
+          <a class="go" href="https://arxiv.org/abs/2606.17090">arXiv →</a>
+        </div>
+        <div class="door">
+          <div class="k">Book · web edition</div>
+          <h3>The guide</h3>
+          <p>A reverse-engineering account of the engine: the datapath, the compiler, the program format, the firmware, the kernel driver, and the cross-silicon target tables. Most of it is undocumented by Apple.</p>
+          <a class="go" href="https://ane-guide.readthedocs.io">Read →</a>
+        </div>
       </div>
     </div>
   </section>
-
   <section id="install" class="install">
     <div class="wrap">
-      <span class="label">Get started</span>
+      <span class="label">06 · Get started</span>
       <h2 style="margin-top:10px; max-width:none; white-space:nowrap">Apple Silicon, macOS 14+, Python 3.10+.</h2>
       <div class="cmd"><span class="p">$ </span>pip install aneforge</div>
       <p class="note">The <code>e5rt</code> dispatch shim builds against Apple frameworks on first use. Then browse <code>examples/</code>, starting with the quickstart.</p>
