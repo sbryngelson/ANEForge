@@ -108,8 +108,9 @@
   .door a.go{font-family:var(--mono); font-size:.8rem; display:inline-block; margin-top:14px}
   .door a.go + a.go{margin-left:20px}
 
-  .caps{margin-top:30px; display:grid; grid-template-columns:1fr 1fr; gap:26px 40px}
-  @media(max-width:680px){.caps{grid-template-columns:1fr; gap:22px}}
+  .caps{margin-top:30px; columns:2; column-gap:40px}   /* balanced columns: items pack, no row-height coupling */
+  .cap{break-inside:avoid; margin-bottom:24px}
+  @media(max-width:680px){.caps{columns:1}}
   .cap h4{font-size:1rem; font-weight:600}
   .cap h4 em{font-style:normal; font-family:var(--mono); font-size:.85em; color:var(--rust); font-weight:500; margin-left:8px}
   .cap p{color:var(--soft); font-size:.92rem; margin-top:5px}
