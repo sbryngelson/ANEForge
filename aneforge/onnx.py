@@ -409,6 +409,106 @@ def _pad4(pads):                               # ONNX conv pads=[top,left,bottom
   p = [int(v) for v in pads]
   return p[0] if len(set(p)) == 1 else (p[0], p[2], p[1], p[3])
 
+def _pad_axis(x, ax, before, after, mode, value):
+  """Pad one axis by concatenating border blocks: const blocks, repeated edge slices, a reversed
+  interior slice (reflect), or the opposite end (wrap). All static; reflect requires pad < dim."""
+  from .graph import concat as _cat
+  def _sl(begin, size):
+    b = [0] * len(x.shape); s = list(x.shape); b[ax] = begin; s[ax] = size
+    return x.slice_by_size(b, s)
+  def _blk(n):
+    shp = list(x.shape); shp[ax] = n                 # only [ax] differs, so the pre-pad shape is right for both borders
+    return _baked(np.full(shp, value, np.float16))
+  dim = x.shape[ax]
+  if mode == "constant":
+    # nested 2-part concats: a 3-part concat with two const borders fails to lower once a second
+    # padded axis stacks on top (Espresso "not implemented"); pairwise concats compile and are exact
+    y = x
+    if after: y = _cat([y, _blk(after)], axis=ax)
+    if before: y = _cat([_blk(before), y], axis=ax)
+    return y
+  if mode == "edge":
+    parts = [_sl(0, 1)] * before + [x] + [_sl(dim - 1, 1)] * after
+  elif mode == "reflect":
+    if before >= dim or after >= dim: raise NotImplementedError(f"ONNX Pad reflect: pad {before}/{after} >= dim {dim}")
+    parts = ([_sl(1, before).reverse(ax)] if before else []) + [x] + ([_sl(dim - 1 - after, after).reverse(ax)] if after else [])
+  elif mode == "wrap":
+    parts = ([_sl(dim - before, before)] if before else []) + [x] + ([_sl(0, after)] if after else [])
+  else:
+    raise NotImplementedError(f"ONNX Pad: mode={mode!r} not supported")
+  return _cat(parts, axis=ax) if len(parts) > 1 else x
+
+@onnx_op("Pad")
+def _pad_h(node, ins, a, i):
+  """Pad (opset 13+): constant/edge/reflect/wrap via static concat of border blocks; pads/axes must be constant."""
+  mode = _sattr(a, "mode", "constant")
+  if len(ins) > 1 and isinstance(ins[1], Tensor): raise NotImplementedError("ONNX Pad: data-dependent pads not supported")
+  pads = [int(v) for v in np.asarray(ins[1]).ravel()] if len(ins) > 1 and ins[1] is not None \
+    else [int(v) for v in a.get("pads", [])]
+  value = float(a.get("value", 0.0))                 # opset<11 attr form
+  if len(ins) > 2 and ins[2] is not None:
+    if isinstance(ins[2], Tensor): raise NotImplementedError("ONNX Pad: data-dependent constant_value not supported")
+    value = float(np.asarray(ins[2]).ravel()[0])
+  if _isc(ins[0]):                                   # constant pad folds
+    d = np.asarray(ins[0]); r = d.ndim
+    axes = [int(v) % r for v in np.asarray(ins[3]).ravel()] if len(ins) > 3 and ins[3] is not None else list(range(r))
+    width = [(0, 0)] * r
+    for k, ax in enumerate(axes): width[ax] = (pads[k], pads[k + len(axes)])
+    if mode == "constant": return np.pad(d, width, constant_values=value)
+    return np.pad(d, width, mode)  # type: ignore[arg-type]  # np.pad stubs over-constrain mode to a callable protocol
+  x = ins[0]; r = len(x.shape)
+  axes = [int(v) % r for v in np.asarray(ins[3]).ravel()] if len(ins) > 3 and ins[3] is not None else list(range(r))
+  if len(pads) != 2 * len(axes): raise ValueError(f"ONNX Pad: pads {pads} does not match axes {axes}")
+  for k, ax in enumerate(axes):
+    before, after = pads[k], pads[k + len(axes)]
+    if before or after: x = _pad_axis(x, ax, before, after, mode, value)
+  return x
+
+@onnx_op("Cast")
+def _cast(node, ins, a, i):
+  """Cast at import level: constants convert; a float->float cast on an activation is identity (the engine
+  computes fp16 regardless); float->int truncates toward zero as sign(x)*floor(|x|) (exact within fp16 range)."""
+  from onnx import helper
+  to = helper.tensor_dtype_to_np_dtype(int(a["to"]))
+  if _isc(ins[0]): return np.asarray(ins[0]).astype(to)
+  if np.issubdtype(to, np.floating): return ins[0]
+  if np.issubdtype(to, np.integer): return ins[0].sign() * ins[0].abs().floor()
+  raise NotImplementedError(f"ONNX Cast: target dtype {to} not supported on the ANE (fp16 datapath)")
+
+@onnx_op("Shrink")
+def _shrink(node, ins, a, i):
+  """Shrink: x-bias above lambd, x+bias below -lambd, else 0 - nested select against baked thresholds."""
+  from .graph import select as _select
+  x = ins[0]; bias = float(a.get("bias", 0.0)); lambd = float(a.get("lambd", 0.5))
+  lc = _baked(np.full(x.shape, lambd, np.float16)); nlc = _baked(np.full(x.shape, -lambd, np.float16))
+  zero = _baked(np.zeros(x.shape, np.float16))
+  return _select(x.greater(lc), x + (-bias), _select(x.less(nlc), x + bias, zero))
+
+@onnx_op("OneHot")
+def _onehot(node, ins, a, i):
+  """OneHot: compare the index tensor against a baked arange along the inserted axis, then select
+  on/off values. depth and values must be constant; a TENSOR index must be non-negative and in range
+  (out-of-range simply never matches -> all off), and indices are exact in fp16 up to 2048."""
+  from .graph import select as _select
+  if isinstance(ins[1], Tensor) or isinstance(ins[2], Tensor):
+    raise NotImplementedError("ONNX OneHot: data-dependent depth/values not supported")
+  depth = int(np.asarray(ins[1]).ravel()[0]); off_v, on_v = (float(v) for v in np.asarray(ins[2]).ravel())
+  if depth > 2048: raise NotImplementedError(f"ONNX OneHot: depth {depth} exceeds exact fp16 integer range")
+  if _isc(ins[0]):
+    idx = np.asarray(ins[0]).astype(np.int64)
+    pos0 = int(a.get("axis", -1)) % (idx.ndim + 1)
+    idxw = np.where(idx < 0, idx + depth, idx)               # ONNX: negatives wrap, out-of-range -> all off
+    valid = ((idxw >= 0) & (idxw < depth)).astype(np.float32)
+    hot = np.eye(depth, dtype=np.float32)[np.clip(idxw, 0, depth - 1)] * valid[..., None]
+    return (off_v + (on_v - off_v) * np.moveaxis(hot, -1, pos0)).astype(np.float32)
+  x = ins[0]; r = len(x.shape); pos = int(a.get("axis", -1)) % (r + 1)
+  xe = x.expand_dims((pos,))
+  rng_shape = [1] * (r + 1); rng_shape[pos] = depth
+  rng = _baked(np.arange(depth, dtype=np.float16).reshape(rng_shape))
+  out_shape = tuple(depth if k == pos else d for k, d in enumerate(xe.shape))
+  on = _baked(np.full(out_shape, on_v, np.float16)); off = _baked(np.full(out_shape, off_v, np.float16))
+  return _select(xe.equal(rng), on, off)
+
 @onnx_op("DequantizeLinear")
 def _dequant(node, ins, a, i):
   """int8/uint8 weight -> dequantized fp32 const (per-channel along `axis`); on an activation it is identity (the ANE computes in fp16)."""
