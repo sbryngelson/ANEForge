@@ -2,6 +2,7 @@
 import aneforge as af
 from aneforge.graph import Tensor
 from aneforge._rewrite import Rule, graph_rewrite, NUMERIC_RULES, graph_rewrite as _gr
+from _helpers import requires_ane   # the two on-device tests below compile+run; the rest are pure
 
 def _noop_rules(): return []
 
@@ -137,6 +138,7 @@ def test_adds_chain_folds():
   out = _apply(y, {"adds_chain"})
   assert _ops(out).count("adds") == 1 and out.attrs["k"] == 7.0
 
+@requires_ane
 def test_scalar_fold_matches_fp32_reference():
   rng = np.random.default_rng(0); xv = rng.standard_normal((1, 16)).astype(np.float16)
   x = af.input((1, 16)); y = (x * 0.5) * 4.0
@@ -198,6 +200,7 @@ def test_apply_variant_noop_cfg_keeps_baseline():
 
 
 # -- Task 7: README-example canon-equivalence (on-device) -------------------- #
+@requires_ane
 def test_readme_example_canon_equivalent():
   rng = np.random.default_rng(1)
   img = rng.integers(0, 255, (1, 3, 32, 32)).astype(np.uint8).astype(np.float16)

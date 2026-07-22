@@ -7,6 +7,9 @@ import aneforge as af
 from aneforge import autograd as ag
 from aneforge import _targets as TG
 from aneforge._compile import cross_compile_check
+from _helpers import requires_ane
+
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 
 
 def _crosschip_warnings(rec):

@@ -3,6 +3,9 @@ import pytest
 import aneforge as af
 from aneforge._compile import cross_compile_check
 from aneforge._targets import detect_family
+from _helpers import requires_ane
+
+pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
 
 # cross_compile_check uses the HOST compiler, which can only emit ops the host's family
 # supports; native A15+ ops (e.g. sin) require an A15+/M5 host.
