@@ -15,7 +15,7 @@ readme = "README.md"
 # annotations``, which requires Python >= 3.10. Developed/verified on Python 3.14.
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Spencer Bryngelson", email = "shb@gatech.edu" }]
 keywords = ["apple-neural-engine", "ane", "apple-silicon", "machine-learning", "inference", "espresso", "e5rt"]
 

@@ -216,4 +216,4 @@ Report security issues privately per the [`SECURITY.md`](SECURITY.md) guidelines
 ## License
 
 [MIT](LICENSE). The Apple Neural Engine is proprietary hardware, and the framework symbols this project calls are private, undocumented, and may change at any time.
-Nothing here is endorsed by, or constitutes an API contract from, Apple.
+Nothing here is endorsed by, or constitutes an API contract from, Apple. See [`NOTICE`](NOTICE) for the scope of the grant with respect to Apple's software and marks.

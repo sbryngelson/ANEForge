@@ -1,0 +1,13 @@
+ANEForge
+Copyright (c) 2026 Spencer H. Bryngelson
+
+Licensed under the MIT License; see LICENSE for the full text.
+
+NOTE ON SCOPE. ANEForge is an independent research project. It dispatches to the
+Apple Neural Engine through private, undocumented system symbols (the e5rt
+runtime) and is not an Apple product, is not endorsed by Apple, and relies on no
+Apple API contract. "Apple", "Apple Neural Engine", and related marks belong to
+Apple Inc. The MIT grant in LICENSE covers this project's own source only; it
+confers no rights in Apple software, and the private interfaces it calls may
+change or break without notice. Use is intended for research and
+interoperability.
