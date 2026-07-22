@@ -12,11 +12,16 @@
 <link rel="icon" type="image/png" sizes="32x32" href="./favicon.png">
 <link rel="icon" href="./favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
-<meta property="og:url" content="https://sbryngelson.github.io/ANEForge/">
-<meta property="og:image" content="https://sbryngelson.github.io/ANEForge/assets/og-card.png">
+<link rel="canonical" href="https://aneforge.com/">
+<meta property="og:url" content="https://aneforge.com/">
+<meta property="og:image" content="https://aneforge.com/assets/og-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="ANEForge — the Apple Neural Engine, programmable">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ANEForge: the Apple Neural Engine, programmable">
+<meta name="twitter:description" content="Run and train neural nets directly on the Apple Neural Engine. From Python. No CoreML.">
+<meta name="twitter:image" content="https://aneforge.com/assets/og-card.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -322,7 +327,7 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
       <p class="sub">Not just neural nets. Each of these compiles to ANE programs and runs end to end on the Neural Engine.</p>
       <div class="gallery">
         <figure class="demo">
-          <img src="./assets/fluid_vorticity.png" alt="A passive dye shaped as the word ANEForge stirred into glowing filaments by a fluid simulation on the Apple Neural Engine" loading="lazy">
+          <img src="./assets/fluid_vorticity.webp" alt="A passive dye shaped as the word ANEForge stirred into glowing filaments by a fluid simulation on the Apple Neural Engine" loading="lazy">
           <figcaption>
             <h3>Fluid simulation</h3>
             <p>A dye painted as the word ANEForge, stirred by a 2-D incompressible Navier–Stokes flow. Every FFT in the pseudo-spectral loop runs on the engine, about 54 J at the 1.48 W rail.</p>
@@ -330,7 +335,7 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
           </figcaption>
         </figure>
         <figure class="demo">
-          <img src="./assets/reaction_diffusion.png" alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine" loading="lazy">
+          <img src="./assets/reaction_diffusion.webp" alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine" loading="lazy">
           <figcaption>
             <h3>Reaction-diffusion</h3>
             <p>Gray–Scott Turing patterns bloom from the word into a branching labyrinth. One program re-dispatches each step: a 3×3 Laplacian as a native ANE conv, the reactions as elementwise ops.</p>
@@ -338,7 +343,7 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
           </figcaption>
         </figure>
         <figure class="demo">
-          <img src="./assets/neural_ca.png" alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel" loading="lazy">
+          <img src="./assets/neural_ca.webp" alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel" loading="lazy">
           <figcaption>
             <h3>A network that grows</h3>
             <p>A small CNN update rule, trained on the engine, grows a lizard from one seed pixel. The forward and backward passes both run on the ANE, so the rule is learned there, not just replayed.</p>

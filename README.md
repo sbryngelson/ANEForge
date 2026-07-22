@@ -121,7 +121,7 @@ Reproduce with [`bench/device_compare_wattcomplete.py`](bench/device_compare_wat
 ## A fluid simulation on the Neural Engine
 
 <p align="center">
-  <img src="docs/assets/fluid_vorticity.png" width="400"
+  <img src="docs/assets/fluid_vorticity.webp" width="400"
        alt="A passive dye shaped as the word ANEForge stirred into glowing filaments by a fluid simulation on the Apple Neural Engine">
 </p>
 
@@ -132,7 +132,7 @@ Reproduce with [`python examples/fluid_vorticity.py`](examples/fluid_vorticity.p
 ## Reaction-diffusion on the Neural Engine
 
 <p align="center">
-  <img src="docs/assets/reaction_diffusion.png" width="400"
+  <img src="docs/assets/reaction_diffusion.webp" width="400"
        alt="A Gray-Scott reaction-diffusion system grown from the word ANEForge into a branching labyrinth on the Apple Neural Engine">
 </p>
 
@@ -144,7 +144,7 @@ Reproduce with [`python examples/reaction_diffusion.py`](examples/reaction_diffu
 ## A neural network that grows, trained on the Neural Engine
 
 <p align="center">
-  <img src="docs/assets/neural_ca.png" width="300"
+  <img src="docs/assets/neural_ca.webp" width="300"
        alt="A neural cellular automaton, trained on the Apple Neural Engine, grows a lizard from a single seed pixel">
 </p>
 
