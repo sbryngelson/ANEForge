@@ -53,6 +53,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Indexing | `Gather` (static indices), `ArgMax`, `ArgMin`, `TopK` (2D, values only) |
 | Quantization | `DequantizeLinear`, `QuantizeLinear` (QDQ int8) |
 | Misc | `Softmax`, `LogSoftmax`, `Constant`, `ConstantOfShape`, `Range`, `EyeLike`, `Identity`, `Dropout` (inference no-op), `Cast` (import-level), `OneHot` (constant depth/values) |
+| Control flow | `If` (constant condition), `Loop` (static trip count, unrolled) |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
 `Shape`/`Gather`/dynamic-`Reshape` plumbing into static initializers before import.
@@ -103,6 +104,11 @@ mis-lower:
   pass `compress="int8"` to keep them on the ANE int8 weight datapath. Matches onnxruntime
   on-device (cosine ~1.0).
 - **Gelu:** exact erf-gelu only; `approximate="tanh"` raises.
+- **Control flow folds at import.** `If` requires a constant condition (the taken branch
+  imports inline; the other is never built) and `Loop` a constant trip count with a
+  constant-true condition (the body unrolls into one program; scan outputs stack along a
+  new leading axis). Data-dependent branching/termination has no ANE path: a compiled
+  program is one static graph.
 - **Boolean algebra has no ANE path.** `And`/`Or`/`Xor` cannot be implemented: MIL's
   `logical_and`/`logical_or`/`logical_xor` (and general `cast`, which would allow a
   bool->fp16 workaround) do not compile for the ANE backend (see the on-device MIL
