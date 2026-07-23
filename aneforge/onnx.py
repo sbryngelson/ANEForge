@@ -407,6 +407,20 @@ def _div(node, ins, a, i):
     x0, x1 = np.asarray(ins[0]), np.asarray(ins[1])
     return x0 // x1 if np.issubdtype(x0.dtype, np.integer) else x0 / x1     # ONNX integer Div truncates
   x, y = _binops(ins); return x / y
+@onnx_op("Mod")
+def _mod(node, ins, a, i):
+  """Mod with a constant divisor c: x - floor(x/c)*c (integer Mod, sign follows the divisor); the fmod=1
+  variant truncates the quotient toward zero instead (sign follows the dividend), as in the Cast handler."""
+  fmod = int(a.get("fmod", 0))
+  if _isc(ins[0]) and _isc(ins[1]):
+    x0, x1 = np.asarray(ins[0]), np.asarray(ins[1])
+    return np.fmod(x0, x1) if fmod else np.mod(x0, x1)
+  if isinstance(ins[1], Tensor):
+    raise NotImplementedError("ONNX Mod: only a constant divisor is supported (got a tensor divisor)")
+  x, c = _binops(ins)
+  q = x / c
+  t = q.sign() * q.abs().floor() if fmod else q.floor()
+  return (q - t) * c        # frac(q)*c, not x - t*c: a const mul directly after floor is dropped by the fold
 @onnx_op("Sum", "Mean")
 def _sum_mean(node, ins, a, i):
   """Variadic elementwise Sum/Mean: folded with add; Mean scales by 1/N (a constant, exact)."""

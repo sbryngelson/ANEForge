@@ -1264,3 +1264,31 @@ def test_lstm_peephole_raises():
   m.graph.initializer.append(P)
   m.graph.node[0].input.extend(["", "", "", "P"])   # seq_lens, initial_h, initial_c omitted; P present
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+def _mod_model(fmod, c, xty=TensorProto.FLOAT, n=8):
+  init = onnx.numpy_helper.from_array(c, "c")
+  node = helper.make_node("Mod", ["x", "c"], ["y"], fmod=fmod)
+  vi = lambda nm: helper.make_tensor_value_info(nm, xty, [1, n])
+  return _model([node], [vi("x")], [vi("y")], inits=[init])
+
+def test_mod_integer_constant_divisor_matches_onnxruntime():
+  import onnxruntime as ort, tempfile, os
+  m = _mod_model(0, np.array([3], np.int32), xty=TensorProto.INT32, n=15)
+  p = os.path.join(tempfile.mkdtemp(), "m.onnx"); onnx.save(m, p)
+  x = np.arange(-7, 8, dtype=np.int32).reshape(1, 15)          # negative dividends: sign follows the divisor
+  ref = np.asarray(ort.InferenceSession(p).run(None, {"x": x})[0])
+  got = np.asarray(af.load_onnx(p)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - ref).max() < 1e-2, f"got {got}, ref {ref}"
+
+def test_mod_fmod_constant_divisor_matches_onnxruntime():
+  import onnxruntime as ort, tempfile, os
+  m = _mod_model(1, np.array([2.5], np.float32))
+  p = os.path.join(tempfile.mkdtemp(), "m.onnx"); onnx.save(m, p)
+  x = np.array([[-6.25, -5.0, -3.5, -1.25, 0.0, 2.0, 4.75, 6.5]], np.float32)   # sign follows the dividend
+  ref = np.asarray(ort.InferenceSession(p).run(None, {"x": x})[0])
+  got = np.asarray(af.load_onnx(p)(x.astype(np.float16))).astype(np.float32)
+  assert np.abs(got - ref).max() < 1e-2, f"got {got}, ref {ref}"
+
+def test_mod_tensor_divisor_raises():
+  m = _model([helper.make_node("Mod", ["a", "b"], ["y"])], [_vi("a", [1, 4]), _vi("b", [1, 4])], [_vi("y", [1, 4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
