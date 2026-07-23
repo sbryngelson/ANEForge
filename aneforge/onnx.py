@@ -771,19 +771,29 @@ def _slice(node, ins, a, i):
     for ax, s0, e0, st0 in zip(axes, starts, ends, steps): sl[ax % d.ndim] = slice(s0, e0, st0)
     return d[tuple(sl)]
   x = ins[0]; rank = len(x.shape); begin = [0] * rank; size = list(x.shape)   # activation slice -> static slice_by_size
-  rev = []
+  rev = []; strided = []
   for ax, s0, e0, st0 in zip(axes, starts, ends, steps):
     ax %= rank; dim = x.shape[ax]
     if st0 == -1:                                    # full-extent flip -> native reverse (partial reversed slices stay unsupported)
       full = (s0 == -1 or s0 >= dim - 1) and e0 < -dim
       if not full: raise NotImplementedError("ONNX Slice: step=-1 is supported only as a full-axis flip")
       rev.append(ax); continue
-    if st0 != 1: raise NotImplementedError(f"ONNX Slice: step={st0} on a tensor not supported")
+    if st0 < 1: raise NotImplementedError(f"ONNX Slice: step={st0} on a tensor not supported")
     s0 = s0 + dim if s0 < 0 else min(s0, dim); e0 = e0 + dim if e0 < 0 else min(e0, dim)
     begin[ax] = max(0, s0); size[ax] = max(0, e0 - begin[ax])
+    if st0 > 1:                                      # positive stride: reshape the axis to [d/k, k], keep index 0, squeeze
+      if size[ax] % st0:
+        raise NotImplementedError(f"ONNX Slice: step={st0} on axis {ax} needs the sliced extent "
+                                  f"({size[ax]}) to divide by the step")
+      strided.append((ax, st0))
   if rev: x = x.reverse(tuple(rev))
-  if begin == [0] * rank and size == list(x.shape): return x
-  return x.slice_by_size(begin, size)
+  if begin != [0] * rank or size != list(x.shape): x = x.slice_by_size(begin, size)
+  for ax, k in strided:
+    s = x.shape
+    x = x.reshape(s[:ax] + (s[ax] // k, k) + s[ax + 1:])
+    x = x.slice_by_size([0] * (rank + 1), list(x.shape[:ax + 1]) + [1] + list(x.shape[ax + 2:]))
+    x = x.squeeze(ax + 1)
+  return x
 @onnx_op("Softmax")
 def _softmax(node, ins, a, i): return ins[0].softmax(int(a.get("axis", -1)))
 @onnx_op("LogSoftmax")
