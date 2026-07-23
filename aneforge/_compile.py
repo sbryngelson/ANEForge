@@ -180,10 +180,26 @@ class _Emitter:
 
 # param-free unary ops: graph op name == MIL op name, signature op(x = ...)
 @op("relu", "silu", "sigmoid", "tanh", "exp", "sqrt", "abs",
-  "sin", "cos", "erf", "softplus", "relu6", "softsign", "atan", "exp2",
+  "sin", "cos", "erf", "relu6", "softsign", "atan", "exp2",
   "floor", "ceil", "round", "sign")
 def _e_unary(em, t, n, s):
   em.line(f'{em.ty(t.shape)} {n} = {t.op}(x = {s[0]})[name = string("{n}")];')
+
+
+@op("softplus")
+def _e_softplus(em, t, n, s):
+  """Espresso's ANE softplus computes exp(x) in the fp16 datapath and returns 0 for every
+  x >= ln(65504) ~= 11.09 (measured on M5 / macOS 26.5: sp(10)=10, sp(11)=0 - silent, not an
+  error). Lower the stable split instead: softplus(x) = softplus(min(x, 10)) + relu(x - 10),
+  whose error is <= log1p(e^-10) ~= 4.5e-5 and whose exp argument never overflows."""
+  ten = float(np.float16(10.0)).hex(); nten = float(np.float16(-10.0)).hex()
+  em.line(f'fp16 {n}_c = const()[name = string("{n}_c"), val = fp16({ten})];')
+  em.line(f'{em.ty(t.shape)} {n}_m = minimum(x = {s[0]}, y = {n}_c)[name = string("{n}_m")];')
+  em.line(f'{em.ty(t.shape)} {n}_s = softplus(x = {n}_m)[name = string("{n}_s")];')
+  em.line(f'fp16 {n}_nc = const()[name = string("{n}_nc"), val = fp16({nten})];')
+  em.line(f'{em.ty(t.shape)} {n}_t = add(x = {s[0]}, y = {n}_nc)[name = string("{n}_t")];')
+  em.line(f'{em.ty(t.shape)} {n}_r = relu(x = {n}_t)[name = string("{n}_r")];')
+  em.line(f'{em.ty(t.shape)} {n} = add(x = {n}_s, y = {n}_r)[name = string("{n}")];')
 
 
 @op("prelu")
@@ -266,13 +282,37 @@ def _e_gelu(em, t, n, s):
   em.line(f'{em.ty(t.shape)} {n} = gelu(x = {s[0]}, mode = {n}_m)[name = string("{n}")];')
 
 
-@op("add", "sub", "mul", "real_div", "maximum", "minimum", "pow")
+@op("add", "sub", "real_div", "maximum", "minimum", "pow")
 def _e_binary(em, t, n, s):
   em.line(f'{em.ty(t.shape)} {n} = {t.op}(x = {s[0]}, y = {s[1]})[name = string("{n}")];')
 
 
+# Espresso fuses a SCALAR multiplier into a preceding floor/ceil/round's scale slot, and the
+# rounding kernel drops the scale (measured on M5 / macOS 26.5: floor(x)*k returns floor(x);
+# scalar ADDS are honored, and no other op family is affected - see issue #112). A FULL-shape
+# constant blocks the mis-fusion; a (1,1) broadcast const does not.
+_ROUNDING_OPS = ("floor", "ceil", "round")
+
+def _e_mul_full_const(em, t, n, src_name, k):
+  w = em.weight(f"{n}_kf", np.full(t.shape, k, np.float16), allow_int8=False)
+  em.line(f'{em.ty(t.shape)} {n} = mul(x = {src_name}, y = {w})[name = string("{n}")];')
+
+@op("mul")
+def _e_mul(em, t, n, s):
+  a, b = t.srcs
+  def scalar_const(v): return v.op == "const_array" and np.asarray(v.attrs["value"]).size == 1
+  if (a.op in _ROUNDING_OPS and scalar_const(b)) or (b.op in _ROUNDING_OPS and scalar_const(a)):
+    const_t, src_name = (b, s[0]) if scalar_const(b) else (a, s[1])
+    _e_mul_full_const(em, t, n, src_name, float(np.asarray(const_t.attrs["value"]).ravel()[0]))
+    return
+  _e_binary(em, t, n, s)
+
+
 @op("muls")
 def _e_muls(em, t, n, s):
+  if t.srcs[0].op in _ROUNDING_OPS:                # the same Espresso scale-slot mis-fusion
+    _e_mul_full_const(em, t, n, s[0], float(np.float16(t.attrs["k"])))
+    return
   k = float(np.float16(t.attrs["k"])).hex()
   em.line(f'fp16 {n}_k = const()[name = string("{n}_k"), val = fp16({k})];')
   em.line(f'{em.ty(t.shape)} {n} = mul(x = {s[0]}, y = {n}_k)[name = string("{n}")];')

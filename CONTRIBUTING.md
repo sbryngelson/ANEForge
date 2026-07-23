@@ -16,6 +16,11 @@ but overflows a dimension cap on another (caps are per family, see
 [`docs/capabilities.md`](docs/capabilities.md)), and small CPU/ANE divergence at
 boundary fp16 values. A wrong result well inside the fp16 range is a real bug.
 
+One more way to help from any Apple Silicon Mac: run the differential fuzzer for
+twenty minutes (`bash scripts/fuzz.sh`) and file anything it finds. It compares the
+compiler against a numpy reference on randomly generated graphs and shrinks failures
+to minimal reproducers; chip diversity is exactly what it needs.
+
 Report security issues privately, not in a public issue: see
 [`SECURITY.md`](SECURITY.md).
 
