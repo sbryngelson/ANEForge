@@ -63,3 +63,37 @@ def test_softplus_normal_range_unchanged():
   got = _run(x.softplus(), xv)
   ref = np.logaddexp(0.0, xv.astype(np.float64))
   assert np.abs(got - ref).max() < 1e-2
+
+
+# -- round 2: findings from the second fuzz batch -- #
+
+def test_round_large_magnitudes_exact():
+  # native ANE round corrupts |x| >= 1024 (round(1024)=1025, round(-2047)=-2048); the select
+  # routing keeps every fp16 value exact - values >= 1024 are already integers
+  xv = np.array([[1023.0, 1024.0, 1025.0, 2047.0, -1024.0, -2047.0, 3.4, -2.6]], np.float16)
+  x = af.input((1, 8))
+  got = _run(x.round(), xv)
+  want = np.array([[1023.0, 1024.0, 1025.0, 2047.0, -1024.0, -2047.0, 3.0, -3.0]])
+  assert np.array_equal(got, want), got.ravel()
+
+def test_reduce_round_scalar_mul_chain():
+  # rmax -> round -> muls previously returned the bare rmax (both epilogues dropped)
+  iv = np.array([[1, 2, 0, -1, 2, 1, 0, 1], [2, -3, 1, 0, 2, 2, 1, 0], [3, 1, 1, 2, 0, 1, 3, 2]], np.float16)
+  x = af.input((3, 8))
+  got = _run(x.amax((1,)).round() * -3.0, iv)
+  assert np.array_equal(got.ravel(), np.array([-6.0, -6.0, -9.0])), got.ravel()
+
+def test_muls_zero_after_reduce_compiles_and_is_zero():
+  # mul-by-zero after a reduce crashed ANECCompile; the sub(x,x) form compiles and is exact
+  xv = np.random.default_rng(0).integers(-3, 4, size=(4, 8, 5)).astype(np.float16)
+  x = af.input((4, 8, 5))
+  got = _run(x.sum((1,)) * 0.0, xv)
+  assert got.shape == (4, 1, 5) and np.array_equal(got, np.zeros((4, 1, 5)))
+
+def test_empty_program_gets_identity():
+  # a graph whose output is its input lowered to an empty MIL body, which crashes Espresso
+  # ("unordered_map::at: key not found"); the emitter now inserts an explicit identity
+  xv = np.arange(12, dtype=np.float16).reshape(3, 4)
+  x = af.input((3, 4))
+  got = _run(x, xv)
+  assert np.array_equal(got, xv.astype(np.float64))

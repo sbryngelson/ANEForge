@@ -135,6 +135,26 @@ def _rand_shape(rng):
     s = tuple(int(rng.choice(DIM_POOL)) for _ in range(rank))
     if np.prod(s) <= MAX_ELEMS: return s
 
+def _acc_bound(mode): return INT_MAX if mode == "int" else FLOAT_MAX
+
+def _acc_violation(spec, feed):
+  """True if any matmul/reduce-sum node's worst-case |partial sum| exceeds the mode bound.
+  Measured engine behavior: matmul results SATURATE to inf above ~32752 = fp16_max/2 for every
+  K (the matmul sibling of the documented slice-x16 saturation at 4094), and integer reduce sums
+  crossing 2048 lose bit-exactness. The oracle only judges graphs whose accumulations provably
+  stay in range under ANY summation order; the bounds here sit below both cliffs. (Two known
+  transpose-fed matmul cases return inf even BELOW these bounds - an open finding.)"""
+  vs = [np.asarray(feed, np.float64)]
+  for nd in spec["nodes"]:
+    x = vs[nd["src"][0]]
+    if nd["op"] == "matmul":
+      W = np.asarray(_weight(x.shape[1], nd["n"], nd["wseed"], spec["mode"]), np.float64)
+      if (np.abs(x) @ np.abs(W)).max() > _acc_bound(spec["mode"]): return True
+    if nd["op"] in ("rsum", "rmean"):
+      if np.abs(x).sum(axis=nd["axis"]).max() > _acc_bound(spec["mode"]): return True
+    vs.append(_mirror_node(nd, vs, spec))
+  return False
+
 def _ok(y, mode):
   if not np.isfinite(y).all(): return False
   if mode == "int":
@@ -206,6 +226,10 @@ def gen_spec(seed):
       if np.prod(x.shape) * np.prod(reps) > MAX_ELEMS: continue
       y = np.tile(x, reps); node = {"op": "tile", "src": [i], "reps": reps}
     if node is None or y is None or not _ok(y, mode): continue
+    if node["op"] == "matmul":
+      W = np.asarray(_weight(x.shape[1], node["n"], node["wseed"], mode), np.float64)
+      if (np.abs(x) @ np.abs(W)).max() > _acc_bound(mode): continue
+    if node["op"] in ("rsum", "rmean") and np.abs(x).sum(axis=node["axis"]).max() > _acc_bound(mode): continue
     vals.append(y); spec["nodes"].append(node)
   return spec
 
@@ -221,7 +245,12 @@ def _mirror(spec, feed, dtype):
   """Evaluate the spec's numpy mirror at `dtype`; returns (all_values, output)."""
   vs = [np.asarray(feed, dtype)]
   for nd in spec["nodes"]:
-    op = nd["op"]; x = vs[nd["src"][0]]
+    vs.append(_mirror_node(nd, vs, spec, dtype))
+  return vs, vs[-1]
+
+def _mirror_node(nd, vs, spec, dtype=np.float64):
+  op = nd["op"]; x = vs[nd["src"][0]]
+  if True:
     if op in UNARY: y = UNARY[op][1](x)
     elif op in BINARY: y = BINARY[op][1](x, vs[nd["src"][1]])
     elif op in REDUCE: y = REDUCE[op][1](x, nd["axis"])
@@ -236,8 +265,7 @@ def _mirror(spec, feed, dtype):
     elif op == "slice": y = x[tuple(slice(b, b + z) for b, z in zip(nd["begin"], nd["size"]))]
     elif op == "tile": y = np.tile(x, nd["reps"])
     else: raise ValueError(f"unknown op {op!r}")
-    vs.append(np.asarray(y, dtype))
-  return vs, vs[-1]
+  return np.asarray(y, dtype)
 
 def build_graph(spec, emi=False):
   """Build the aneforge graph for a spec; `emi` appends an identity chain (muls(1), adds(0),
@@ -293,6 +321,8 @@ def run_case(spec, opts=(0, 1), emi=True):
   budget (float mode); opt=1 answers to the autotuner's accuracy gate (GATE_TOL), because lossy
   gated variants are part of its contract. Returns failure dicts (empty = ok)."""
   feed = _feed_for(spec)
+  if _acc_violation(spec, feed):
+    return []                                      # fp16 accumulation out of range: engine-undefined, not judged
   vs64, ref = _mirror(spec, feed, np.float64)
   scale = max(float(np.abs(v).max()) for v in vs64) + 1e-3
   if spec["mode"] == "float":                      # conditioning screen: fp32 and fp64 mirrors agree?
@@ -302,6 +332,8 @@ def run_case(spec, opts=(0, 1), emi=True):
   def judge(got, opt, prefix=""):
     if got.shape != ref.shape:
       return {"opt": opt, "kind": prefix + "shape", "error": f"{got.shape} != {ref.shape}"}
+    if not np.isfinite(got).all() and np.isfinite(ref).all():
+      return {"opt": opt, "kind": prefix + "non-finite", "error": "output has NaN/inf, reference does not"}
     if opt == 0 and spec["mode"] == "int":
       if not np.array_equal(got, ref):
         n_bad = int((got != ref).sum())

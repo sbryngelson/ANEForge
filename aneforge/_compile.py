@@ -181,9 +181,23 @@ class _Emitter:
 # param-free unary ops: graph op name == MIL op name, signature op(x = ...)
 @op("relu", "silu", "sigmoid", "tanh", "exp", "sqrt", "abs",
   "sin", "cos", "erf", "relu6", "softsign", "atan", "exp2",
-  "floor", "ceil", "round", "sign")
+  "floor", "ceil", "sign")
 def _e_unary(em, t, n, s):
   em.line(f'{em.ty(t.shape)} {n} = {t.op}(x = {s[0]})[name = string("{n}")];')
+
+
+@op("round")
+def _e_round(em, t, n, s):
+  """The ANE round kernel corrupts values with |x| >= 1024 (measured: round(1024)=1025,
+  round(1025)=1026, round(-2047)=-2048 - it adds 0.5 in fp16, where the tie is unrepresentable).
+  Every fp16 value with |x| >= 1024 is already an integer, so route them through unchanged:
+  select(|x| < 1024, round(x), x). Exact on the full fp16 range."""
+  thr = float(np.float16(1024.0)).hex()
+  em.line(f'fp16 {n}_c = const()[name = string("{n}_c"), val = fp16({thr})];')
+  em.line(f'{em.ty(t.shape)} {n}_a = abs(x = {s[0]})[name = string("{n}_a")];')
+  em.line(f'{em.ty_dt(t.shape, "bool")} {n}_lt = less(x = {n}_a, y = {n}_c)[name = string("{n}_lt")];')
+  em.line(f'{em.ty(t.shape)} {n}_r = round(x = {s[0]})[name = string("{n}_r")];')
+  em.line(f'{em.ty(t.shape)} {n} = select(cond = {n}_lt, a = {n}_r, b = {s[0]})[name = string("{n}")];')
 
 
 @op("softplus")
@@ -310,6 +324,11 @@ def _e_mul(em, t, n, s):
 
 @op("muls")
 def _e_muls(em, t, n, s):
+  if float(t.attrs["k"]) == 0.0:
+    # mul-by-zero after a reduce crashes Espresso (ANECCompile FAILED, measured); x - x is the
+    # same zeros for every finite x and lowers everywhere
+    em.line(f'{em.ty(t.shape)} {n} = sub(x = {s[0]}, y = {s[0]})[name = string("{n}")];')
+    return
   if t.srcs[0].op in _ROUNDING_OPS:                # the same Espresso scale-slot mis-fusion
     _e_mul_full_const(em, t, n, s[0], float(np.float16(t.attrs["k"])))
     return
@@ -1179,6 +1198,11 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt: "str | int | N
       block_size: int = 32, validate: bool = False, target=None,
       _check_precision: bool = True):
   """Lower `out` into ONE fused ANE program (or a segmented plan if it has `af.sdpa` nodes)."""
+  if out.op == "input":
+    # A graph whose output IS an input lowers to an empty MIL body, which crashes Espresso's
+    # ANE compiler ("unordered_map::at: key not found"). Wrap in an exact scalar mul(1.0) so
+    # the program always has at least one op (and downstream port naming stays consistent).
+    out = out * 1.0
   if _check_precision:                 # once per user compile (internal re-entries pass False)
     _precision_signal(out, strict=validate)
     _dispatch_floor_signal(out)
