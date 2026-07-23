@@ -97,3 +97,14 @@ def test_empty_program_gets_identity():
   x = af.input((3, 4))
   got = _run(x, xv)
   assert np.array_equal(got, xv.astype(np.float64))
+
+
+def test_workarounds_cross_compile_for_all_families():
+  # the workaround emissions must not break any target family's compile (measured behavior is
+  # per-family; the workaround FORMS are semantically exact everywhere, so compiling is the bar)
+  from aneforge._compile import cross_compile_check
+  for fam in ("h13", "h14", "h15", "h16", "h16s"):
+    assert cross_compile_check(af.input((1, 8)).round(), fam), f"round select-form: {fam}"
+    assert cross_compile_check(af.input((1, 8)).softplus(), fam), f"stable softplus: {fam}"
+    assert cross_compile_check(af.input((4, 8)).sum((1,)) * 0.0, fam), f"muls-zero sub-form: {fam}"
+    assert cross_compile_check(af.input((3, 4)), fam), f"empty-program guard: {fam}"

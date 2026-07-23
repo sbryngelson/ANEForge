@@ -139,7 +139,10 @@ def _acc_bound(mode): return INT_MAX if mode == "int" else FLOAT_MAX
 
 def _acc_violation(spec, feed):
   """True if any matmul/reduce-sum node's worst-case |partial sum| exceeds the mode bound.
-  Measured engine behavior: matmul results SATURATE to inf above ~32752 = fp16_max/2 for every
+  Measured on M5/H17s - per-family datapath formats differ across ANE generations (see the
+  guide's datapath chapter), so these cliffs may sit elsewhere on other chips; a community run
+  that diverges from this model on another family is DATA, not noise. On H17s: matmul results
+  SATURATE to inf above ~32752 = fp16_max/2 for every
   K (the matmul sibling of the documented slice-x16 saturation at 4094), and integer reduce sums
   crossing 2048 lose bit-exactness. The oracle only judges graphs whose accumulations provably
   stay in range under ANY summation order; the bounds here sit below both cliffs. (Two known
