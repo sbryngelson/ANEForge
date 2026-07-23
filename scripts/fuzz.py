@@ -62,6 +62,8 @@ INT_DANGER = [1024.0, -1024.0, 2047.0, -2047.0, 255.0, -255.0]
 def _np_softplus(x): return np.logaddexp(0.0, x)
 def _np_silu(x): return x / (1.0 + np.exp(-x))
 def _np_elu(x, a): return np.where(x > 0, x, a * (np.exp(np.minimum(x, 0)) - 1.0))
+def _np_round_half_away(x):                        # ANE round is half-away-from-zero, not banker's
+  return np.where(x >= 0, np.floor(x + 0.5), np.ceil(x - 0.5))
 def _np_softmax(x):
   e = np.exp(x - x.max(axis=-1, keepdims=True))
   return e / e.sum(axis=-1, keepdims=True)
@@ -70,6 +72,7 @@ UNARY = {
   "relu":     (lambda t: t.relu(),          lambda x: np.maximum(x, 0.0), True),
   "abs":      (lambda t: t.abs(),           np.abs,                       True),
   "floor":    (lambda t: t.floor(),         np.floor,                     True),
+  "round":    (lambda t: t.round(),         _np_round_half_away,          True),
   "sign":     (lambda t: t.sign(),          np.sign,                      True),
   "square":   (lambda t: t.square(),        np.square,                    True),
   "clip":     (lambda t: t.clip(-4.0, 4.0), lambda x: np.clip(x, -4.0, 4.0), True),
