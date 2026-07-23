@@ -1088,6 +1088,28 @@ def test_slice_full_flip_matches_onnxruntime():  # step=-1 over the whole axis -
   got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
   assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-3
 
+def test_slice_positive_step_matches_onnxruntime():  # even/odd strides and a strided slice with an offset
+  rng = np.random.default_rng(21)
+  for s0, e0, k, dim in ((0, 8, 2, 8), (0, 12, 3, 12), (2, 8, 2, 10)):
+    x = rng.standard_normal((1, dim)).astype(np.float32)
+    st = onnx.numpy_helper.from_array(np.array([s0], np.int64), "st")
+    en = onnx.numpy_helper.from_array(np.array([e0], np.int64), "en")
+    ax = onnx.numpy_helper.from_array(np.array([1], np.int64), "ax")
+    sp = onnx.numpy_helper.from_array(np.array([k], np.int64), "sp")
+    m = _model([helper.make_node("Slice", ["x", "st", "en", "ax", "sp"], ["y"])],
+               [_vi("x", [1, dim])], [_vi("y", [1, (e0 - s0) // k])], inits=[st, en, ax, sp])
+    got = np.asarray(af.load_onnx(m)(x.astype(np.float16))).astype(np.float32)
+    assert np.abs(got - np.asarray(onnx_run(m, x))).max() < 1e-3, f"s0={s0} e0={e0} k={k}"
+
+def test_slice_step_nondivisible_extent_raises():  # 8 % 3 != 0: not expressible via the reshape trick
+  st = onnx.numpy_helper.from_array(np.array([0], np.int64), "st")
+  en = onnx.numpy_helper.from_array(np.array([8], np.int64), "en")
+  ax = onnx.numpy_helper.from_array(np.array([1], np.int64), "ax")
+  sp = onnx.numpy_helper.from_array(np.array([3], np.int64), "sp")
+  m = _model([helper.make_node("Slice", ["x", "st", "en", "ax", "sp"], ["y"])],
+             [_vi("x", [1, 8])], [_vi("y", [1, 3])], inits=[st, en, ax, sp])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
 def test_slice_partial_reverse_raises():  # only full-axis flips are supported at step=-1
   st = onnx.numpy_helper.from_array(np.array([5], np.int64), "st")
   en = onnx.numpy_helper.from_array(np.array([2], np.int64), "en")
