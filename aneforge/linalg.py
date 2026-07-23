@@ -86,7 +86,7 @@ def conjugate_gradient(A, b, iters: int = 20, x0=None, refine: int = 0):
 
   bT = af.input((1, n))
   x0T = af.input((1, n)) if x0 is not None else None
-  dot = lambda u, v: (u * v) @ ones                       # ANE matmul dot (wide accum)
+  dot = lambda u, v: (u * v) @ ones                       # ANE matmul dot (saturates above ~32752 = fp16_max/2; scaling keeps sums in range)
 
   def cg_block(x, r, K):
     """K unrolled CG steps from residual r (p=r), accumulating into x."""
