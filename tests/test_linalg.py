@@ -255,3 +255,35 @@ def test_solve_triangular_large_entries():
   x = r.standard_normal(n); b = T @ x
   y = L.solve_triangular(f16(T), f16(b))
   assert np.isfinite(y).all() and relerr(y, x) <= 1e-2
+
+@pytest.mark.parametrize("shape", [(6, 5), (16, 16), (32, 8)])
+@pytest.mark.parametrize("order", ["fro", 1, np.inf])
+def test_norm_matches_numpy(shape, order):
+  m, n = shape
+  A = f16(np.random.default_rng(m * 100 + n).standard_normal((m, n)))
+  got, ref = L.norm(A, order), np.linalg.norm(A.astype(np.float64), order)
+  assert abs(got - ref) / abs(ref) <= 5e-3, f"norm(order={order!r}) {shape}: {got} vs {ref}"
+
+
+def test_norm_rejects_bad_input():
+  with pytest.raises(ValueError): L.norm(np.zeros((2, 2, 2), f16))       # not 2-D
+  with pytest.raises(ValueError): L.norm(np.zeros((2, 2), f16), 2)       # spectral norm: use svdvals
+
+
+@pytest.mark.parametrize("k", [0, 1, 2, 3, 5, 8])
+def test_matrix_power_matches_numpy(k):
+  # well-conditioned (cond 2) so the fp16 error from repeated squaring stays bounded
+  r = np.random.default_rng(7); n = 8
+  Q = np.linalg.qr(r.standard_normal((n, n)))[0]
+  A = f16((Q * np.geomspace(1.0, 2.0, n)) @ Q.T)
+  got = L.matrix_power(A, k)
+  ref = np.linalg.matrix_power(A.astype(np.float64), k)
+  assert relerr(got, ref) <= 5e-3, f"matrix_power(A, {k}): relerr {relerr(got, ref)}"
+
+
+def test_matrix_power_identity_and_rejects():
+  A = f16(np.random.default_rng(8).standard_normal((5, 5)))
+  assert np.array_equal(L.matrix_power(A, 0), np.eye(5, dtype=np.float32))   # n=0 -> I
+  assert relerr(L.matrix_power(A, 1), A) == 0.0                              # n=1 -> A itself
+  with pytest.raises(ValueError): L.matrix_power(np.zeros((2, 3), f16), 2)   # not square
+  with pytest.raises(ValueError): L.matrix_power(A, -1)                      # needs an inverse
