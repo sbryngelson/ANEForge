@@ -115,7 +115,12 @@ def _diag_pairs(sub: str) -> dict[str, tuple[int, int]]:
     raise EinsumUnsupported(
       f"einsum: index {over!r} appears {counts[over[0]]} times in operand '{sub}'; only a "
       f"doubly-repeated index reduces to a mask-and-reduce diagonal - unsupported on the ANE.")
-  return {ch: tuple(i for i, c in enumerate(sub) if c == ch) for ch, c in counts.items() if c == 2}
+  out: dict[str, tuple[int, int]] = {}
+  for ch, c in counts.items():
+    if c != 2: continue
+    p, q = (i for i, x in enumerate(sub) if x == ch)
+    out[ch] = (p, q)
+  return out
 
 
 def _extract_diagonals(t: Tensor, sub: str) -> tuple[Tensor, str]:
