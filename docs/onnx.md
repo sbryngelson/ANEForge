@@ -45,6 +45,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Comparison / logic | `Equal`, `Greater`, `GreaterOrEqual`, `Less`, `LessOrEqual`, `Not` |
 | Convolution / pooling | `Conv`, `MaxPool`, `AveragePool`, `GlobalAveragePool`, `GlobalMaxPool` |
 | Linear | `Gemm` (full `alpha`/`beta`/`transA`/`transB`), `MatMul`, `Einsum` (matmul-reducible equations) |
+| Attention | `Attention` (opset 23) - 4D `[1,H,S,D]`, onto the native fused-attention layer |
 | Normalization | `BatchNormalization`, `InstanceNormalization`, `LayerNormalization`, `GroupNormalization`, `RMSNormalization`, `LpNormalization` (p=1/2) |
 | Shape / layout | `Reshape`, `Flatten`, `Transpose`, `Squeeze` (incl. squeeze-all), `Unsqueeze`, `Concat`, `Split`, `Expand`, `SpaceToDepth`, `DepthToSpace`, `Slice` (step 1; step -1 as a full-axis flip), `Shape`, `Trilu`, `Pad` (constant/edge/reflect/wrap) |
 | Normalization (cross-channel) | `LRN` |
@@ -163,3 +164,14 @@ mis-lower:
   output **only** - ONNX's second (indices) output is unsupported, so a model consuming the
   indices fails when that name is later looked up. `k` is read from the (opset 10+) input;
   `k` in `{3, 4}` is rejected by the ANE itself. Shipped shape-validated only.
+- **Attention** (opset 23): maps onto `af.sdpa`, i.e. the native fused-attention layer, so it
+  accepts only what that layer expresses: 4-D `[1,H,S,D]` Q/K/V with batch 1 and matching head
+  counts, the `scale` attribute (ONNX's `1/sqrt(D)` default is `af.sdpa`'s too), `is_causal`, and
+  an `attn_mask` that is either a runtime `[1,1,Sq,Skv]` additive plane or a constant that is
+  exactly the causal upper-triangular `-inf` (folded to the native causal path). `Sq < Skv`
+  (KV-cache decode) works with `is_causal=0`. Rejected with `NotImplementedError`: the 3-D packed
+  Q/K/V form, grouped-query attention (`q_num_heads != kv_num_heads` - expand K/V in the graph),
+  `past_key`/`past_value`, the `present_key`/`present_value`/`qk_matmul_output` outputs,
+  `softcap`, `qk_matmul_output_mode`, `softmax_precision`, boolean masks, and arbitrary constant
+  masks. Outside the reliable native regime `af.sdpa`'s own tiled decomposition takes over for
+  the non-causal case and raises for the causal one - see [capabilities](capabilities.md).
