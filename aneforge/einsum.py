@@ -8,11 +8,11 @@ from collections import Counter
 
 import numpy as np
 
-from aneforge.graph import Tensor
+from aneforge.graph import Tensor, _const
 
 
 class EinsumUnsupported(NotImplementedError):
-  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal/trace, ellipsis, invented output dims)."""
+  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal-write, triple repeats, ellipsis)."""
 
 
 # equation parsing
@@ -99,13 +99,47 @@ def _parse(equation: str, n_operands: int) -> tuple[list[str], str]:
 
 
 def _reduce_repeats_check(sub: str) -> None:
-  """A repeated index within one operand is a diagonal extraction (gather)."""
+  """Invariant guard: operands reach the contraction with distinct indices (`_extract_diagonals` ran first)."""
   if len(set(sub)) != len(sub):
     dup = sorted({ch for ch in sub if sub.count(ch) > 1})
     raise EinsumUnsupported(
-      f"einsum: repeated index {dup} within operand '{sub}' is a diagonal/trace "
-      f"extraction, which needs gather - unsupported on the ANE. "
-      f"(Reject rather than return wrong results.)")
+      f"einsum: repeated index {dup} within operand '{sub}' reached the contraction "
+      f"undiagonalized (internal invariant).")
+
+
+def _diag_pairs(sub: str) -> dict[str, tuple[int, int]]:
+  """Map each index repeated exactly twice in `sub` to its two positions; a higher multiplicity rejects."""
+  counts = Counter(sub)
+  over = sorted(ch for ch, c in counts.items() if c > 2)
+  if over:
+    raise EinsumUnsupported(
+      f"einsum: index {over!r} appears {counts[over[0]]} times in operand '{sub}'; only a "
+      f"doubly-repeated index reduces to a mask-and-reduce diagonal - unsupported on the ANE.")
+  pairs: dict[str, tuple[int, int]] = {}
+  for ch, c in counts.items():
+    if c == 2:
+      p, q = (i for i, ci in enumerate(sub) if ci == ch)   # exactly two positions
+      pairs[ch] = (p, q)
+  return pairs
+
+
+def _extract_diagonals(t: Tensor, sub: str) -> tuple[Tensor, str]:
+  """Rewrite each doubly-repeated index in one operand as its diagonal, dropping the second axis.
+
+  No gather needed: `(x * eye).sum(axis)` IS the diagonal, from ops the lowering already has. The baked
+  identity zeroes every off-diagonal term, so each output element keeps exactly one survivor - the
+  reduce adds only zeros and the extraction is bit-exact in fp16 (unlike a true multi-term sum)."""
+  while True:
+    pairs = _diag_pairs(sub)
+    if not pairs: return t, sub
+    ch, (p, q) = min(pairs.items())
+    n = t.shape[p]
+    if t.shape[q] != n:
+      raise ValueError(f"einsum: repeated index {ch!r} in operand '{sub}' spans dims "
+               f"{n} and {t.shape[q]}; a diagonal needs them equal")
+    mshape = [n if i in (p, q) else 1 for i in range(len(sub))]   # eye over the pair, size-1 elsewhere
+    t = (t * _const(np.eye(n, dtype=np.float16).reshape(mshape))).sum(q).squeeze(q)
+    sub = sub[:q] + sub[q + 1:]
 
 
 # operand-level helpers
@@ -214,7 +248,7 @@ def _expand_to(t: Tensor, present: list, target: list, _sizes) -> Tensor:
 
 def einsum(equation: str, *operands: Tensor) -> Tensor:
   """numpy-style einsum lowered to aneforge ops (matmul-reducible patterns, incl. '...' batch
-  dims); rejects diagonal/trace and repeated output indices."""
+  dims and diagonal/trace extraction); rejects diagonal-WRITE and repeated output indices."""
   if not operands:
     raise ValueError("einsum: at least one operand is required")
   if not all(isinstance(o, Tensor) for o in operands):
@@ -226,7 +260,11 @@ def einsum(equation: str, *operands: Tensor) -> Tensor:
     if len(s) != len(t.shape):
       raise ValueError(f"einsum: subscript '{s}' has {len(s)} indices but operand "
                f"shape {t.shape} has {len(t.shape)} dims")
-    _reduce_repeats_check(s)
+
+  # a doubly-repeated index within an operand is a diagonal: take it before contracting, so
+  # everything downstream sees operands whose indices are distinct.
+  operands, ins = zip(*(_extract_diagonals(t, s) for t, s in zip(operands, ins)))
+  ins = list(ins)
 
   # single operand: pure transpose / reduce
   if len(operands) == 1:
@@ -293,14 +331,19 @@ def _selftest() -> int:
     ("rand-A",            "abc,cd->abd",      [(2, 3, 4), (4, 5)]),
     ("rand-B",            "ij,ik->jk",        [(7, 4), (7, 5)]),
     ("rand-C",            "abcd,abce->abde",  [(2, 2, 3, 4), (2, 2, 3, 5)]),
+    ("diag",              "ii->i",            [(5, 5)]),
+    ("trace",             "ii->",             [(5, 5)]),
+    ("diag-batch",        "bii->bi",          [(3, 5, 5)]),
+    ("diag-then-contract", "ii,ij->j",        [(5, 5), (5, 6)]),
+    ("diag-both-operands", "ii,jj->ij",       [(4, 4), (5, 5)]),
+    ("diag-middle",       "ibi->bi",          [(4, 3, 4)]),
+    ("two-diag-pairs",    "iijj->ij",         [(3, 3, 4, 4)]),
+    ("ellipsis",          "...ij->...ji",     [(2, 3, 4)]),   # supported since _expand_ellipsis landed
   ]
 
   rejected = [
-    ("diag",   "ii->i",   [(5, 5)]),
-    ("trace",  "ii->",    [(5, 5)]),
-    ("diag-batch", "bii->bi", [(3, 5, 5)]),
-    ("ellipsis", "...ij->...ji", [(2, 3, 4)]),
     ("diag-write", "ij->ii", [(5, 5)]),
+    ("triple-repeat", "iii->i", [(4, 4, 4)]),
   ]
 
   print("SUPPORTED battery (relerr vs numpy.einsum on the ANE):")
