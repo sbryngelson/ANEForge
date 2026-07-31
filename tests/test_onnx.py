@@ -1331,3 +1331,77 @@ def test_mod_fmod_constant_divisor_matches_onnxruntime():
 def test_mod_tensor_divisor_raises():
   m = _model([helper.make_node("Mod", ["a", "b"], ["y"])], [_vi("a", [1, 4]), _vi("b", [1, 4])], [_vi("y", [1, 4])])
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+# ── Attention (opset 23) -> native fused-attention layer ──
+
+def _attn_model(inputs, outputs=("Y",), inits=(), **attrs):
+  """An opset-23 Attention graph. `inputs` is a list of (name, shape); "" names an omitted optional."""
+  n = helper.make_node("Attention", [nm for nm, _ in inputs], list(outputs), **attrs)
+  vis = [_vi(nm, sh) for nm, sh in inputs if nm and sh is not None]
+  outs = [_vi(nm, inputs[0][1]) for nm in outputs if nm]
+  g = helper.make_graph([n], "g", vis, outs, list(inits))
+  m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 23)])
+  m.ir_version = 10
+  return m
+
+def _attn_ort(m, feeds):
+  """onnxruntime reference for a multi-input Attention graph (fp32)."""
+  import onnxruntime
+  return onnxruntime.InferenceSession(m.SerializeToString()).run(None, feeds)[0]
+
+def test_attention_builds_causal_and_non_causal():
+  H, S, D = 2, 8, 16
+  qkv = [("Q", [1, H, S, D]), ("K", [1, H, S, D]), ("V", [1, H, S, D])]
+  for attrs, want in [({"is_causal": 1}, True), ({}, False)]:
+    _, out = af.onnx_to_tensor(_attn_model(qkv, **attrs))
+    assert out.op == "sdpa" and out.shape == (1, H, S, D), f"{attrs} -> {out.op} {out.shape}"
+    assert out.attrs["causal"] is want and out.attrs["scale"] == 1.0 / D**0.5   # ONNX default scale
+
+def test_attention_explicit_scale_and_runtime_mask_build():
+  H, S, D = 2, 8, 16
+  qkv = [("Q", [1, H, S, D]), ("K", [1, H, S, D]), ("V", [1, H, S, D])]
+  _, out = af.onnx_to_tensor(_attn_model(qkv, scale=0.5))
+  assert out.attrs["scale"] == 0.5
+  # A runtime attn_mask rides the native layer's 5th bottom as one shared [1,1,Sq,Skv] plane.
+  _, out = af.onnx_to_tensor(_attn_model(qkv + [("M", [1, 1, S, S])]))
+  assert out.op == "sdpa" and out.attrs.get("masked") is True
+
+def test_attention_causal_const_mask_folds_to_native_causal():
+  H, S, D = 2, 8, 16
+  qkv = [("Q", [1, H, S, D]), ("K", [1, H, S, D]), ("V", [1, H, S, D])]
+  mask = _init(np.triu(np.full((S, S), -1e4, np.float32), 1), "M")
+  _, out = af.onnx_to_tensor(_attn_model(qkv + [("M", None)], inits=[mask]))
+  assert out.op == "sdpa" and out.attrs["causal"] is True   # recognized, not left to a runtime mask
+
+def test_attention_unsupported_forms_raise():
+  H, S, D = 2, 8, 16
+  qkv = [("Q", [1, H, S, D]), ("K", [1, H, S, D]), ("V", [1, H, S, D])]
+  gqa = [("Q", [1, 4, S, D]), ("K", [1, 2, S, D]), ("V", [1, 2, S, D])]
+  packed = [("Q", [1, S, H * D]), ("K", [1, S, H * D]), ("V", [1, S, H * D])]
+  flat = _init(np.zeros((S, S), np.float32), "M")           # all-zeros: a mask, but not causal
+  for label, m in [
+      ("softcap", _attn_model(qkv, softcap=30.0)),
+      ("qk_matmul_output_mode", _attn_model(qkv, qk_matmul_output_mode=1)),
+      ("grouped-query", _attn_model(gqa)),
+      ("3D packed qkv", _attn_model(packed)),
+      ("present_key output", _attn_model(qkv, outputs=("Y", "present_key"))),
+      ("past_key input", _attn_model(qkv + [("", None), ("past_key", [1, H, S, D]),
+                                            ("past_value", [1, H, S, D])])),
+      ("non-causal const mask", _attn_model(qkv + [("M", None)], inits=[flat])),
+  ]:
+    with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+@requires_ane
+def test_attention_matches_onnxruntime():
+  """Native fused-attention output vs onnxruntime's opset-23 Attention, causal and not."""
+  rng = np.random.default_rng(0)
+  for H, S, D in [(1, 4, 8), (2, 8, 16)]:
+    qkv = [("Q", [1, H, S, D]), ("K", [1, H, S, D]), ("V", [1, H, S, D])]
+    Q, K, V = (rng.standard_normal((1, H, S, D)).astype(np.float32) for _ in range(3))
+    for attrs in ({"is_causal": 1}, {}):
+      m = _attn_model(qkv, **attrs)
+      net = af.load_onnx(m)
+      got = np.asarray(net(*(a.astype(np.float16) for a in (Q, K, V)))).astype(np.float32).ravel()
+      ref = np.asarray(_attn_ort(m, {"Q": Q, "K": K, "V": V})).astype(np.float32).ravel()
+      cos = _cos(got, ref)
+      assert cos > 0.99, f"Attention H={H} S={S} D={D} {attrs} ANE vs onnxruntime cosine={cos}"

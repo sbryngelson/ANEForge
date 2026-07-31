@@ -663,6 +663,63 @@ def _matmul(node, ins, a, i):
   if not isinstance(ins[0], Tensor): raise NotImplementedError("ONNX MatMul: a constant first operand is not supported")
   b = ins[1]
   return ins[0] @ (np.asarray(b) if not isinstance(b, Tensor) else b)
+@onnx_op("Attention")
+def _attention(node, ins, a, i):
+  """Attention (opset 23) -> af.sdpa, i.e. the native fused-attention layer. Only the 4D
+  [B,H,S,D] form with batch 1 lands there, so everything the fused path cannot express is
+  rejected rather than silently decomposed: past/present KV, the optional qk_matmul_output,
+  softcap, GQA head-count mismatches, and 3D packed Q/K/V."""
+  from .graph import sdpa as _sdpa
+  q, k, v = ins[0], ins[1], ins[2]
+  mask = ins[3] if len(ins) > 3 and ins[3] is not None else None
+  if len(ins) > 4 and any(x is not None for x in ins[4:]):
+    raise NotImplementedError("ONNX Attention: past_key/past_value are not supported (the native "
+                              "layer has no KV-cache input; concatenate the cache in the graph "
+                              "and pass the full K/V)")
+  if len(node.output) > 1 and any(o for o in node.output[1:]):
+    raise NotImplementedError("ONNX Attention: only the Y output is supported "
+                              "(present_key/present_value/qk_matmul_output are not produced)")
+  for attr, why in (("softcap", "the native layer applies no softcap"),
+                    ("qk_matmul_output_mode", "the QK intermediate is not exposed"),
+                    ("softmax_precision", "softmax precision is fixed by the hardware")):
+    if a.get(attr): raise NotImplementedError(f"ONNX Attention: {attr} is not supported ({why})")
+  for t, nm in ((q, "Q"), (k, "K"), (v, "V")):
+    if not isinstance(t, Tensor):
+      raise NotImplementedError(f"ONNX Attention: {nm} must be an activation, not a constant")
+    if len(t.shape) != 4:
+      raise NotImplementedError(f"ONNX Attention: only the 4D [B,H,S,D] form is supported; "
+                                f"{nm} is {t.shape} (3D packed Q/K/V has no native path)")
+  qh, kh = int(a.get("q_num_heads", q.shape[1])), int(a.get("kv_num_heads", k.shape[1]))
+  if qh != q.shape[1] or kh != k.shape[1]:
+    raise NotImplementedError(f"ONNX Attention: q_num_heads/kv_num_heads ({qh}/{kh}) disagree with "
+                              f"the 4D layouts {q.shape}/{k.shape}")
+  if qh != kh:
+    raise NotImplementedError(f"ONNX Attention: grouped-query attention (q_num_heads={qh} != "
+                              f"kv_num_heads={kh}) is not supported; expand K/V to the query "
+                              f"head count in the graph")
+  # ONNX defaults scale to 1/sqrt(head_size); af.sdpa uses the same default when scale is None.
+  scale = float(a["scale"]) if a.get("scale") is not None else None
+  causal = bool(int(a.get("is_causal", 0)))
+  if mask is not None and not isinstance(mask, Tensor):
+    mask = np.asarray(mask)
+    if mask.dtype == bool:
+      raise NotImplementedError("ONNX Attention: a boolean attn_mask is not supported; pass an "
+                                "additive float mask (0 to keep, large negative to drop)")
+    # A constant additive mask that is exactly causal is the native causal path; anything else
+    # would have to ride the runtime 5th bottom, which needs a Tensor.
+    m = mask.astype(np.float32)
+    while m.ndim > 2 and m.shape[0] == 1: m = m[0]
+    if not (m.ndim == 2 and m.shape[0] == m.shape[1]
+            and (m[np.triu_indices(m.shape[0], 1)] < -1e3).all()
+            and (m[np.tril_indices(m.shape[0], 0)] > -1e3).all()):
+      raise NotImplementedError("ONNX Attention: only a causal constant attn_mask is supported; "
+                                "pass an arbitrary mask as a graph input (runtime tensor)")
+    causal, mask = True, None
+  if mask is not None and causal:
+    raise NotImplementedError("ONNX Attention: is_causal with an explicit attn_mask is not "
+                              "supported (the native layer takes one or the other)")
+  return _sdpa(q, k, v, scale=scale, is_causal=causal, attn_mask=mask)
+
 @onnx_op("Einsum")
 def _einsum_h(node, ins, a, i):
   """Routes to aneforge.einsum (matmul-reducible specs; diagonal/ellipsis reject as EinsumUnsupported)."""
