@@ -629,6 +629,55 @@ def pinv(A, k: int, oversample: int = 5, power_iters: int = 2, rcond: float = 1e
   return _ane_gemm(W.astype(f16), np.ascontiguousarray(U[:, keep].T, np.float32).astype(f16)).astype(np.float32)
 
 
+def norm(A, order="fro"):
+  """Matrix norm of a 2-D A, composed on-engine as one fused graph.
+
+  `order="fro"` is `sqrt(sum_square(A))`; `order=1` is the max absolute column sum and
+  `order=inf` the max absolute row sum, each an abs, a matmul against a ones vector (the
+  wide accumulator does the summing), and an `amax`. Oracle is `np.linalg.norm` (whose
+  argument is spelled `ord`; renamed here only to avoid shadowing the builtin).
+  """
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2: raise ValueError(f"linalg.norm: expected a 2-D matrix; got shape {A16.shape}")
+  m, n = A16.shape
+  X = af.input((m, n))
+  if order == "fro":
+    out = X.sum_square((0, 1)).sqrt()
+  elif order == 1:
+    # column sums: |A|^T @ ones[m,1] -> [n,1]
+    out = (X.abs().transpose([1, 0]) @ np.ones((m, 1), f16)).amax((0, 1))
+  elif order in (np.inf, float("inf")):
+    out = (X.abs() @ np.ones((n, 1), f16)).amax((0, 1))     # row sums -> [m,1]
+  else:
+    raise ValueError(f"linalg.norm: order must be 'fro', 1, or inf; got {order!r}")
+  net = af.compile(out, _check_precision=False)
+  v = float(np.ravel(np.asarray(net(A16), np.float64))[0])
+  net.release()
+  return v
+
+
+def matrix_power(A, n: int):
+  """A**n for integer n >= 0 by binary exponentiation over `_ane_gemm`, so it costs
+  O(log n) on-engine gemms rather than n-1. n=0 is the identity.
+
+  fp16 error compounds with each squaring, so this is for modest powers on
+  well-conditioned matrices; negative n needs an inverse and is rejected.
+  Oracle is `np.linalg.matrix_power`.
+  """
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2 or A16.shape[0] != A16.shape[1]:
+    raise ValueError(f"linalg.matrix_power: expected a square matrix; got shape {A16.shape}")
+  if n < 0:
+    raise ValueError("linalg.matrix_power: negative powers need a matrix inverse; not supported")
+  if n == 0: return np.eye(A16.shape[0], dtype=np.float32)
+  acc, base = None, A16                                     # square-and-multiply
+  while n:
+    if n & 1: acc = base.copy() if acc is None else _ane_gemm(acc, base)
+    n >>= 1
+    if n: base = _ane_gemm(base, base)
+  return np.asarray(acc, np.float32)
+
+
 def main():
   print("=" * 90)
   print("aneforge.linalg - ITERATIVE linear algebra on the ANE  (matmuls=ANE, RNG/QR/SVD/loop=HOST)")
