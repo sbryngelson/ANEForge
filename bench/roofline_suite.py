@@ -139,8 +139,14 @@ def main():
             print("\n[perf] WARNING: no passwordless sudo -> powermetrics watts will be missing.")
         pw = fp["environment"]["power"]
         if pw.get("is_laptop") and pw.get("source") == "battery":
-            print(f"\n[perf] WARNING: on battery ({pw.get('battery_pct')}%) -> clocks throttle; "
-                  "plug in for representative perf rooflines. (Numeric cliffs are unaffected.)")
+            mode = (pw.get("energy_mode") or {}).get("mode")
+            if mode == "high_power":
+                print(f"\n[perf] note: on battery ({pw.get('battery_pct')}%) but in High Power mode "
+                      "-> close to AC over short bench windows; the state is recorded in the report.")
+            else:
+                print(f"\n[perf] WARNING: on battery ({pw.get('battery_pct')}%), energy mode "
+                      f"'{mode}' -> clocks may throttle; High Power mode or AC gives cleaner perf "
+                      "rooflines. (Numeric cliffs are unaffected.) The state is recorded either way.")
         extra = ["--quick"] if args.quick else []
         collected = []
         for script, result_file in PERF_SCRIPTS:

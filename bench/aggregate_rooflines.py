@@ -65,6 +65,20 @@ def _fmt_cliff(nc: dict) -> tuple[str, str, str]:
     return (matmul, slice_cell, reduce_cell)
 
 
+def _power_label(pw: dict) -> str:
+    """Compact power cell: source (+ battery %) + Energy Mode when non-default.
+
+    High Power / Low Power materially change perf, so they are shown; 'automatic'
+    (the default) is omitted for brevity but is always in the JSON."""
+    src = pw.get("source", "?")
+    if pw.get("is_laptop") and pw.get("source") == "battery":
+        src += f" {pw.get('battery_pct')}%"
+    mode = (pw.get("energy_mode") or {}).get("mode")
+    if mode and mode != "automatic":
+        src += f" ({mode.replace('_', '-')})"
+    return src
+
+
 def _perf_summary(report: dict, script: str) -> dict | None:
     """The embedded summary JSON of one perf script in a submission, if it ran clean."""
     for e in (report.get("perf_rooflines") or []):
@@ -145,10 +159,7 @@ def render(reports: list[dict]) -> str:
         if mainrel.get("commits_behind"):
             drift.append(f"-{mainrel['commits_behind']}")
         code = base + (f" ({', '.join(drift)})" if drift else "")
-        pw = env.get("power", {})
-        power = pw.get("source", "?")
-        if pw.get("is_laptop") and pw.get("source") == "battery":
-            power += f" {pw.get('battery_pct')}%"
+        power = _power_label(env.get("power", {}))
         mem = f"{hw.get('ram_gb')} GB {hw.get('memory_architecture','')}".strip()
         # credit the most recent submission that named a contributor
         handle = next((r.get("contributor") for r in reversed(g["submissions"]) if r.get("contributor")), None)
@@ -198,10 +209,7 @@ def render(reports: list[dict]) -> str:
         if not any(v is not None for v in h.values()):
             continue
         hw = sub["machine"]["hardware"]
-        pw = sub["machine"]["environment"].get("power", {})
-        power = pw.get("source", "?")
-        if pw.get("is_laptop") and pw.get("source") == "battery":
-            power += f" {pw.get('battery_pct')}%"
+        power = _power_label(sub["machine"]["environment"].get("power", {}))
 
         def _c(v, fmt):
             return format(v, fmt) if isinstance(v, (int, float)) else "-"

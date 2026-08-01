@@ -11,7 +11,7 @@ Thanks to [@sbryngelson](https://github.com/sbryngelson) for contributing datapo
 
 | Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Apple M5 Pro | Mac17,8 | 6+12 | 20 | 48 GB unified | 26.5.1 (25F80) | battery 89% | cab4c2bdf541 (dirty, +2) | [@sbryngelson](https://github.com/sbryngelson) | 1 |
+| Apple M5 Pro | Mac17,8 | 6+12 | 20 | 48 GB unified | 26.5.1 (25F80) | battery 82% (high-power) | 93501250062c (dirty) | [@sbryngelson](https://github.com/sbryngelson) | 1 |
 
 ## Numeric cliffs (correctness rooflines)
 
