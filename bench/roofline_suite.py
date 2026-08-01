@@ -17,7 +17,9 @@ Mac mini.
 
 Run:
   PYTHONPATH=. python3 bench/roofline_suite.py             # fingerprint + numeric cliffs (fast, no sudo)
-  PYTHONPATH=. python3 bench/roofline_suite.py --perf      # + fast headline perf (a few min; sudo for watts)
+  PYTHONPATH=. python3 bench/roofline_suite.py --perf      # + fast headline perf (a few min; prompts once
+                                                           #   for sudo to read watts -- see --no-sudo)
+  PYTHONPATH=. python3 bench/roofline_suite.py --perf --no-sudo  # skip the watts prompt (perf/W blank)
   PYTHONPATH=. python3 bench/roofline_suite.py --perf-full # + full paper-grade battery (~30 min)
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -111,6 +114,28 @@ def _restore(snap: dict[str, bytes | None]) -> None:
             p.unlink()
 
 
+def _authorize_sudo() -> bool:
+    """Interactively cache sudo credentials (prompts once) so the perf scripts'
+    `sudo -n powermetrics` calls succeed without passwordless sudo. Needs a TTY."""
+    try:
+        return subprocess.run(["sudo", "-v"]).returncode == 0   # inherits stdio -> prompts
+    except Exception:
+        return False
+
+
+def _sudo_keepalive_start() -> threading.Event:
+    """Refresh the sudo timestamp every 60s so it does not expire mid-run (the long
+    saturation sweep can outlast the default 5-min sudo timeout between power reads)."""
+    stop = threading.Event()
+
+    def loop():
+        while not stop.wait(60):
+            subprocess.run(["sudo", "-n", "true"], capture_output=True)
+
+    threading.Thread(target=loop, daemon=True).start()
+    return stop
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -118,6 +143,8 @@ def main():
                     help="fast headline perf run (a few min; --quick sweeps, short power windows)")
     ap.add_argument("--perf-full", dest="perf_full", action="store_true",
                     help="full paper-grade perf battery (all scripts, full sampling; ~30 min)")
+    ap.add_argument("--no-sudo", dest="no_sudo", action="store_true",
+                    help="never prompt for sudo; skip powermetrics watts (perf/W left blank)")
     ap.add_argument("--out", default=None, help="explicit output path (default: fingerprinted name)")
     ap.add_argument("--contributor", default=None,
                     help="your GitHub handle to be credited (overrides auto-detection)")
@@ -156,8 +183,29 @@ def main():
         scripts = PERF_FULL if args.perf_full else PERF_FAST
         label = "full paper-grade battery (~30 min)" if args.perf_full else "fast headline run (a few min)"
         print(f"\n[perf] {label}")
-        if not fp["environment"]["have_sudo"]:
-            print("[perf] WARNING: no passwordless sudo -> powermetrics watts will be missing.")
+        # Power/watt reads use `sudo powermetrics`. Passwordless sudo is used
+        # automatically; otherwise we prompt once (default) unless --no-sudo. The
+        # prompt is skipped when there is no terminal, so non-interactive/CI runs
+        # never hang -- they just proceed without watts.
+        have_sudo = fp["environment"]["have_sudo"]
+        keepalive = None
+        if not have_sudo and not args.no_sudo and sys.stdin.isatty():
+            print("[perf] Per-rail power needs sudo. The perf scripts run this exact command:")
+            print("[perf]     sudo powermetrics --samplers ane_power,cpu_power,gpu_power")
+            print("[perf] (read-only power sampling; nothing is modified). Authorizing now -- you")
+            print("[perf] may be prompted for your login password. Re-run with --no-sudo to skip it.")
+            if _authorize_sudo():
+                have_sudo = True
+                keepalive = _sudo_keepalive_start()
+                report["machine"]["environment"]["sudo_authorized"] = True
+                print("[perf] sudo authorized -> watts will be measured.")
+            else:
+                print("[perf] sudo not granted -> continuing WITHOUT watts (perf/W left blank).")
+        if not have_sudo:
+            why = ("--no-sudo set" if args.no_sudo
+                   else "not a terminal" if not sys.stdin.isatty() else "not granted")
+            print(f"[perf] note: no sudo ({why}) -> perf/W and per-rail watts skipped; "
+                  "every other number is unaffected and the run still submits.")
         pw = fp["environment"]["power"]
         if pw.get("is_laptop") and pw.get("source") == "battery":
             mode = (pw.get("energy_mode") or {}).get("mode")
@@ -181,6 +229,8 @@ def main():
                 collected.append(entry)
         finally:
             _restore(snap)
+            if keepalive is not None:
+                keepalive.set()
         report["perf_rooflines"] = collected
     else:
         print("\n[perf] skipped (pass --perf for the fast headline run, --perf-full for everything)")
