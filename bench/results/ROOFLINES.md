@@ -23,7 +23,7 @@ Where fp16 math on the engine silently goes wrong (issue #115, docs/cross-chip.m
 
 _matmul: output magnitude that flips finite->inf (~fp16_max/2). slice: the pre-A16 crop-DMA clamps |value|>4094; 'exact' means the clamp is gone (A16/M5). reduce: largest all-exact integer row-sum (fp16 grid coarsens past 2048)._
 
-## Performance rooflines
+## Performance rooflines (headline)
 
-_No perf submissions yet. Run on AC power with `python3 bench/roofline_suite.py --perf` (needs sudo for watts)._
+_No `--perf` submissions yet. Run on AC power with `python3 bench/roofline_suite.py --perf` (needs sudo for watts)._
 

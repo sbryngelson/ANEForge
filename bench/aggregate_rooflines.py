@@ -65,6 +65,42 @@ def _fmt_cliff(nc: dict) -> tuple[str, str, str]:
     return (matmul, slice_cell, reduce_cell)
 
 
+def _perf_summary(report: dict, script: str) -> dict | None:
+    """The embedded summary JSON of one perf script in a submission, if it ran clean."""
+    for e in (report.get("perf_rooflines") or []):
+        if e.get("script") == script and e.get("returncode") == 0:
+            return e.get("summary")
+    return None
+
+
+def _perf_headline(report: dict) -> dict:
+    """A few headline ANE numbers pulled from a submission's perf_rooflines.
+
+    Full detail (per-size sweeps, all engines, watts) stays in the JSON; this is
+    just the marquee set for the table. Every field is best-effort -> None."""
+    h: dict = {"gemm_tflops": None, "bw_gbps": None, "ridge": None,
+               "perf_per_w": None, "decode_tok_s": None}
+    ra = _perf_summary(report, "roofline_analysis.py")
+    if ra:
+        ceil = ra.get("ceilings") or {}
+        ane = (ceil.get("compute") or {}).get("ANE") or {}
+        g = ane.get("gemm_peak_gflops")
+        h["gemm_tflops"] = g / 1000.0 if isinstance(g, (int, float)) else None
+        h["bw_gbps"] = (ceil.get("bandwidth_gbps") or {}).get("ANE")
+        h["ridge"] = (ceil.get("ridge_flop_per_byte") or {}).get("ANE")
+    sat = _perf_summary(report, "device_saturation_sweep.py")
+    if sat:
+        gane = (((sat.get("peaks") or {}).get("gemm") or {}).get("ANE") or {})
+        h["perf_per_w"] = gane.get("peak_perf_per_W")
+    dm = _perf_summary(report, "decode_measurement.py")
+    if dm:
+        b1 = next((r for r in (dm.get("rows") or [])
+                   if r.get("device") == "ANE" and r.get("batch") == 1), None)
+        if b1:
+            h["decode_tok_s"] = b1.get("tokens_per_s")
+    return h
+
+
 def render(reports: list[dict]) -> str:
     groups = _group(reports)
     n_machines = len(groups)
@@ -151,17 +187,46 @@ def render(reports: list[dict]) -> str:
         "",
     ]
 
-    # --- Perf note ---
-    have_perf = any(g["latest"].get("perf_rooflines") for g in groups.values())
-    lines += ["## Performance rooflines", ""]
-    if have_perf:
-        lines.append("Per-machine perf submissions are attached in the JSONs "
-                     "(`perf_rooflines`); ridge-point aggregation lands here once "
-                     "there are enough AC-power runs to compare.")
+    # --- Performance rooflines (headline) ---
+    perf_rows = []
+    for _, g in sorted(groups.items(), key=lambda kv: str(kv[1]["latest"]["machine"]["hardware"].get("chip"))):
+        # use the most recent submission that carries perf data
+        sub = next((r for r in reversed(g["submissions"]) if r.get("perf_rooflines")), None)
+        if not sub:
+            continue
+        h = _perf_headline(sub)
+        if not any(v is not None for v in h.values()):
+            continue
+        hw = sub["machine"]["hardware"]
+        pw = sub["machine"]["environment"].get("power", {})
+        power = pw.get("source", "?")
+        if pw.get("is_laptop") and pw.get("source") == "battery":
+            power += f" {pw.get('battery_pct')}%"
+
+        def _c(v, fmt):
+            return format(v, fmt) if isinstance(v, (int, float)) else "-"
+        perf_rows.append(
+            f"| {hw.get('chip','?')} | {hw.get('model_identifier','?')} "
+            f"| {_c(h['gemm_tflops'], '.1f')} | {_c(h['bw_gbps'], '.0f')} "
+            f"| {_c(h['ridge'], '.0f')} | {_c(h['perf_per_w'], '.0f')} "
+            f"| {_c(h['decode_tok_s'], '.0f')} | {power} |"
+        )
+
+    lines += ["## Performance rooflines (headline)", ""]
+    if perf_rows:
+        lines += [
+            "Peak ANE numbers only; the full per-size sweeps, all-engine comparison, "
+            "and per-rail watts live in each machine's JSON under `perf_rooflines`. "
+            "Perf depends on power/thermals, so the state is shown per row.",
+            "",
+            "| Chip | Model | Peak fp16 GEMM (TF/s) | Bandwidth (GB/s) | Ridge (FLOP/byte) | Peak perf/W (GF/s/W) | Decode @b1 (tok/s) | Power |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            *perf_rows,
+            "",
+        ]
     else:
-        lines.append("_No perf submissions yet. Run on AC power with "
-                     "`python3 bench/roofline_suite.py --perf` (needs sudo for watts)._")
-    lines.append("")
+        lines += ["_No `--perf` submissions yet. Run on AC power with "
+                  "`python3 bench/roofline_suite.py --perf` (needs sudo for watts)._", ""]
     return "\n".join(lines)
 
 
