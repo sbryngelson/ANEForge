@@ -91,7 +91,13 @@ def _perf_headline(report: dict) -> dict:
     """A few headline ANE numbers pulled from a submission's perf_rooflines.
 
     Full detail (per-size sweeps, all engines, watts) stays in the JSON; this is
-    just the marquee set for the table. Every field is best-effort -> None."""
+    just the marquee set for the table. Every field is best-effort -> None.
+
+    Prefers roofline_analysis's synthesis, but falls back to the raw saturation +
+    bandwidth sweeps for GEMM / bandwidth / ridge when it is absent or errored --
+    e.g. a submission from before #147, where roofline_analysis KeyError'd on a
+    device a sweep could not measure. The raw sweeps carry the same ANE peaks, so
+    the headline still fills instead of showing three blanks."""
     h: dict = {"gemm_tflops": None, "bw_gbps": None, "ridge": None,
                "perf_per_w": None, "decode_tok_s": None}
     ra = _perf_summary(report, "roofline_analysis.py")
@@ -103,9 +109,16 @@ def _perf_headline(report: dict) -> dict:
         h["bw_gbps"] = (ceil.get("bandwidth_gbps") or {}).get("ANE")
         h["ridge"] = (ceil.get("ridge_flop_per_byte") or {}).get("ANE")
     sat = _perf_summary(report, "device_saturation_sweep.py")
-    if sat:
-        gane = (((sat.get("peaks") or {}).get("gemm") or {}).get("ANE") or {})
-        h["perf_per_w"] = gane.get("peak_perf_per_W")
+    gane = (((sat or {}).get("peaks") or {}).get("gemm") or {}).get("ANE") or {}
+    h["perf_per_w"] = gane.get("peak_perf_per_W")
+    if h["gemm_tflops"] is None and isinstance(gane.get("peak_gflops"), (int, float)):
+        h["gemm_tflops"] = gane["peak_gflops"] / 1000.0
+    if h["bw_gbps"] is None:
+        bw = _perf_summary(report, "device_bandwidth_roofline.py") or {}
+        strm = ((bw.get("results") or {}).get("roofline") or {}).get("streaming (relu / x*2)", {})
+        h["bw_gbps"] = ((strm.get("peak") or {}).get("ane") or {}).get("gbps")
+    if h["ridge"] is None and h["gemm_tflops"] and h["bw_gbps"]:
+        h["ridge"] = h["gemm_tflops"] * 1000.0 / h["bw_gbps"]
     dm = _perf_summary(report, "decode_measurement.py")
     if dm:
         b1 = next((r for r in (dm.get("rows") or [])
@@ -215,7 +228,7 @@ def render(reports: list[dict]) -> str:
             return format(v, fmt) if isinstance(v, (int, float)) else "-"
         perf_rows.append(
             f"| {hw.get('chip','?')} | {hw.get('model_identifier','?')} "
-            f"| {_c(h['gemm_tflops'], '.1f')} | {_c(h['bw_gbps'], '.0f')} "
+            f"| {_c(h['gemm_tflops'], '.1f')} | {_c(h['bw_gbps'], '.2g')} "
             f"| {_c(h['ridge'], '.0f')} | {_c(h['perf_per_w'], '.0f')} "
             f"| {_c(h['decode_tok_s'], '.0f')} | {power} |"
         )
