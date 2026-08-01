@@ -11,7 +11,7 @@ Thanks to [@axiom-of-choice](https://github.com/axiom-of-choice), [@sbryngelson]
 
 | Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Apple M2 Pro | Mac14,12 | 6+4 | 16 | 32 GB unified | 26.5.2 (25F84) | ac | 263e02ff1898 | [@axiom-of-choice](https://github.com/axiom-of-choice) | 1 |
+| Apple M2 Pro | Mac14,12 | 6+4 | 16 | 32 GB unified | 26.5.2 (25F84) | ac | 263e02ff1898 (+1) | [@axiom-of-choice](https://github.com/axiom-of-choice) | 1 |
 | Apple M5 Pro | Mac17,8 | 6+12 | 20 | 48 GB unified | 26.5.1 (25F80) | ac (high-power) | 55a1c6afdad3 (dirty) | [@sbryngelson](https://github.com/sbryngelson) | 1 |
 
 ## Numeric cliffs (correctness rooflines)
@@ -31,5 +31,6 @@ Peak ANE numbers only; the full per-size sweeps, all-engine comparison, and per-
 
 | Chip | Model | Peak fp16 GEMM (TF/s) | Bandwidth (GB/s) | Ridge (FLOP/byte) | Peak perf/W (GF/s/W) | Decode @b1 (tok/s) | Power |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Apple M2 Pro | Mac14,12 | - | - | - | 1379 | - | ac |
 | Apple M5 Pro | Mac17,8 | 10.0 | 24 | 418 | 918 | 117 | ac (high-power) |
 

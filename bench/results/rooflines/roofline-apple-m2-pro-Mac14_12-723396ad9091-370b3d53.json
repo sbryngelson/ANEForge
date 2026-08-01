@@ -1,0 +1,2347 @@
+{
+  "suite": "roofline",
+  "schema_version": 2,
+  "contributor": "axiom-of-choice",
+  "machine": {
+    "hardware": {
+      "model_identifier": "Mac14,12",
+      "chip": "Apple M2 Pro",
+      "physical_cpu": 10,
+      "p_cores": 6,
+      "e_cores": 4,
+      "gpu_cores": 16,
+      "memory_architecture": "unified",
+      "ram_gb": 32,
+      "ram_bytes": 34359738368,
+      "ane_rated_tops": 15.8
+    },
+    "hardware_hash": "723396ad9091",
+    "environment": {
+      "model_name": "Mac mini",
+      "macos_version": "26.5.2",
+      "macos_build": "25F84",
+      "aneforge_version": "0.2.1.dev33",
+      "aneforge_git": {
+        "commit": "1942279257ef1d7919a982b0cfae107ed535545a",
+        "short": "1942279257ef",
+        "branch": "roofline-m2-pro",
+        "dirty": false,
+        "main": {
+          "ref": "origin/main",
+          "merge_base": "263e02ff189874793481252ec0c5ffaef877e114",
+          "merge_base_short": "263e02ff1898",
+          "commits_ahead": 1,
+          "commits_behind": 0
+        }
+      },
+      "power": {
+        "source": "ac",
+        "is_laptop": false,
+        "energy_mode": {
+          "mode": "automatic",
+          "raw": 0,
+          "key": "lowpowermode"
+        }
+      },
+      "gpu_wired_limit_mb": 0,
+      "thermal_state": "nominal",
+      "have_sudo": true,
+      "timestamp_utc": "2026-08-01T19:52:48Z",
+      "sudo_authorized": true
+    },
+    "run_id": "370b3d53"
+  },
+  "numeric_cliffs": {
+    "plane": "numeric",
+    "matmul_saturation": {
+      "metric": "output_magnitude_inf_cliff",
+      "expected": 32752,
+      "by_K": [
+        {
+          "cliff": 32758.8,
+          "K": 4,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 8,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 32,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 64,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 128,
+          "expected": 32752
+        }
+      ]
+    },
+    "slice_saturation": {
+      "metric": "sliced_value_inf_cliff",
+      "cliff": 4094.1,
+      "expected_pre_a16": 4094,
+      "interpretation": "None == exact (A16/M5); a number == the pre-A16 clamp"
+    },
+    "reduce_exactness": {
+      "metric": "last_all_exact_integer_row_sum",
+      "expected_boundary": 2048,
+      "n_terms": 8,
+      "last_all_exact": 2048,
+      "first_wrong": {
+        "target": 2049,
+        "got": 2050.0
+      }
+    }
+  },
+  "perf_rooflines": [
+    {
+      "script": "device_saturation_sweep.py",
+      "result_file": "device_saturation_sweep_results.json",
+      "returncode": 0,
+      "seconds": 295.2,
+      "summary": {
+        "gemm": [
+          {
+            "N": 512,
+            "gflop": 0.268435456,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 17.098290962167084,
+                "gflops": 15.6995489545686,
+                "relerr": 2.891481968747392e-07,
+                "power": {
+                  "active_pkg_W": 10.586,
+                  "active_pkg_cv_pct": 1.45645226978759,
+                  "iter_ms": 12.85422867615362,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 10595.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 20.88304656490086,
+                  "perf_per_W": 1.9727041909031606
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 0.6399580743163824,
+                "gflops": 419.4578782160828,
+                "relerr": 0.0003590542849354685,
+                "power": {
+                  "active_pkg_W": 4.835,
+                  "active_pkg_cv_pct": 18.949804468835886,
+                  "iter_ms": 0.42875541136093176,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 2161.5,
+                  "cpu_active_mW": 2375.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 626.0806251936202,
+                  "perf_per_W": 129.48927098110036
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 0.6674160249531269,
+                "gflops": 402.20109491505303,
+                "relerr": 0.002578003970237922,
+                "power": {
+                  "active_pkg_W": 5.1525,
+                  "active_pkg_cv_pct": 24.483776427446262,
+                  "iter_ms": 0.599801034261912,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 1694.0,
+                  "gpu_active_mW": 25.0,
+                  "cpu_active_mW": 3442.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 447.54083548776225,
+                  "perf_per_W": 86.85896855657685
+                }
+              }
+            }
+          },
+          {
+            "N": 1024,
+            "gflop": 2.147483648,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 15.545375063084066,
+                "gflops": 138.14292928188496,
+                "relerr": 3.3343612585537265e-07,
+                "power": {
+                  "active_pkg_W": 10.6135,
+                  "active_pkg_cv_pct": 10.55003327409519,
+                  "iter_ms": 43.6831150660353,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 10619.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 49.16049701935569,
+                  "perf_per_W": 4.63188364058564
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 1.7329159891232848,
+                "gflops": 1239.2312503772632,
+                "relerr": 0.00035907137743485277,
+                "power": {
+                  "active_pkg_W": 8.4355,
+                  "active_pkg_cv_pct": 22.946803398439833,
+                  "iter_ms": 0.832707624962094,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 9408.0,
+                  "cpu_active_mW": 0.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 2578.9167573645746,
+                  "perf_per_W": 305.72186086948903
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 2.067832974717021,
+                "gflops": 1038.5189105004379,
+                "relerr": 0.0055283529995975205,
+                "power": {
+                  "active_pkg_W": 2.664,
+                  "active_pkg_cv_pct": 24.27491274964596,
+                  "iter_ms": 2.560352540553309,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 706.0,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 2222.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 838.7452954177609,
+                  "perf_per_W": 314.8443301117721
+                }
+              }
+            }
+          },
+          {
+            "N": 2048,
+            "gflop": 17.179869184,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 63.37387498933822,
+                "gflops": 271.087560716309,
+                "relerr": 3.3597726136327955e-07,
+                "power": {
+                  "active_pkg_W": 12.4955,
+                  "active_pkg_cv_pct": 9.976841685144143,
+                  "iter_ms": 138.00496748853018,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 12502.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 124.4873245988616,
+                  "perf_per_W": 9.962572494006771
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 4.662291030399501,
+                "gflops": 3684.855593952035,
+                "relerr": 0.0003589978150147423,
+                "power": {
+                  "active_pkg_W": 22.0875,
+                  "active_pkg_cv_pct": 9.399501049638632,
+                  "iter_ms": 3.770542657163503,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 22152.5,
+                  "cpu_active_mW": 0.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4556.338635066402,
+                  "perf_per_W": 206.28584652253096
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 9.561292012222111,
+                "gflops": 1796.8146106236616,
+                "relerr": 0.012131920427695522,
+                "power": {
+                  "active_pkg_W": 1.5895,
+                  "active_pkg_cv_pct": 23.118313087953833,
+                  "iter_ms": 10.11138832992059,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 830.5,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 894.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 1699.0613576933924,
+                  "perf_per_W": 1068.9281898039587
+                }
+              }
+            }
+          },
+          {
+            "N": 4096,
+            "gflop": 137.438953472,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 372.3922080826014,
+                "gflops": 369.0704329708055,
+                "relerr": 3.39259436032721e-07,
+                "power": {
+                  "active_pkg_W": 11.548,
+                  "active_pkg_cv_pct": 21.980768734444545,
+                  "iter_ms": 821.0017618590167,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 18.0,
+                  "cpu_active_mW": 11543.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 167.40396897662342,
+                  "perf_per_W": 14.496360320109405
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 27.41929201874882,
+                "gflops": 5012.490963589494,
+                "relerr": 0.000359763213237879,
+                "power": {
+                  "active_pkg_W": 26.2165,
+                  "active_pkg_cv_pct": 8.040902935369193,
+                  "iter_ms": 28.150285814569614,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 24922.5,
+                  "cpu_active_mW": 1655.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4882.328882105572,
+                  "perf_per_W": 186.23114764005769
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 42.11416689213365,
+                "gflops": 3263.4850363779065,
+                "relerr": 0.027237621125542084,
+                "power": {
+                  "active_pkg_W": 2.135,
+                  "active_pkg_cv_pct": 14.798528785886718,
+                  "iter_ms": 46.68890278165539,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 1682.5,
+                  "gpu_active_mW": 4.0,
+                  "cpu_active_mW": 288.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 2943.717784818052,
+                  "perf_per_W": 1378.7905315307037
+                }
+              }
+            }
+          }
+        ],
+        "conv": [
+          {
+            "C": 64,
+            "B": 8,
+            "HxW": "64x64",
+            "gflop": 2.415919104,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 11.256958940066397,
+                "gflops": 26.82695118706889,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 6.324,
+                  "active_pkg_cv_pct": 14.635817558891844,
+                  "iter_ms": 641.8108645011671,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 55.0,
+                  "cpu_active_mW": 6279.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 3.764222822681131,
+                  "perf_per_W": 0.5952281503290846
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 1.124209025874734,
+                "gflops": 2148.994580540929,
+                "relerr": 0.000358796446528688,
+                "power": {
+                  "active_pkg_W": 12.3315,
+                  "active_pkg_cv_pct": 22.908111627490435,
+                  "iter_ms": 1.0216411270487478,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 12616.5,
+                  "cpu_active_mW": 0.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 2364.743391819938,
+                  "perf_per_W": 191.76445621537835
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 3.4545829985290766,
+                "gflops": 699.3374033938892,
+                "relerr": 0.00036719206236946063,
+                "power": {
+                  "active_pkg_W": 5.263,
+                  "active_pkg_cv_pct": 20.372329561828966,
+                  "iter_ms": 4.267936370458948,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 973.5,
+                  "gpu_active_mW": 39.0,
+                  "cpu_active_mW": 4401.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 566.0625872311698,
+                  "perf_per_W": 107.5551182274691
+                }
+              }
+            }
+          },
+          {
+            "C": 128,
+            "B": 8,
+            "HxW": "64x64",
+            "gflop": 9.663676416,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 44.6183750173077,
+                "gflops": 27.073140864754176,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 8.725,
+                  "active_pkg_cv_pct": 12.813794393957625,
+                  "iter_ms": 2570.3861946628117,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 27.0,
+                  "cpu_active_mW": 8677.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 3.7596204165995766,
+                  "perf_per_W": 0.4309020534784615
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 2.3197910049930215,
+                "gflops": 4165.753033441506,
+                "relerr": 0.007292329779816631,
+                "power": {
+                  "active_pkg_W": 13.375,
+                  "active_pkg_cv_pct": 12.146451345589005,
+                  "iter_ms": 2.0335311634240503,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 14447.0,
+                  "cpu_active_mW": 0.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4752.165390830965,
+                  "perf_per_W": 355.3020852957731
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 8.123166975565255,
+                "gflops": 1189.6439461442376,
+                "relerr": 0.0003751852371063253,
+                "power": {
+                  "active_pkg_W": 5.993,
+                  "active_pkg_cv_pct": 16.88101204120866,
+                  "iter_ms": 10.329961749060905,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 474.5,
+                  "gpu_active_mW": 29.0,
+                  "cpu_active_mW": 5562.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 935.4997289199567,
+                  "perf_per_W": 156.09873667945214
+                }
+              }
+            }
+          },
+          {
+            "C": 256,
+            "B": 4,
+            "HxW": "64x64",
+            "gflop": 19.327352832,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 184.72754198592156,
+                "gflops": 26.1565663466049,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 7.155,
+                  "active_pkg_cv_pct": 15.028018530130577,
+                  "iter_ms": 6078.380124992691,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 67.0,
+                  "cpu_active_mW": 7094.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 3.1796880804691763,
+                  "perf_per_W": 0.444400849820989
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 2.538457978516817,
+                "gflops": 7613.816338725718,
+                "relerr": 0.0073013232216837375,
+                "power": {
+                  "active_pkg_W": 15.5445,
+                  "active_pkg_cv_pct": 11.778164086917448,
+                  "iter_ms": 3.243151367869137,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 12251.0,
+                  "cpu_active_mW": 6801.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 5959.435943533755,
+                  "perf_per_W": 383.379069351459
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 9.183041984215379,
+                "gflops": 2104.6786963646205,
+                "relerr": 0.0003901075540107346,
+                "power": {
+                  "active_pkg_W": 6.1075,
+                  "active_pkg_cv_pct": 18.874739138415325,
+                  "iter_ms": 12.561562313563988,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 461.5,
+                  "gpu_active_mW": 26.5,
+                  "cpu_active_mW": 5709.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 1538.6105923409148,
+                  "perf_per_W": 251.92150509061233
+                }
+              }
+            }
+          },
+          {
+            "C": 512,
+            "B": 2,
+            "HxW": "64x64",
+            "gflop": 38.654705664,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 761.958459042944,
+                "gflops": 25.365362904791517,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 7.583,
+                  "active_pkg_cv_pct": 11.907737367440545,
+                  "iter_ms": 10248.06883407291,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 40.5,
+                  "cpu_active_mW": 7528.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 3.771901446980951,
+                  "perf_per_W": 0.49741546181998564
+                }
+              },
+              "GPU": {
+                "dtype": "fp16",
+                "lat_ms": 6.531750084832311,
+                "gflops": 5917.970706466854,
+                "relerr": 0.007389113870275627,
+                "power": {
+                  "active_pkg_W": 17.8175,
+                  "active_pkg_cv_pct": 6.889441026943448,
+                  "iter_ms": 5.978696771741342,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 12153.5,
+                  "cpu_active_mW": 5785.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 6465.40661615483,
+                  "perf_per_W": 362.8683382155089
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 12.928584008477628,
+                "gflops": 2989.8638272105472,
+                "relerr": 0.00041904779177991044,
+                "power": {
+                  "active_pkg_W": 5.4375,
+                  "active_pkg_cv_pct": 16.260173016064392,
+                  "iter_ms": 15.161821291855835,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 751.0,
+                  "gpu_active_mW": 63.0,
+                  "cpu_active_mW": 4461.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 2549.476406555679,
+                  "perf_per_W": 468.8692241941479
+                }
+              }
+            }
+          }
+        ],
+        "peaks": {
+          "gemm": {
+            "CPU": {
+              "peak_gflops": 369.0704329708055,
+              "peak_gflops_size": 4096,
+              "peak_gflops_relerr": 3.39259436032721e-07,
+              "peak_perf_per_W": 14.496360320109405,
+              "peak_perf_per_W_size": 4096
+            },
+            "GPU": {
+              "peak_gflops": 5012.490963589494,
+              "peak_gflops_size": 4096,
+              "peak_gflops_relerr": 0.000359763213237879,
+              "peak_perf_per_W": 305.72186086948903,
+              "peak_perf_per_W_size": 1024
+            },
+            "ANE": {
+              "peak_gflops": 3263.4850363779065,
+              "peak_gflops_size": 4096,
+              "peak_gflops_relerr": 0.027237621125542084,
+              "peak_perf_per_W": 1378.7905315307037,
+              "peak_perf_per_W_size": 4096
+            }
+          },
+          "conv": {
+            "CPU": {
+              "peak_gflops": 27.073140864754176,
+              "peak_gflops_size": 128,
+              "peak_gflops_relerr": 0.0,
+              "peak_perf_per_W": 0.5952281503290846,
+              "peak_perf_per_W_size": 64
+            },
+            "GPU": {
+              "peak_gflops": 7613.816338725718,
+              "peak_gflops_size": 256,
+              "peak_gflops_relerr": 0.0073013232216837375,
+              "peak_perf_per_W": 383.379069351459,
+              "peak_perf_per_W_size": 256
+            },
+            "ANE": {
+              "peak_gflops": 2989.8638272105472,
+              "peak_gflops_size": 512,
+              "peak_gflops_relerr": 0.00041904779177991044,
+              "peak_perf_per_W": 468.8692241941479,
+              "peak_perf_per_W_size": 512
+            }
+          }
+        },
+        "meta": {
+          "backends": {
+            "ane": true,
+            "mlx": true,
+            "sudo": true
+          },
+          "gemm_ns": [
+            512,
+            1024,
+            2048,
+            4096
+          ],
+          "conv_configs": [
+            [
+              64,
+              8
+            ],
+            [
+              128,
+              8
+            ],
+            [
+              256,
+              4
+            ],
+            [
+              512,
+              2
+            ]
+          ],
+          "conv_spatial": 64,
+          "power_window_s": 2.5,
+          "reps": 8,
+          "idle_mW": {
+            "ane": 0.0,
+            "cpu": 9053.0,
+            "gpu": 58.0
+          },
+          "idle_pkg_mW": 9113.0
+        }
+      }
+    },
+    {
+      "script": "device_bandwidth_roofline.py",
+      "result_file": "device_bandwidth_roofline_results.json",
+      "returncode": 0,
+      "seconds": 173.3,
+      "summary": {
+        "backends": {
+          "ane": true,
+          "mlx": true,
+          "sudo": true
+        },
+        "window_s": 2.0,
+        "pm_interval_ms": 500,
+        "sizes": [
+          1048576,
+          8388608,
+          33554432
+        ],
+        "idle_mW": {
+          "ane": 0.0,
+          "cpu": 10876.5,
+          "gpu": 80.0
+        },
+        "idle_pkg_mW": 10973.5,
+        "results": {
+          "roofline": {
+            "streaming (relu / x*2)": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "gpu_gbps": 23.15171855294291,
+                  "gpu_lat_ms": 0.18116598948836327,
+                  "gpu_relerr": 0.00020780100009546728,
+                  "ane_gbps": 0.8500748062249347,
+                  "ane_lat_ms": 4.934041062369943,
+                  "ane_relerr": 0.00020780100009546728,
+                  "cpu_gbps": 114.52037475116167,
+                  "cpu_lat_ms": 0.07324991747736931
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "gpu_gbps": 96.21344721676746,
+                  "gpu_lat_ms": 0.3487499197944999,
+                  "gpu_relerr": 0.00020761950117408252,
+                  "ane_gbps": 0.9456092587860266,
+                  "ane_lat_ms": 35.48445797059685,
+                  "ane_relerr": 0.00020761950117408252,
+                  "cpu_gbps": 92.23534371059706,
+                  "cpu_lat_ms": 0.7275829557329416
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "gpu_gbps": 140.37059197892995,
+                  "gpu_lat_ms": 0.9561670012772083,
+                  "gpu_relerr": 0.00020772223594419786,
+                  "ane_gbps": 0.9586683792350782,
+                  "ane_lat_ms": 140.00433403998613,
+                  "ane_relerr": 0.00020772223594419786,
+                  "cpu_gbps": 90.5169256668715,
+                  "cpu_lat_ms": 2.965583000332117
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 0.9586683792350782,
+                  "at_nelem": 33554432
+                },
+                "gpu": {
+                  "gbps": 140.37059197892995,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 114.52037475116167,
+                  "at_nelem": 1048576
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 147.48946842243612,
+                  "iters": 33,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 32.5,
+                  "ane_active_mW": 32.5,
+                  "cpu_loaded_mW": 10835.0,
+                  "cpu_active_mW": 0.0,
+                  "gpu_loaded_mW": 42.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 10.9155,
+                  "active_pkg_W": 0.0,
+                  "active_pkg_mean_W": 0.157875,
+                  "active_pkg_min_W": 0.0,
+                  "active_pkg_p90_W": 3.3412999999999995,
+                  "active_pkg_cv_pct": 27.16343185353435,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ]
+                },
+                "gpu": {
+                  "iter_ms": 1.1768482772496123,
+                  "iters": 6240,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 12073.0,
+                  "cpu_active_mW": 1196.5,
+                  "gpu_loaded_mW": 1940.5,
+                  "gpu_active_mW": 1860.5,
+                  "loaded_pkg_W": 13.9735,
+                  "active_pkg_W": 3.0,
+                  "active_pkg_mean_W": 3.010875,
+                  "active_pkg_min_W": 1.1975,
+                  "active_pkg_p90_W": 4.0196000000000005,
+                  "active_pkg_cv_pct": 6.8242216981288575,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 114.0484551786722,
+                  "gbps_per_W": 38.01615172622407
+                },
+                "cpu": {
+                  "iter_ms": 3.272146308337695,
+                  "iters": 1492,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 15673.0,
+                  "cpu_active_mW": 4796.5,
+                  "gpu_loaded_mW": 37.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 15.708,
+                  "active_pkg_W": 4.7345,
+                  "active_pkg_mean_W": 4.46925,
+                  "active_pkg_min_W": 1.1615,
+                  "active_pkg_p90_W": 6.094599999999999,
+                  "active_pkg_cv_pct": 11.157713969989652,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 82.03650775517116,
+                  "gbps_per_W": 17.327385733482135
+                }
+              }
+            },
+            "gelu (light compute)": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "gpu_gbps": 11.437724232424337,
+                  "gpu_lat_ms": 0.3667079145088792,
+                  "gpu_relerr": 0.00044965022705371123,
+                  "ane_gbps": 2.2930131420811213,
+                  "ane_lat_ms": 1.8291670130565763,
+                  "ane_relerr": 0.0023991256786575874,
+                  "cpu_gbps": 117.80257035599918,
+                  "cpu_lat_ms": 0.07120904047042131
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "gpu_gbps": 28.275222151126393,
+                  "gpu_lat_ms": 1.1867079883813858,
+                  "gpu_relerr": 0.0004494711439825247,
+                  "ane_gbps": 2.561985526073631,
+                  "ane_lat_ms": 13.097041985020041,
+                  "ane_relerr": 0.002401073282622596,
+                  "cpu_gbps": 85.33506950632315,
+                  "cpu_lat_ms": 0.7864159997552633
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "gpu_gbps": 27.569783492802518,
+                  "gpu_lat_ms": 4.86829096917063,
+                  "gpu_relerr": 0.0004495454643067537,
+                  "ane_gbps": 2.7906479977440126,
+                  "ane_lat_ms": 48.09554200619459,
+                  "ane_relerr": 0.002402333092679968,
+                  "cpu_gbps": 84.18863119841087,
+                  "cpu_lat_ms": 3.1885000644251704
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 2.7906479977440126,
+                  "at_nelem": 33554432
+                },
+                "gpu": {
+                  "gbps": 28.275222151126393,
+                  "at_nelem": 8388608
+                },
+                "cpu": {
+                  "gbps": 117.80257035599918,
+                  "at_nelem": 1048576
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 51.8649388019791,
+                  "iters": 96,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 134.0,
+                  "ane_active_mW": 134.0,
+                  "cpu_loaded_mW": 10219.5,
+                  "cpu_active_mW": 0.0,
+                  "gpu_loaded_mW": 45.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 10.3995,
+                  "active_pkg_W": 0.0,
+                  "active_pkg_mean_W": 0.0,
+                  "active_pkg_min_W": 0.0,
+                  "active_pkg_p90_W": 2.0882999999999994,
+                  "active_pkg_cv_pct": 25.31414931117728,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ]
+                },
+                "gpu": {
+                  "iter_ms": 5.017591989599168,
+                  "iters": 1059,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 7153.0,
+                  "cpu_active_mW": 0.0,
+                  "gpu_loaded_mW": 8594.5,
+                  "gpu_active_mW": 8514.5,
+                  "loaded_pkg_W": 16.546,
+                  "active_pkg_W": 5.5725,
+                  "active_pkg_mean_W": 4.68475,
+                  "active_pkg_min_W": 2.2095,
+                  "active_pkg_p90_W": 6.467400000000001,
+                  "active_pkg_cv_pct": 12.281888139415994,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 26.749430459514507,
+                  "gbps_per_W": 4.800256699778288
+                },
+                "cpu": {
+                  "iter_ms": 3.1622753517184266,
+                  "iters": 1683,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 14436.5,
+                  "cpu_active_mW": 3560.0,
+                  "gpu_loaded_mW": 42.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 14.476,
+                  "active_pkg_W": 3.5025,
+                  "active_pkg_mean_W": 3.041375,
+                  "active_pkg_min_W": 0.0625,
+                  "active_pkg_p90_W": 4.6116,
+                  "active_pkg_cv_pct": 11.16457937443694,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 84.88680653761801,
+                  "gbps_per_W": 24.236061823731053
+                }
+              }
+            },
+            "reduction (sum)": {
+              "byte_factor": 1,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "gpu_gbps": 10.654471040625548,
+                  "gpu_lat_ms": 0.19683304708451033,
+                  "gpu_relerr": 0.0008662560456038065,
+                  "ane_gbps": 6.84319593409115,
+                  "ane_lat_ms": 0.30645797960460186,
+                  "ane_relerr": 0.0007224220967624157,
+                  "cpu_gbps": 23.156956457917573,
+                  "cpu_lat_ms": 0.18112501129508018
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "gpu_gbps": 36.063824008031766,
+                  "gpu_lat_ms": 0.4652090137824416,
+                  "gpu_relerr": 0.0008213662302940088,
+                  "ane_gbps": 14.348195914555877,
+                  "ane_lat_ms": 1.1692909756675363,
+                  "ane_relerr": 0.0008092132072331682,
+                  "cpu_gbps": 23.914071753215513,
+                  "cpu_lat_ms": 1.4031250029802322
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "gpu_gbps": 94.56400439033618,
+                  "gpu_lat_ms": 0.7096660556271672,
+                  "gpu_relerr": 0.0008194761396582728,
+                  "ane_gbps": 13.516161313517616,
+                  "ane_lat_ms": 4.965083091519773,
+                  "ane_relerr": 0.0008128390012191236,
+                  "cpu_gbps": 23.86552886666721,
+                  "cpu_lat_ms": 5.623915931209922
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 14.348195914555877,
+                  "at_nelem": 8388608
+                },
+                "gpu": {
+                  "gbps": 94.56400439033618,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 23.914071753215513,
+                  "at_nelem": 8388608
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 6.219053169227805,
+                  "iters": 786,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 298.0,
+                  "ane_active_mW": 298.0,
+                  "cpu_loaded_mW": 11670.0,
+                  "cpu_active_mW": 793.5,
+                  "gpu_loaded_mW": 50.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 11.983,
+                  "active_pkg_W": 1.0095,
+                  "active_pkg_mean_W": 1.15025,
+                  "active_pkg_min_W": 0.0,
+                  "active_pkg_p90_W": 4.091,
+                  "active_pkg_cv_pct": 21.500483028056525,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 10.79084905272367,
+                  "gbps_per_W": 10.68930069611062
+                },
+                "gpu": {
+                  "iter_ms": 1.0063012301276093,
+                  "iters": 4993,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 9580.5,
+                  "cpu_active_mW": 0.0,
+                  "gpu_loaded_mW": 3493.0,
+                  "gpu_active_mW": 3413.0,
+                  "loaded_pkg_W": 13.3035,
+                  "active_pkg_W": 2.33,
+                  "active_pkg_mean_W": 1.9845,
+                  "active_pkg_min_W": 0.0,
+                  "active_pkg_p90_W": 4.1769,
+                  "active_pkg_cv_pct": 15.770179167242674,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 66.68864351034323,
+                  "gbps_per_W": 28.621735412164472
+                },
+                "cpu": {
+                  "iter_ms": 5.639603251793505,
+                  "iters": 866,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 15037.5,
+                  "cpu_active_mW": 4161.0,
+                  "gpu_loaded_mW": 60.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 15.0765,
+                  "active_pkg_W": 4.103,
+                  "active_pkg_mean_W": 4.57425,
+                  "active_pkg_min_W": 1.5945,
+                  "active_pkg_p90_W": 7.695200000000001,
+                  "active_pkg_cv_pct": 15.877954735491478,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 23.799143664461877,
+                  "gbps_per_W": 5.8004249730591955
+                }
+              }
+            },
+            "softmax": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "gpu_gbps": 22.434360038334564,
+                  "gpu_lat_ms": 0.18695893231779337,
+                  "gpu_relerr": 0.0007649086623195728,
+                  "ane_gbps": 1.221079050307153,
+                  "ane_lat_ms": 3.434916026890278,
+                  "ane_relerr": 0.0010240666804472887,
+                  "cpu_gbps": 3.983904072056775,
+                  "cpu_lat_ms": 2.1056249970570207
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "gpu_gbps": 66.01408689985485,
+                  "gpu_lat_ms": 0.5082919960841537,
+                  "gpu_relerr": 0.0007690273652997765,
+                  "ane_gbps": 1.393555386720624,
+                  "ane_lat_ms": 24.078290909528732,
+                  "ane_relerr": 0.0010582602743791426,
+                  "cpu_gbps": 3.7654012689895433,
+                  "cpu_lat_ms": 17.822499969042838
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "gpu_gbps": 147.12822703735384,
+                  "gpu_lat_ms": 0.9122500196099281,
+                  "gpu_relerr": 0.0007703648855113323,
+                  "ane_gbps": 1.4253266922930332,
+                  "ane_lat_ms": 94.1662909463048,
+                  "ane_relerr": 0.0010575844059423666,
+                  "cpu_gbps": 3.684537622153285,
+                  "cpu_lat_ms": 72.85458408296108
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 1.4253266922930332,
+                  "at_nelem": 33554432
+                },
+                "gpu": {
+                  "gbps": 147.12822703735384,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 3.983904072056775,
+                  "at_nelem": 1048576
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 129.15039851139178,
+                  "iters": 39,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 151.0,
+                  "ane_active_mW": 151.0,
+                  "cpu_loaded_mW": 11944.0,
+                  "cpu_active_mW": 1067.5,
+                  "gpu_loaded_mW": 51.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 12.1235,
+                  "active_pkg_W": 1.15,
+                  "active_pkg_mean_W": 1.33675,
+                  "active_pkg_min_W": 0.3225,
+                  "active_pkg_p90_W": 2.3817999999999993,
+                  "active_pkg_cv_pct": 7.549087463926833,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 1.0392358796179884,
+                  "gbps_per_W": 0.9036833735808595
+                },
+                "gpu": {
+                  "iter_ms": 1.00892769500946,
+                  "iters": 4836,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 9346.0,
+                  "cpu_active_mW": 0.0,
+                  "gpu_loaded_mW": 9047.0,
+                  "gpu_active_mW": 8967.0,
+                  "loaded_pkg_W": 18.295,
+                  "active_pkg_W": 7.3215,
+                  "active_pkg_mean_W": 6.9945,
+                  "active_pkg_min_W": 2.6875,
+                  "active_pkg_p90_W": 9.004599999999998,
+                  "active_pkg_cv_pct": 11.045722282106956,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 133.03007605390547,
+                  "gbps_per_W": 18.169784341174005
+                },
+                "cpu": {
+                  "iter_ms": 100.51247596185512,
+                  "iters": 52,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 12749.5,
+                  "cpu_active_mW": 1873.0,
+                  "gpu_loaded_mW": 85.0,
+                  "gpu_active_mW": 5.0,
+                  "loaded_pkg_W": 12.8335,
+                  "active_pkg_W": 1.86,
+                  "active_pkg_mean_W": 2.4425,
+                  "active_pkg_min_W": 0.0,
+                  "active_pkg_p90_W": 7.095200000000001,
+                  "active_pkg_cv_pct": 27.89567955206344,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 2.670668028333839,
+                  "gbps_per_W": 1.4358430259859347
+                }
+              }
+            },
+            "layer_norm": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "gpu_gbps": 8.649546974505425,
+                  "gpu_lat_ms": 0.4849160322919488,
+                  "gpu_relerr": 0.0005958694656335701,
+                  "ane_err": "RuntimeError: ane_e5rt_program_compile failed (mil=/Users/isaac/Models/.aneforge-cache/be7f77f75c7f8bb1d93ab898/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+                  "cpu_gbps": 7.462894941584061,
+                  "cpu_lat_ms": 1.124042086303234
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "gpu_gbps": 19.724361333822472,
+                  "gpu_lat_ms": 1.7011669697239995,
+                  "gpu_relerr": 0.0005845055587579352,
+                  "ane_err": "RuntimeError: ane_e5rt_program_compile failed (mil=/Users/isaac/Models/.aneforge-cache/f4e66bff1746589c0ee1c4a8/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+                  "cpu_gbps": 6.669286731016613,
+                  "cpu_lat_ms": 10.062374989502132
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "gpu_gbps": 21.48099552592592,
+                  "gpu_lat_ms": 6.248207995668054,
+                  "gpu_relerr": 0.0005816761130924396,
+                  "ane_err": "RuntimeError: ane_e5rt_program_compile failed (mil=/Users/isaac/Models/.aneforge-cache/b0b6bcd88301a762baa4cc10/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+                  "cpu_gbps": 6.704907954911716,
+                  "cpu_lat_ms": 40.0356660829857
+                }
+              ],
+              "peak": {
+                "gpu": {
+                  "gbps": 21.48099552592592,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 7.462894941584061,
+                  "at_nelem": 1048576
+                }
+              },
+              "power": {
+                "gpu": {
+                  "iter_ms": 6.493043443109859,
+                  "iters": 774,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 7894.5,
+                  "cpu_active_mW": 0.0,
+                  "gpu_loaded_mW": 8623.5,
+                  "gpu_active_mW": 8543.5,
+                  "loaded_pkg_W": 16.2255,
+                  "active_pkg_W": 5.252,
+                  "active_pkg_mean_W": 5.08525,
+                  "active_pkg_min_W": 1.7135,
+                  "active_pkg_p90_W": 7.5158,
+                  "active_pkg_cv_pct": 12.920643872591084,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 20.67100415636771,
+                  "gbps_per_W": 3.935834759399793
+                },
+                "cpu": {
+                  "iter_ms": 41.796864754267794,
+                  "iters": 118,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 13390.0,
+                  "cpu_active_mW": 2513.5,
+                  "gpu_loaded_mW": 45.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 13.441,
+                  "active_pkg_W": 2.4675,
+                  "active_pkg_mean_W": 3.03725,
+                  "active_pkg_min_W": 0.0,
+                  "active_pkg_p90_W": 6.572399999999998,
+                  "active_pkg_cv_pct": 20.934068625607903,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 6.422382577692997,
+                  "gbps_per_W": 2.602789291871529
+                }
+              }
+            }
+          },
+          "coverage": {
+            "rows": [
+              {
+                "op": "abs",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "add",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "adds",
+                "set": "_EMIT",
+                "class": "dispatch/latency-bound",
+                "where": "floor finding (CPU wins tiny)"
+              },
+              {
+                "op": "affine",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "atan",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "avg_pool",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "batch_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "bmm",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "bmm_w",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "cast",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "ceil",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "channel_layer_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "clamped_relu",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "clip",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "concat",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "const_array",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "conv",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "conv_transpose",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "cos",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "crop",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "depth_to_space",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "dynamic_conv",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "einsum",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "elu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "erf",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "exp",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "exp2",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "expand_dims",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "flatten2d",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "floor",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "gelu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "greater",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "greater_equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "group_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "instance_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "inverse",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "l2_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "layer_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "leaky_relu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "less",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "less_equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "linear_activation",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "local_response_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "log",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "logical_not",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "matmul",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "max_pool",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "maximum",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "minimum",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "mul",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "muls",
+                "set": "_EMIT",
+                "class": "dispatch/latency-bound",
+                "where": "floor finding (CPU wins tiny)"
+              },
+              {
+                "op": "not_equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "pixel_shuffle",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "pixel_unshuffle",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "pow",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "prelu",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "real_div",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_l1_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reduce_log_sum",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reduce_log_sum_exp",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reduce_max",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_mean",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_min",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_sum",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_sum_square",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "relu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "relu6",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reshape",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "resize_bilinear",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "resize_nearest_neighbor",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reverse",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "rms_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "round",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "rsqrt",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "scaled_tanh",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "select",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sigmoid",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "sigmoid_hard",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sign",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "silu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "sin",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "slice_by_size",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "softmax",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "softplus",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "softsign",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "space_to_depth",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "split",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sqrt",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "square",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "squeeze",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "stack",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sub",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "tanh",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "threshold",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "thresholded_relu",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "tile",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "transpose",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "upsample",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "upsample_bilinear",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "argmax",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:worker-raceable",
+                "where": "bridge:worker (raceable silicon via persistent worker)"
+              },
+              {
+                "op": "batch_to_space",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "channel_to_space",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "cost_volume",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "cross_correlation",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "cross_product",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "dynamic_slice",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "flatten",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "fps",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "input_view",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "lrn",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "minmax_norm",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "radius_search",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "scaled_elementwise",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "sdpa",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:worker-raceable",
+                "where": "bridge:worker (raceable - covered as attention class)"
+              },
+              {
+                "op": "sort",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "space_to_batch",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "space_to_channel",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "topk",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:worker-raceable",
+                "where": "bridge:worker (raceable silicon via persistent worker)"
+              }
+            ],
+            "counts": {
+              "compute-bound": 4,
+              "bandwidth-bound": 44,
+              "dispatch/latency-bound": 2,
+              "bridge:worker-raceable": 3,
+              "bridge:subprocess-not-raceable": 16,
+              "UNCLASSIFIED": 50
+            },
+            "n_emit": 100,
+            "n_netplist": 19,
+            "worker_ops": [
+              "argmax",
+              "sdpa",
+              "topk"
+            ],
+            "a1_only_ops": [
+              "batch_to_space",
+              "channel_to_space",
+              "cost_volume",
+              "cross_correlation",
+              "cross_product",
+              "dynamic_slice",
+              "flatten",
+              "fps",
+              "input_view",
+              "lrn",
+              "minmax_norm",
+              "radius_search",
+              "scaled_elementwise",
+              "sort",
+              "space_to_batch",
+              "space_to_channel"
+            ],
+            "unclassified": [
+              "affine",
+              "atan",
+              "bmm_w",
+              "cast",
+              "ceil",
+              "channel_layer_norm",
+              "clamped_relu",
+              "const_array",
+              "crop",
+              "depth_to_space",
+              "dynamic_conv",
+              "einsum",
+              "equal",
+              "exp2",
+              "expand_dims",
+              "flatten2d",
+              "floor",
+              "greater",
+              "greater_equal",
+              "instance_norm",
+              "inverse",
+              "less",
+              "less_equal",
+              "linear_activation",
+              "local_response_norm",
+              "logical_not",
+              "not_equal",
+              "prelu",
+              "reduce_l1_norm",
+              "reduce_log_sum",
+              "reduce_log_sum_exp",
+              "reduce_sum_square",
+              "resize_bilinear",
+              "resize_nearest_neighbor",
+              "reverse",
+              "round",
+              "scaled_tanh",
+              "select",
+              "sigmoid_hard",
+              "sign",
+              "slice_by_size",
+              "softsign",
+              "space_to_depth",
+              "split",
+              "squeeze",
+              "stack",
+              "threshold",
+              "thresholded_relu",
+              "tile",
+              "upsample_bilinear"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "script": "decode_measurement.py",
+      "result_file": "decode_measurement_results.json",
+      "returncode": 0,
+      "seconds": 56.5,
+      "summary": {
+        "config": {
+          "d_model": 1024,
+          "n_layers": 4,
+          "n_heads": 16,
+          "d_head": 64,
+          "d_ff": 4096,
+          "vocab": 32000,
+          "s_kv": 128
+        },
+        "quick": true,
+        "batch": 32,
+        "flops_per_token": {
+          "1": 201850880.0,
+          "32": 6459228160.0
+        },
+        "have": {
+          "ane": true,
+          "mlx": true,
+          "sudo": true
+        },
+        "idle_pkg_W": 7.6135,
+        "rows": [
+          {
+            "device": "CPU",
+            "batch": 1,
+            "status": "ok",
+            "latency_per_step_ms": 21.92704100161791,
+            "latency_per_token_ms": 21.92704100161791,
+            "tokens_per_s": 45.60578875764468,
+            "relerr": 9.651060780445236e-07,
+            "active_pkg_W": 10.485,
+            "active_pkg_cv_pct": 3.7604068370934782,
+            "ane_active_mW": 0.0,
+            "gpu_active_mW": 11.0,
+            "cpu_active_mW": 10452.0,
+            "energy_iter_ms": 132.00228124818145,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 7.575626652389969,
+            "tokens_per_s_per_W": 0.722520424643774,
+            "mJ_per_token": 1384.0439188871824
+          },
+          {
+            "device": "GPU",
+            "batch": 1,
+            "status": "ok",
+            "latency_per_step_ms": 2.279708976857364,
+            "latency_per_token_ms": 2.279708976857364,
+            "tokens_per_s": 438.65248158934963,
+            "relerr": 0.0024123376136696425,
+            "active_pkg_W": 2.7975,
+            "active_pkg_cv_pct": 24.26878937625842,
+            "ane_active_mW": 0.0,
+            "gpu_active_mW": 1851.0,
+            "cpu_active_mW": 920.0,
+            "energy_iter_ms": 2.5736816401418126,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 388.5484453100031,
+            "tokens_per_s_per_W": 138.8913119964265,
+            "mJ_per_token": 7.19987438829672
+          },
+          {
+            "device": "ANE",
+            "batch": 1,
+            "status": "NotImplementedError: aneforge: tensor (1, 32000) (op 'matmul') exceeds ANE family 3's max dimension 16384; tile the graph or target a higher chip."
+          },
+          {
+            "device": "ANE8",
+            "batch": 1,
+            "status": "NotImplementedError: aneforge: tensor (1, 32000) (op 'matmul') exceeds ANE family 3's max dimension 16384; tile the graph or target a higher chip."
+          },
+          {
+            "device": "CPU",
+            "batch": 32,
+            "status": "ok",
+            "latency_per_step_ms": 153.28287496231496,
+            "latency_per_token_ms": 4.790089842572343,
+            "tokens_per_s": 208.7643515811358,
+            "relerr": 1.351244050254188e-06,
+            "active_pkg_W": 11.9045,
+            "active_pkg_cv_pct": 8.994154298419982,
+            "ane_active_mW": 0.0,
+            "gpu_active_mW": 2.0,
+            "cpu_active_mW": 11897.0,
+            "energy_iter_ms": 644.7101897792891,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 49.63470487562004,
+            "tokens_per_s_per_W": 4.169406936504686,
+            "mJ_per_token": 239.84226419461083
+          },
+          {
+            "device": "GPU",
+            "batch": 32,
+            "status": "ok",
+            "latency_per_step_ms": 4.584749927744269,
+            "latency_per_token_ms": 0.14327343524200842,
+            "tokens_per_s": 6979.660942106004,
+            "relerr": 0.0023489272559743036,
+            "active_pkg_W": 14.68,
+            "active_pkg_cv_pct": 11.168197997766399,
+            "ane_active_mW": 0.0,
+            "gpu_active_mW": 13476.5,
+            "cpu_active_mW": 1730.0,
+            "energy_iter_ms": 5.120800264840429,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 6249.023266873534,
+            "tokens_per_s_per_W": 425.682783846971,
+            "mJ_per_token": 2.3491671214955465
+          },
+          {
+            "device": "ANE",
+            "batch": 32,
+            "status": "NotImplementedError: aneforge: tensor (32, 32000) (op 'matmul') exceeds ANE family 3's max dimension 16384; tile the graph or target a higher chip."
+          },
+          {
+            "device": "ANE8",
+            "batch": 32,
+            "status": "NotImplementedError: aneforge: tensor (32, 32000) (op 'matmul') exceeds ANE family 3's max dimension 16384; tile the graph or target a higher chip."
+          }
+        ]
+      }
+    },
+    {
+      "script": "roofline_analysis.py",
+      "result_file": "roofline_analysis_results.json",
+      "returncode": 1,
+      "seconds": 0.2,
+      "error": [
+        "KeyError: 'ane'"
+      ]
+    }
+  ]
+}
