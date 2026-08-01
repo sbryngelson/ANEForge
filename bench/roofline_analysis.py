@@ -32,9 +32,11 @@ def load_ceilings():
     bw = json.loads(BW_JSON.read_text())
 
     peaks = sat["peaks"]
-    # Compute roof (GFLOP/s): GEMM and conv kept separate.
+    # Compute roof (GFLOP/s): GEMM and conv kept separate. A device a sweep could not
+    # measure (an engine where a shape fails to compile) is absent, not zero -> skip it.
     compute = {}
     for dev in ("CPU", "GPU", "ANE"):
+        if dev not in peaks["gemm"] or dev not in peaks["conv"]: continue
         compute[dev] = {
             "gemm_peak_gflops": peaks["gemm"][dev]["peak_gflops"],
             "gemm_peak_at_N": peaks["gemm"][dev]["peak_gflops_size"],
@@ -44,13 +46,15 @@ def load_ceilings():
 
     # Bandwidth roof (GB/s): streaming archetype peak.
     stream = bw["results"]["roofline"]["streaming (relu / x*2)"]["peak"]
-    bandwidth = {dev.upper(): stream[dev.lower()]["gbps"] for dev in ("CPU", "GPU", "ANE")}
+    bandwidth = {dev.upper(): stream[dev.lower()]["gbps"] for dev in ("CPU", "GPU", "ANE")
+                 if dev.lower() in stream}
 
     # achieved GB/s per device per archetype -> achieved GFLOP/s for bw-bound ops.
     arche_bw = {}
     for name, blk in bw["results"]["roofline"].items():
-        arche_bw[name] = {dev.upper(): blk["peak"][dev.lower()]["gbps"]
-                          for dev in ("CPU", "GPU", "ANE")}
+        pk = blk.get("peak") or {}
+        arche_bw[name] = {dev.upper(): pk[dev.lower()]["gbps"]
+                          for dev in ("CPU", "GPU", "ANE") if dev.lower() in pk}
     return sat, bw, compute, bandwidth, arche_bw
 
 
@@ -345,8 +349,9 @@ def _sat_achieved(sat, dev, archetype):
 
 def build_placement(arche, compute, bandwidth, arche_bw, gaps, sat):
     """Per (op, device): AI, applicable roof, achieved, %roof."""
-    placement = {dev: [] for dev in ("CPU", "GPU", "ANE")}
-    for dev in ("CPU", "GPU", "ANE"):
+    devs = [d for d in ("CPU", "GPU", "ANE") if d in compute and d in bandwidth]
+    placement = {dev: [] for dev in devs}
+    for dev in devs:
         bpe = FP32 if dev == "CPU" else FP16
         bw_roof = bandwidth[dev]
         for row in arche:
@@ -366,7 +371,7 @@ def build_placement(arche, compute, bandwidth, arche_bw, gaps, sat):
             else:
                 # bandwidth-bound: achieved = AI * achieved_GB/s
                 bwname = row.get("bw_archetype")
-                if bwname and bwname in arche_bw:
+                if bwname and dev in arche_bw.get(bwname, {}):
                     gbps = arche_bw[bwname][dev]
                     achieved = ai * gbps  # GFLOP/s = FLOP/byte * GB/s
                     src = f"DERIVED: AI x achieved {gbps:.1f} GB/s ({bwname})"
@@ -473,7 +478,8 @@ def main():
 
     # ridge points
     ridges = {}
-    for dev in ("CPU", "GPU", "ANE"):
+    for dev in compute:
+        if dev not in bandwidth: continue
         # GEMM compute peak as the headline roof
         ridges[dev] = compute[dev]["gemm_peak_gflops"] / bandwidth[dev]
 
@@ -481,7 +487,7 @@ def main():
     print(" ROOFLINE ANALYSIS - per-device ridge points (recomputed from the two JSONs)")
     print("=" * 88)
     print(f" {'device':<5} {'dtype':<5} {'compute roof (GFLOP/s)':>26} {'bw roof (GB/s)':>15} {'ridge FLOP/byte':>17}")
-    for dev in ("CPU", "GPU", "ANE"):
+    for dev in ridges:
         dtype = "fp32" if dev == "CPU" else "fp16"
         cg = compute[dev]["gemm_peak_gflops"]; cc = compute[dev]["conv_peak_gflops"]
         print(f" {dev:<5} {dtype:<5} {f'gemm {cg:.0f} / conv {cc:.0f}':>26} "
@@ -520,7 +526,7 @@ def main():
     print("\n" + "=" * 88)
     print(" OP PLACEMENT per device - AI / applicable roof / achieved / %roof")
     print("=" * 88)
-    for dev in ("CPU", "GPU", "ANE"):
+    for dev in placement:
         print(f"\n--- {dev} ---")
         print(f" {'archetype':<36} {'AI':>9} {'roof@AI':>10} {'achieved':>10} {'%roof':>7}")
         for r in placement[dev]:
@@ -532,7 +538,7 @@ def main():
     print(" ASCII ROOFLINES")
     print("=" * 88)
     sketches = {}
-    for dev in ("CPU", "GPU", "ANE"):
+    for dev in placement:
         s = ascii_roofline(dev, compute, bandwidth, placement[dev], ridges[dev])
         sketches[dev] = s
         print("\n" + s)
