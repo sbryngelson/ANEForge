@@ -29,6 +29,16 @@ CPU baseline (`pip install -e ".[bench]"`). The power-reading scripts call
 | `below_ridge_fusion.py` | fusion AI-lever demo: a memory-bound block crosses the weight ridge when fused |
 | `decode_int8_accuracy.py` | int8 decode accuracy: token agreement, top-5 overlap, logit relerr, softmax KL |
 | `real_models_fp16.py` | fp16-vs-fp16 GPU/ANE energy for ResNet-18, ViT-B/16, MiniLM |
+| `numeric_cliffs.py` | per-silicon correctness rooflines (matmul saturation, slice-x16 crop-DMA, reduce exactness) |
+| `roofline_suite.py` | one-shot suite: machine fingerprint + numeric cliffs, `--perf` collects the perf scripts above |
+| `aggregate_rooflines.py` | merges `results/rooflines/*.json` into `results/ROOFLINES.md` (`--check` gates CI) |
+
+## `results/rooflines/` - accumulated cross-machine submissions
+
+Each contributor runs `roofline_suite.py` and PRs the fingerprinted JSON it drops
+in [`results/rooflines/`](results/rooflines/); [`results/ROOFLINES.md`](results/ROOFLINES.md)
+is the generated, GitHub-rendered table across every machine. See
+[`results/rooflines/README.md`](results/rooflines/README.md) to submit yours.
 
 ## `mlperf/` - MLPerf-style measurement
 

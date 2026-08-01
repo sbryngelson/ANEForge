@@ -1,0 +1,51 @@
+{
+  "plane": "numeric",
+  "matmul_saturation": {
+    "metric": "output_magnitude_inf_cliff",
+    "expected": 32752,
+    "by_K": [
+      {
+        "cliff": 32758.8,
+        "K": 4,
+        "expected": 32752
+      },
+      {
+        "cliff": 32758.8,
+        "K": 8,
+        "expected": 32752
+      },
+      {
+        "cliff": 32758.8,
+        "K": 32,
+        "expected": 32752
+      },
+      {
+        "cliff": 32758.8,
+        "K": 64,
+        "expected": 32752
+      },
+      {
+        "cliff": 32758.8,
+        "K": 128,
+        "expected": 32752
+      }
+    ]
+  },
+  "slice_saturation": {
+    "metric": "sliced_value_inf_cliff",
+    "cliff": null,
+    "note": "still finite at hi=60000 (no cliff in range)",
+    "expected_pre_a16": 4094,
+    "interpretation": "None == exact (A16/M5); a number == the pre-A16 clamp"
+  },
+  "reduce_exactness": {
+    "metric": "last_all_exact_integer_row_sum",
+    "expected_boundary": 2048,
+    "n_terms": 8,
+    "last_all_exact": 2048,
+    "first_wrong": {
+      "target": 2049,
+      "got": 2050.0
+    }
+  }
+}
