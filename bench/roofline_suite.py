@@ -101,6 +101,8 @@ def main():
     ap.add_argument("--quick", action="store_true",
                     help="pass --quick through to perf scripts that support it")
     ap.add_argument("--out", default=None, help="explicit output path (default: fingerprinted name)")
+    ap.add_argument("--contributor", default=None,
+                    help="your GitHub handle, credited in ROOFLINES.md (optional)")
     args = ap.parse_args()
 
     fp = _machine.fingerprint()
@@ -109,7 +111,8 @@ def main():
 
     report = {
         "suite": "roofline",
-        "schema_version": 1,
+        "schema_version": 2,
+        "contributor": args.contributor.lstrip("@") if args.contributor else None,
         "machine": fp,
         "numeric_cliffs": None,
         "perf_rooflines": None,

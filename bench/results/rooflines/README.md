@@ -8,12 +8,14 @@ machines. The aggregate view is [`../ROOFLINES.md`](../ROOFLINES.md) (generated)
 1. Run the suite from a clean checkout of `main`:
 
    ```bash
-   PYTHONPATH=. python3 bench/roofline_suite.py            # numeric cliffs (fast, no sudo)
+   PYTHONPATH=. python3 bench/roofline_suite.py --contributor <your-gh-handle>   # numeric cliffs (fast, no sudo)
    # or, on AC power, the full battery incl. per-rail watts:
-   PYTHONPATH=. python3 bench/roofline_suite.py --perf
+   PYTHONPATH=. python3 bench/roofline_suite.py --perf --contributor <your-gh-handle>
    ```
 
    It writes `roofline-<chip>-<model>-<hwhash>-<runid>.json` into this directory.
+   `--contributor` is optional; when given, you are credited in the table with a
+   link to your GitHub profile.
 
 2. Regenerate the table and open a PR with both files:
 

@@ -77,19 +77,23 @@ def render(reports: list[dict]) -> str:
         "Each row is a distinct machine (grouped by hardware hash; identical silicon in "
         "different chassis stays separate by model identifier).",
         "",
-        "Add yours: `PYTHONPATH=. python3 bench/roofline_suite.py`, commit the JSON it "
-        "writes under `bench/results/rooflines/`, regenerate this file with "
+        "Add yours: `PYTHONPATH=. python3 bench/roofline_suite.py --contributor <your-gh-handle>`, "
+        "commit the JSON it writes under `bench/results/rooflines/`, regenerate this file with "
         "`python3 bench/aggregate_rooflines.py`, and open a PR. See "
         "[`rooflines/README.md`](rooflines/README.md).",
         "",
     ]
+    handles = sorted({c for c in (r.get("contributor") for r in reports) if c})
+    if handles:
+        lines += ["Thanks to " + ", ".join(f"[@{h}](https://github.com/{h})" for h in handles)
+                  + " for contributing datapoints.", ""]
 
     # --- Machines ---
     lines += [
         "## Machines",
         "",
-        "| Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | Runs |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for _, g in sorted(groups.items(), key=lambda kv: str(kv[1]["latest"]["machine"]["hardware"].get("chip"))):
         hw = g["latest"]["machine"]["hardware"]
@@ -110,11 +114,14 @@ def render(reports: list[dict]) -> str:
         if pw.get("is_laptop") and pw.get("source") == "battery":
             power += f" {pw.get('battery_pct')}%"
         mem = f"{hw.get('ram_gb')} GB {hw.get('memory_architecture','')}".strip()
+        # credit the most recent submission that named a contributor
+        handle = next((r.get("contributor") for r in reversed(g["submissions"]) if r.get("contributor")), None)
+        by = f"[@{handle}](https://github.com/{handle})" if handle else "-"
         lines.append(
             f"| {hw.get('chip','?')} | {hw.get('model_identifier','?')} "
             f"| {hw.get('p_cores','?')}+{hw.get('e_cores','?')} | {hw.get('gpu_cores','?')} "
             f"| {mem} | {env.get('macos_version','?')} ({env.get('macos_build','?')}) "
-            f"| {power} | {code} | {len(g['submissions'])} |"
+            f"| {power} | {code} | {by} | {len(g['submissions'])} |"
         )
 
     # --- Numeric cliffs (the cross-silicon correctness rooflines) ---

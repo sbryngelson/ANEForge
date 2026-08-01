@@ -1,6 +1,7 @@
 {
   "suite": "roofline",
-  "schema_version": 1,
+  "schema_version": 2,
+  "contributor": "sbryngelson",
   "machine": {
     "hardware": {
       "model_identifier": "Mac17,8",
@@ -21,30 +22,30 @@
       "macos_build": "25F80",
       "aneforge_version": "0.1.4.dev32+gb8dc90fe6.d20260624",
       "aneforge_git": {
-        "commit": "cab4c2bdf541cca2c6f4dcf687ddd9dfdb97778b",
-        "short": "cab4c2bdf541",
-        "branch": "main",
+        "commit": "7693aae186332777b56311faf7a939ae42ddb6bb",
+        "short": "7693aae18633",
+        "branch": "bench/roofline-suite",
         "dirty": true,
         "main": {
           "ref": "origin/main",
           "merge_base": "cab4c2bdf541cca2c6f4dcf687ddd9dfdb97778b",
           "merge_base_short": "cab4c2bdf541",
-          "commits_ahead": 0,
+          "commits_ahead": 1,
           "commits_behind": 0
         }
       },
       "power": {
         "source": "battery",
         "is_laptop": true,
-        "battery_pct": 94,
+        "battery_pct": 90,
         "battery_state": "discharging"
       },
       "gpu_wired_limit_mb": 0,
       "thermal_state": "nominal",
       "have_sudo": true,
-      "timestamp_utc": "2026-08-01T12:21:22Z"
+      "timestamp_utc": "2026-08-01T12:38:27Z"
     },
-    "run_id": "523cfebe"
+    "run_id": "a92275dd"
   },
   "numeric_cliffs": {
     "plane": "numeric",

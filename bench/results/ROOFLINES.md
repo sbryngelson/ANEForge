@@ -3,13 +3,15 @@
 
 Accumulated across **1 machine(s)**, 1 submission(s). Each row is a distinct machine (grouped by hardware hash; identical silicon in different chassis stays separate by model identifier).
 
-Add yours: `PYTHONPATH=. python3 bench/roofline_suite.py`, commit the JSON it writes under `bench/results/rooflines/`, regenerate this file with `python3 bench/aggregate_rooflines.py`, and open a PR. See [`rooflines/README.md`](rooflines/README.md).
+Add yours: `PYTHONPATH=. python3 bench/roofline_suite.py --contributor <your-gh-handle>`, commit the JSON it writes under `bench/results/rooflines/`, regenerate this file with `python3 bench/aggregate_rooflines.py`, and open a PR. See [`rooflines/README.md`](rooflines/README.md).
+
+Thanks to [@sbryngelson](https://github.com/sbryngelson) for contributing datapoints.
 
 ## Machines
 
-| Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | Runs |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Apple M5 Pro | Mac17,8 | 6+12 | 20 | 48 GB unified | 26.5.1 (25F80) | battery 94% | cab4c2bdf541 (dirty) | 1 |
+| Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Apple M5 Pro | Mac17,8 | 6+12 | 20 | 48 GB unified | 26.5.1 (25F80) | battery 90% | cab4c2bdf541 (dirty, +1) | [@sbryngelson](https://github.com/sbryngelson) | 1 |
 
 ## Numeric cliffs (correctness rooflines)
 
