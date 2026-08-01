@@ -156,16 +156,42 @@ def _git_info() -> dict:
     return info
 
 
+def _energy_mode() -> dict:
+    """macOS Energy Mode (Low Power / Automatic / High Power) currently in effect.
+
+    Reads the active `powermode` from `pmset -g`. High Power raises the sustained
+    power/thermal ceiling, so a battery run in High Power is close to AC over short
+    bench windows - which is why we record it rather than block battery runs. The
+    raw integer is kept alongside the label so a future macOS renumbering cannot
+    silently mislabel the data. Machines without the three-state Energy Mode (Airs,
+    base models) report mode None; some macOS versions expose only `lowpowermode`."""
+    try:
+        txt = subprocess.run(["pmset", "-g"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return {"mode": None, "raw": None}
+    m = re.search(r"^\s*powermode\s+(\d+)", txt, re.M)
+    if m:
+        raw = int(m.group(1))
+        name = {0: "automatic", 1: "low_power", 2: "high_power"}.get(raw, f"powermode_{raw}")
+        return {"mode": name, "raw": raw, "key": "powermode"}
+    lp = re.search(r"^\s*lowpowermode\s+(\d+)", txt, re.M)
+    if lp:
+        raw = int(lp.group(1))
+        return {"mode": "low_power" if raw else "automatic", "raw": raw, "key": "lowpowermode"}
+    return {"mode": None, "raw": None}
+
+
 def _power_source() -> dict:
-    """AC vs battery + charge (a laptop on battery throttles clocks, shifting perf rooflines)."""
+    """AC vs battery + charge + Energy Mode (both shift perf rooflines; recorded, not blocked)."""
     try:
         txt = subprocess.run(["pmset", "-g", "ps"], capture_output=True, text=True, timeout=5).stdout
     except Exception:
-        return {"source": None, "is_laptop": None}
+        return {"source": None, "is_laptop": None, "energy_mode": _energy_mode()}
     is_laptop = "InternalBattery" in txt
     m = re.search(r"drawing from '([^']+)'", txt)
     info = {"source": ("ac" if (m and "AC" in m.group(1)) else "battery" if m else None),
-            "is_laptop": is_laptop}
+            "is_laptop": is_laptop,
+            "energy_mode": _energy_mode()}
     if is_laptop:
         pct = re.search(r"(\d+)%", txt)
         info["battery_pct"] = int(pct.group(1)) if pct else None

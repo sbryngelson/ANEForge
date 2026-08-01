@@ -44,6 +44,10 @@ Filenames include a `run_id`, so multiple runs of the same machine - and runs by
 different people on the same machine model - never collide. Submissions are
 immutable: add new ones, do not edit old ones.
 
-Please submit from a **clean, non-dirty** checkout where possible; a `dirty` or
-`battery` submission is accepted (the flags ride along) but is not comparable to
-clean/AC data for the performance rooflines.
+Please submit from a **clean, non-dirty** checkout where possible. Battery
+submissions are welcome and never blocked -- the power source, battery %, and
+**Energy Mode** (Low Power / Automatic / High Power) all ride along in the JSON
+and show in the table. For the performance rooflines, a battery run in **High
+Power** mode is close to AC over the short bench windows; Automatic or Low Power
+on battery will throttle, so those rows are labelled accordingly. The numeric
+cliffs are clock-independent and comparable regardless of power state.
