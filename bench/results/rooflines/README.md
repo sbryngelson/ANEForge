@@ -18,6 +18,13 @@ machines. The aggregate view is [`../ROOFLINES.md`](../ROOFLINES.md) (generated)
    `--perf-full` runs the complete paper-grade battery and is only needed for
    paper-quality reproduction.
 
+   Watts (the perf/W column) are read with `sudo powermetrics --samplers
+   ane_power,cpu_power,gpu_power` (read-only sampling). Passwordless sudo is used
+   automatically; otherwise `--perf` prompts once for your password (shows the exact
+   command first). Pass `--no-sudo` to skip the prompt -- the run still completes and
+   submits, just without the perf/W number. The prompt is auto-skipped when there is
+   no terminal, so scripted/CI runs never hang.
+
    It writes `roofline-<chip>-<model>-<hwhash>-<runid>.json` into this directory.
    Your GitHub handle is **auto-detected** from your git noreply email (GitHub's
    default) and you are credited in the table with a link to your profile. If your
