@@ -11,7 +11,7 @@ Thanks to [@sbryngelson](https://github.com/sbryngelson) for contributing datapo
 
 | Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Apple M5 Pro | Mac17,8 | 6+12 | 20 | 48 GB unified | 26.5.1 (25F80) | battery 82% (high-power) | 93501250062c (dirty) | [@sbryngelson](https://github.com/sbryngelson) | 1 |
+| Apple M5 Pro | Mac17,8 | 6+12 | 20 | 48 GB unified | 26.5.1 (25F80) | ac (high-power) | 55a1c6afdad3 (dirty) | [@sbryngelson](https://github.com/sbryngelson) | 1 |
 
 ## Numeric cliffs (correctness rooflines)
 
@@ -25,5 +25,9 @@ _matmul: output magnitude that flips finite->inf (~fp16_max/2). slice: the pre-A
 
 ## Performance rooflines (headline)
 
-_No `--perf` submissions yet. Run on AC power with `python3 bench/roofline_suite.py --perf` (needs sudo for watts)._
+Peak ANE numbers only; the full per-size sweeps, all-engine comparison, and per-rail watts live in each machine's JSON under `perf_rooflines`. Perf depends on power/thermals, so the state is shown per row.
+
+| Chip | Model | Peak fp16 GEMM (TF/s) | Bandwidth (GB/s) | Ridge (FLOP/byte) | Peak perf/W (GF/s/W) | Decode @b1 (tok/s) | Power |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Apple M5 Pro | Mac17,8 | 10.0 | 24 | 418 | 918 | 117 | ac (high-power) |
 

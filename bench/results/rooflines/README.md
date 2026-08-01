@@ -8,10 +8,15 @@ machines. The aggregate view is [`../ROOFLINES.md`](../ROOFLINES.md) (generated)
 1. Run the suite from a clean checkout of `main`:
 
    ```bash
-   PYTHONPATH=. python3 bench/roofline_suite.py            # numeric cliffs (fast, no sudo)
-   # or, on AC power, the full battery incl. per-rail watts:
-   PYTHONPATH=. python3 bench/roofline_suite.py --perf
+   PYTHONPATH=. python3 bench/roofline_suite.py            # numeric cliffs only (fast, no sudo)
+   PYTHONPATH=. python3 bench/roofline_suite.py --perf     # + fast headline perf (a few min; sudo for watts)
+   PYTHONPATH=. python3 bench/roofline_suite.py --perf-full # + full paper-grade battery (~30 min)
    ```
+
+   `--perf` is the recommended contributor run: it produces the headline perf
+   numbers (peak GEMM, bandwidth, ridge, perf/W, decode) in a few minutes.
+   `--perf-full` runs the complete paper-grade battery and is only needed for
+   paper-quality reproduction.
 
    It writes `roofline-<chip>-<model>-<hwhash>-<runid>.json` into this directory.
    Your GitHub handle is **auto-detected** from your git noreply email (GitHub's
