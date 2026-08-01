@@ -33,7 +33,9 @@ Peak ANE numbers only; the full per-size sweeps, all-engine comparison, and per-
 
 | Chip | Model | Peak fp16 GEMM (TF/s) | Bandwidth (GB/s) | Ridge (FLOP/byte) | Peak perf/W (GF/s/W) | Decode @b1 (tok/s) | Power |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Apple M1 | MacBookPro17,1 | 2.7 | 0.86 | 3149 | 442 | - | ac |
-| Apple M2 Pro | Mac14,12 | 3.3 | 0.96 | 3404 | 1379 | - | ac |
+| Apple M1 | MacBookPro17,1 | 2.7 | 0.86 | 3149 | 442 | n/a | ac |
+| Apple M2 Pro | Mac14,12 | 3.3 | 0.96 | 3404 | 1379 | n/a | ac |
 | Apple M5 Pro | Mac17,8 | 10.0 | 24 | 418 | 918 | 117 | ac (high-power) |
+
+_`n/a` decode = the decode benchmark's 32000-vocab lm_head matmul exceeds that ANE family's 16384 max matmul dimension, so it cannot run untiled -- a real per-generation limit (older families), not a missing measurement._
 
