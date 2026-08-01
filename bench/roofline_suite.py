@@ -17,9 +17,8 @@ Mac mini.
 
 Run:
   PYTHONPATH=. python3 bench/roofline_suite.py             # fingerprint + numeric cliffs (fast, no sudo)
-  PYTHONPATH=. python3 bench/roofline_suite.py --perf      # + fast headline perf (a few min; prompts once
-                                                           #   for sudo to read watts -- see --no-sudo)
-  PYTHONPATH=. python3 bench/roofline_suite.py --perf --no-sudo  # skip the watts prompt (perf/W blank)
+  PYTHONPATH=. python3 bench/roofline_suite.py --perf      # + fast headline perf (a few min). Prompts once
+                                                           #   for sudo to read watts -- REQUIRED; aborts if refused.
   PYTHONPATH=. python3 bench/roofline_suite.py --perf-full # + full paper-grade battery (~30 min)
 """
 from __future__ import annotations
@@ -143,12 +142,25 @@ def main():
                     help="fast headline perf run (a few min; --quick sweeps, short power windows)")
     ap.add_argument("--perf-full", dest="perf_full", action="store_true",
                     help="full paper-grade perf battery (all scripts, full sampling; ~30 min)")
-    ap.add_argument("--no-sudo", dest="no_sudo", action="store_true",
-                    help="never prompt for sudo; skip powermetrics watts (perf/W left blank)")
     ap.add_argument("--out", default=None, help="explicit output path (default: fingerprinted name)")
     ap.add_argument("--contributor", default=None,
                     help="your GitHub handle to be credited (overrides auto-detection)")
     args = ap.parse_args()
+
+    keepalive = None
+    if args.perf or args.perf_full:
+        # A perf run reads per-rail power with `sudo powermetrics` -- authorize it FIRST,
+        # before any measurement, and ABORT if refused. A perf run without watts is not a
+        # valid submission, so there is no opt-out. Passwordless sudo authorizes silently;
+        # otherwise this prompts once for your login password.
+        print("This perf run reads per-rail power and needs sudo. It will run, repeatedly:")
+        print("    sudo powermetrics --samplers ane_power,cpu_power,gpu_power")
+        print("(read-only power sampling; nothing is modified.)")
+        if not _authorize_sudo():
+            print("\nsudo not granted -- aborting. (Run without --perf for the cliffs-only "
+                  "submission, which needs no sudo.)", file=sys.stderr)
+            sys.exit(1)
+        keepalive = _sudo_keepalive_start()
 
     fp = _machine.fingerprint()
     print("machine:", fp["hardware"]["chip"], fp["hardware"]["model_identifier"],
@@ -182,30 +194,8 @@ def main():
     if args.perf or args.perf_full:
         scripts = PERF_FULL if args.perf_full else PERF_FAST
         label = "full paper-grade battery (~30 min)" if args.perf_full else "fast headline run (a few min)"
-        print(f"\n[perf] {label}")
-        # Power/watt reads use `sudo powermetrics`. Passwordless sudo is used
-        # automatically; otherwise we prompt once (default) unless --no-sudo. The
-        # prompt is skipped when there is no terminal, so non-interactive/CI runs
-        # never hang -- they just proceed without watts.
-        have_sudo = fp["environment"]["have_sudo"]
-        keepalive = None
-        if not have_sudo and not args.no_sudo and sys.stdin.isatty():
-            print("[perf] Per-rail power needs sudo. The perf scripts run this exact command:")
-            print("[perf]     sudo powermetrics --samplers ane_power,cpu_power,gpu_power")
-            print("[perf] (read-only power sampling; nothing is modified). Authorizing now -- you")
-            print("[perf] may be prompted for your login password. Re-run with --no-sudo to skip it.")
-            if _authorize_sudo():
-                have_sudo = True
-                keepalive = _sudo_keepalive_start()
-                report["machine"]["environment"]["sudo_authorized"] = True
-                print("[perf] sudo authorized -> watts will be measured.")
-            else:
-                print("[perf] sudo not granted -> continuing WITHOUT watts (perf/W left blank).")
-        if not have_sudo:
-            why = ("--no-sudo set" if args.no_sudo
-                   else "not a terminal" if not sys.stdin.isatty() else "not granted")
-            print(f"[perf] note: no sudo ({why}) -> perf/W and per-rail watts skipped; "
-                  "every other number is unaffected and the run still submits.")
+        print(f"\n[perf] {label}")   # sudo already authorized up front
+        report["machine"]["environment"]["sudo_authorized"] = True
         pw = fp["environment"]["power"]
         if pw.get("is_laptop") and pw.get("source") == "battery":
             mode = (pw.get("energy_mode") or {}).get("mode")
