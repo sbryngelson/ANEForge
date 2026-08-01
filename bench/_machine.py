@@ -60,11 +60,34 @@ def _sw_vers(flag: str) -> str | None:
 
 
 def _gpu_cores() -> int | None:
-    """Parse GPU core count from SPDisplaysDataType (best-effort; can be slow)."""
+    """GPU core count, best-effort across three sources so it populates reliably.
+
+    1. ioreg `gpu-core-count` -- instant and stable (the GPU device node carries it).
+    2. SPDisplaysDataType JSON `sppci_cores` -- structured, survives text-layout drift.
+    3. the legacy 'Total Number of Cores' text sweep -- last resort.
+    The text sweep alone silently returned None when system_profiler was slow or its
+    layout shifted, so lead with ioreg (which never has either problem)."""
+    try:
+        out = subprocess.run(["ioreg", "-r", "-k", "gpu-core-count"],
+                             capture_output=True, text=True, timeout=8).stdout
+        m = re.search(r'"gpu-core-count"\s*=\s*(\d+)', out)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["system_profiler", "SPDisplaysDataType", "-json"],
+                             capture_output=True, text=True, timeout=20).stdout
+        for g in json.loads(out).get("SPDisplaysDataType", []):
+            c = g.get("sppci_cores")
+            if c is not None and str(c).isdigit():
+                return int(c)
+    except Exception:
+        pass
     try:
         out = subprocess.run(["system_profiler", "SPDisplaysDataType"],
-                             capture_output=True, text=True, timeout=20)
-        m = re.search(r"Total Number of Cores:\s*(\d+)", out.stdout)
+                             capture_output=True, text=True, timeout=20).stdout
+        m = re.search(r"Total Number of Cores:\s*(\d+)", out)
         return int(m.group(1)) if m else None
     except Exception:
         return None
