@@ -118,6 +118,15 @@ fp16; energy is whole-package, read with `powermetrics`.
 The engine is faster on the convolutional and encoder workloads and 8-16x more energy-efficient on all three, even on ViT-B/16, where the GPU edges it in latency.
 Reproduce with [`bench/device_compare_wattcomplete.py`](bench/device_compare_wattcomplete.py) and [`bench/real_models_fp16.py`](bench/real_models_fp16.py); the full per-workload device map (16 classes, measured on M1 / M2 / M5) is in [`bench/results/`](bench/results/).
 
+> **Have a Mac with an M-series chip? Help map the ANE roofline.** A 2-minute run of
+> [`bench/roofline_suite.py`](bench/roofline_suite.py) fingerprints your machine and
+> measures its numeric cliffs -- the magnitudes where fp16 on the engine silently goes
+> wrong, which differ by silicon -- plus, on AC power, the full performance battery.
+> PR the JSON and your chip joins the cross-hardware table in
+> [`bench/results/ROOFLINES.md`](bench/results/ROOFLINES.md), auto-credited to your
+> GitHub handle. We especially want chips we don't own: see the pinned issue
+> [#137](https://github.com/sbryngelson/ANEForge/issues/137).
+
 ## A fluid simulation on the Neural Engine
 
 <p align="center">
@@ -212,6 +221,7 @@ ANE guide at [ane-guide.readthedocs.io](https://ane-guide.readthedocs.io)
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has the bug-report checklist (include your chip and macOS version), the development setup, and where to start.
 Report security issues privately per the [`SECURITY.md`](SECURITY.md) guidelines.
+A one-command way to contribute without writing code: run [`bench/roofline_suite.py`](bench/roofline_suite.py) and PR your machine's rooflines (see the pinned issue [#137](https://github.com/sbryngelson/ANEForge/issues/137)).
 
 ## License
 
