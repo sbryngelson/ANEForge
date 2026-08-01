@@ -22,30 +22,30 @@
       "macos_build": "25F80",
       "aneforge_version": "0.1.4.dev32+gb8dc90fe6.d20260624",
       "aneforge_git": {
-        "commit": "7693aae186332777b56311faf7a939ae42ddb6bb",
-        "short": "7693aae18633",
+        "commit": "f1eca0dfdd89e7a63465ac12ce52b6a602d432ec",
+        "short": "f1eca0dfdd89",
         "branch": "bench/roofline-suite",
         "dirty": true,
         "main": {
           "ref": "origin/main",
           "merge_base": "cab4c2bdf541cca2c6f4dcf687ddd9dfdb97778b",
           "merge_base_short": "cab4c2bdf541",
-          "commits_ahead": 1,
+          "commits_ahead": 2,
           "commits_behind": 0
         }
       },
       "power": {
         "source": "battery",
         "is_laptop": true,
-        "battery_pct": 90,
+        "battery_pct": 89,
         "battery_state": "discharging"
       },
       "gpu_wired_limit_mb": 0,
       "thermal_state": "nominal",
       "have_sudo": true,
-      "timestamp_utc": "2026-08-01T12:38:27Z"
+      "timestamp_utc": "2026-08-01T12:41:49Z"
     },
-    "run_id": "a92275dd"
+    "run_id": "db49f4a5"
   },
   "numeric_cliffs": {
     "plane": "numeric",

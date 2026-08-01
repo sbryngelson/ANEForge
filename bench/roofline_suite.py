@@ -102,17 +102,26 @@ def main():
                     help="pass --quick through to perf scripts that support it")
     ap.add_argument("--out", default=None, help="explicit output path (default: fingerprinted name)")
     ap.add_argument("--contributor", default=None,
-                    help="your GitHub handle, credited in ROOFLINES.md (optional)")
+                    help="your GitHub handle to be credited (overrides auto-detection)")
     args = ap.parse_args()
 
     fp = _machine.fingerprint()
     print("machine:", fp["hardware"]["chip"], fp["hardware"]["model_identifier"],
           "  hwhash", fp["hardware_hash"], "  sudo", fp["environment"]["have_sudo"])
 
+    # Credit: explicit flag wins; otherwise auto-detect from a GitHub noreply email.
+    contributor = args.contributor or _machine.github_handle()
+    contributor = contributor.lstrip("@") if contributor else None
+    if contributor:
+        src = "flag" if args.contributor else "auto-detected from git noreply email"
+        print(f"contributor: @{contributor} ({src})")
+    else:
+        print("contributor: none (git email is not a GitHub noreply; pass --contributor to be credited)")
+
     report = {
         "suite": "roofline",
         "schema_version": 2,
-        "contributor": args.contributor.lstrip("@") if args.contributor else None,
+        "contributor": contributor,
         "machine": fp,
         "numeric_cliffs": None,
         "perf_rooflines": None,

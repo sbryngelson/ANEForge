@@ -180,6 +180,20 @@ def _gpu_wired_limit_mb() -> int | None:
     return _int("iogpu.wired_limit_mb")
 
 
+def github_handle() -> str | None:
+    """Best-effort GitHub handle from git config, resolved offline (no API).
+
+    Only recoverable when the user commits with a GitHub noreply email
+    (`ID+login@users.noreply.github.com` or `login@users.noreply.github.com`) -
+    GitHub's default for web commits and a common local setting. A generic email
+    (gmail etc.) cannot be mapped to a handle without the API, so this returns
+    None and the caller falls back to an explicit --contributor. Deterministic:
+    it reads git config, so the same machine yields the same answer in CI."""
+    email = _git("config", "user.email") or ""
+    m = re.match(r"^(?:\d+\+)?([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})?)@users\.noreply\.github\.com$", email)
+    return m.group(1) if m else None
+
+
 # Published ANE peak throughput (TOPS, int8) by chip family. Left None where
 # Apple has not published a figure - do NOT fabricate; a None is a fillable gap,
 # a wrong number silently corrupts every "% of peak" downstream.
