@@ -1405,3 +1405,63 @@ def test_attention_matches_onnxruntime():
       ref = np.asarray(_attn_ort(m, {"Q": Q, "K": K, "V": V})).astype(np.float32).ravel()
       cos = _cos(got, ref)
       assert cos > 0.99, f"Attention H={H} S={S} D={D} {attrs} ANE vs onnxruntime cosine={cos}"
+# ── negative axis attributes (ONNX allows them everywhere) ──
+
+def _neg_axis_pair(mk, feeds, neg, pos):
+  """Build the same graph with a negative axis and its positive equivalent; return both outputs."""
+  outs = []
+  for ax in (neg, pos):
+    net = af.load_onnx(mk(ax))
+    outs.append(np.asarray(net(*[v.astype(np.float16) for v in feeds.values()]), np.float32))
+  return outs
+
+@requires_ane
+def test_negative_axis_matches_positive_equivalent():
+  """A negative `axis`/`axes` attribute must build the same graph as its positive equivalent.
+
+  Normalization lives in the graph layer (`Tensor.softmax`, `af.concat`, `Tensor.squeeze`, ...
+  all do `axis % rank`), so the ONNX handlers can pass the raw attribute through. This pins
+  that: it fails if a handler ever starts consuming the axis before normalizing, or if a graph
+  op drops its `% rank`.
+  """
+  rng = np.random.default_rng(0)
+  sh = [2, 3, 4, 5]
+  x = rng.standard_normal(sh).astype(np.float32)
+  i64 = lambda v, n: onnx.numpy_helper.from_array(np.asarray(v, np.int64), n)
+  cases = [
+    ("Softmax", lambda ax: _model([helper.make_node("Softmax", ["x"], ["y"], axis=ax)],
+                                  [_vi("x", sh)], [_vi("y", sh)]), {"x": x}, -2, 2),
+    ("LogSoftmax", lambda ax: _model([helper.make_node("LogSoftmax", ["x"], ["y"], axis=ax)],
+                                     [_vi("x", sh)], [_vi("y", sh)]), {"x": x}, -2, 2),
+    ("LpNormalization", lambda ax: _model([helper.make_node("LpNormalization", ["x"], ["y"], axis=ax, p=2)],
+                                          [_vi("x", sh)], [_vi("y", sh)]), {"x": x}, -1, 3),
+    ("Flatten", lambda ax: _model([helper.make_node("Flatten", ["x"], ["y"], axis=ax)],
+                                  [_vi("x", sh)], [_vi("y", [24, 5])]), {"x": x}, -1, 3),
+    ("Concat", lambda ax: _model([helper.make_node("Concat", ["x", "x2"], ["y"], axis=ax)],
+                                 [_vi("x", sh), _vi("x2", sh)], [_vi("y", [2, 3, 4, 10])]),
+     {"x": x, "x2": x}, -1, 3),
+    ("Split", lambda ax: _model([helper.make_node("Split", ["x"], ["y1", "y2"], axis=ax, split=[2, 3])],
+                                [_vi("x", sh)], [_vi("y1", [2, 3, 4, 2]), _vi("y2", [2, 3, 4, 3])]),
+     {"x": x}, -1, 3),
+    ("CumSum", lambda ax: _model([helper.make_node("CumSum", ["x", "a"], ["y"])],
+                                 [_vi("x", sh)], [_vi("y", sh)], inits=[i64(ax, "a")]), {"x": x}, -1, 3),
+    ("Gather", lambda ax: _model([helper.make_node("Gather", ["x", "i"], ["y"], axis=ax)],
+                                 [_vi("x", sh)], [_vi("y", [2, 3, 4, 2])], inits=[i64([0, 2], "i")]),
+     {"x": x}, -1, 3),
+    ("ReduceSum", lambda ax: _model([helper.make_node("ReduceSum", ["x", "a"], ["y"], keepdims=0)],
+                                    [_vi("x", sh)], [_vi("y", [2, 3, 4])], inits=[i64([ax], "a")]),
+     {"x": x}, -1, 3),
+    ("ReduceMean", lambda ax: _model([helper.make_node("ReduceMean", ["x", "a"], ["y"], keepdims=1)],
+                                     [_vi("x", sh)], [_vi("y", [2, 3, 4, 1])], inits=[i64([ax], "a")]),
+     {"x": x}, -1, 3),
+    ("Squeeze", lambda ax: _model([helper.make_node("Squeeze", ["x", "a"], ["y"])],
+                                  [_vi("x", [2, 3, 4, 1])], [_vi("y", [2, 3, 4])], inits=[i64([ax], "a")]),
+     {"x": x[:, :, :, :1]}, -1, 3),
+    ("Unsqueeze", lambda ax: _model([helper.make_node("Unsqueeze", ["x", "a"], ["y"])],
+                                    [_vi("x", [2, 3, 4])], [_vi("y", [2, 3, 4, 1])], inits=[i64([ax], "a")]),
+     {"x": x[:, :, :, 0]}, -1, 3),
+  ]
+  for label, mk, feeds, neg, pos in cases:
+    a, b = _neg_axis_pair(mk, feeds, neg, pos)
+    assert a.shape == b.shape, f"{label}: axis {neg} shape {a.shape} != axis {pos} shape {b.shape}"
+    assert np.allclose(a, b, atol=1e-3), f"{label}: axis {neg} output differs from axis {pos}"
