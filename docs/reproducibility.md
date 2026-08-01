@@ -59,7 +59,7 @@ latency column.
 | Encoder cross-path serving | `python3 bench/encoder_serving_crosspath.py` | `bench/results/encoder_serving_crosspath.json` |
 | End-to-end LLM decode sweep | `python3 bench/decode_measurement.py` | `bench/results/decode_measurement_results.json` |
 | Per-silicon numeric-cliff rooflines (matmul / slice / reduce) | `PYTHONPATH=. python3 bench/numeric_cliffs.py` | `bench/results/numeric_cliffs_results.json` |
-| Cross-machine roofline suite (fingerprint + cliffs; `--perf` for the above) | `PYTHONPATH=. python3 bench/roofline_suite.py` | `bench/results/rooflines/roofline-*.json` -> `bench/results/ROOFLINES.md` |
+| Cross-machine roofline suite (fingerprint + cliffs; `--perf` fast headline, `--perf-full` full battery) | `PYTHONPATH=. python3 bench/roofline_suite.py` | `bench/results/rooflines/roofline-*.json` -> `bench/results/ROOFLINES.md` |
 | Route / capability gate (deterministic) | `python3 tests/test_routes.py` | `docs/capabilities.json` |
 | Correctness corpus (deterministic) | `python3 tests/run_corpus.py` | - (pass/fail gate) |
 
