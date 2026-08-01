@@ -63,6 +63,18 @@ jobs:
       - run: pip install -e ".[dev,models]" scipy
       - run: pyright aneforge   # gate at 0 errors (pyright pinned in the dev extra)
 
+  rooflines:
+    name: rooflines table in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # Pure-stdlib check (no ANE, no deps): a PR that adds a roofline submission
+      # under bench/results/rooflines/ must regenerate bench/results/ROOFLINES.md.
+      - run: python bench/aggregate_rooflines.py --check
+
   build:
     name: package (build + twine)
     runs-on: ubuntu-latest
