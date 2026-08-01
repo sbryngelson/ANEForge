@@ -99,7 +99,7 @@ def _perf_headline(report: dict) -> dict:
     device a sweep could not measure. The raw sweeps carry the same ANE peaks, so
     the headline still fills instead of showing three blanks."""
     h: dict = {"gemm_tflops": None, "bw_gbps": None, "ridge": None,
-               "perf_per_w": None, "decode_tok_s": None}
+               "perf_per_w": None, "decode_tok_s": None, "decode_blocked": False}
     ra = _perf_summary(report, "roofline_analysis.py")
     if ra:
         ceil = ra.get("ceilings") or {}
@@ -125,6 +125,10 @@ def _perf_headline(report: dict) -> dict:
                    if r.get("device") == "ANE" and r.get("batch") == 1), None)
         if b1:
             h["decode_tok_s"] = b1.get("tokens_per_s")
+            # decode ran but the ANE could not: e.g. the 32000-vocab lm_head exceeds an
+            # older family's matmul-dim limit. Distinguish that from "not measured".
+            if h["decode_tok_s"] is None and b1.get("status") not in (None, "ok"):
+                h["decode_blocked"] = True
     return h
 
 
@@ -213,6 +217,7 @@ def render(reports: list[dict]) -> str:
 
     # --- Performance rooflines (headline) ---
     perf_rows = []
+    any_decode_blocked = False
     for _, g in sorted(groups.items(), key=lambda kv: str(kv[1]["latest"]["machine"]["hardware"].get("chip"))):
         # use the most recent submission that carries perf data
         sub = next((r for r in reversed(g["submissions"]) if r.get("perf_rooflines")), None)
@@ -226,11 +231,17 @@ def render(reports: list[dict]) -> str:
 
         def _c(v, fmt):
             return format(v, fmt) if isinstance(v, (int, float)) else "-"
+        # decode: a number if it ran, "n/a" if the ANE could not run it (dim limit),
+        # "-" if simply not measured.
+        decode = _c(h["decode_tok_s"], ".0f")
+        if h["decode_tok_s"] is None and h.get("decode_blocked"):
+            decode = "n/a"
+            any_decode_blocked = True
         perf_rows.append(
             f"| {hw.get('chip','?')} | {hw.get('model_identifier','?')} "
             f"| {_c(h['gemm_tflops'], '.1f')} | {_c(h['bw_gbps'], '.2g')} "
             f"| {_c(h['ridge'], '.0f')} | {_c(h['perf_per_w'], '.0f')} "
-            f"| {_c(h['decode_tok_s'], '.0f')} | {power} |"
+            f"| {decode} | {power} |"
         )
 
     lines += ["## Performance rooflines (headline)", ""]
@@ -245,6 +256,13 @@ def render(reports: list[dict]) -> str:
             *perf_rows,
             "",
         ]
+        if any_decode_blocked:
+            lines += [
+                "_`n/a` decode = the decode benchmark's 32000-vocab lm_head matmul exceeds "
+                "that ANE family's 16384 max matmul dimension, so it cannot run untiled -- a "
+                "real per-generation limit (older families), not a missing measurement._",
+                "",
+            ]
     else:
         lines += ["_No `--perf` submissions yet. Run on AC power with "
                   "`python3 bench/roofline_suite.py --perf` (needs sudo for watts)._", ""]
