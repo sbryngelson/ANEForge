@@ -333,7 +333,10 @@ def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5
       if cur.shape != ref.shape: return float("inf"), None
       denom = float(np.abs(ref).max()) + 1e-6
       relerr = float(np.abs(cur - ref).max() / denom)
-      if relerr > tol: return float("inf"), None
+      # Fail closed: `not (relerr <= tol)` also rejects nan, which a `>` test lets through (every
+      # comparison with nan is False), and inf. A lossy variant whose output saturated or came back
+      # unusable must never be selected on the strength of an uncomputable error. See #153.
+      if not (relerr <= tol): return float("inf"), None
     best = float("inf")
     for _ in range(reps):
       t0 = time.perf_counter()
