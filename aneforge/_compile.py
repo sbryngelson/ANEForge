@@ -1093,6 +1093,25 @@ class CrossChipFP16Warning(UserWarning):
   """Emitted by `cross_compile_check` when a graph compiles for a different-family target but an op's fp16 value can diverge."""
 
 
+def _act_max_abs(out: Tensor):
+  """Static bound on the largest activation magnitude feeding `out`, or None if any leaf is unbounded.
+
+  Only baked constants carry a bound; a runtime `input` does not, so a graph with one returns None and
+  callers must treat that as unsafe (see `_optimize._exceeds_act_ceiling`)."""
+  seen, stack, worst = set(), [out], 0.0
+  while stack:
+    t = stack.pop()
+    if id(t) in seen: continue
+    seen.add(id(t))
+    if not t.srcs:                                   # leaf: const (bounded) or input (unbounded)
+      b = _node_max_abs(t)
+      if b is None: return None
+      worst = max(worst, b)
+      continue
+    stack.extend(t.srcs)
+  return worst
+
+
 def _node_max_abs(t: Tensor):
   """Static bound on a node's value magnitude: a baked const's max, else None."""
   v = t.attrs.get("value")
@@ -1247,8 +1266,9 @@ def _compile_opt(out: Tensor, int8: bool, opt):
   """opt=1/2/'max' dispatch (lazy-imported so aneforge imports without the optimizer)."""
   from . import _optimize
   if opt in (1,):
-    # cost-model pick: cheaper-predicted variant, no measurement.
-    cfgs = _optimize._variants(out)
+    # cost-model pick: cheaper-predicted variant, no measurement. Since nothing here validates the
+    # result, drop lossy variants whose activation-encoding ceiling this graph can exceed (#153).
+    cfgs = _optimize._variants(out, drop_unsafe=True)
     best = min(cfgs, key=lambda c: _optimize._estimate_variant(out, c))
     return _optimize.build_variant(out, best)
   if opt in (2, "max", "2"): return _optimize.tune(out)
