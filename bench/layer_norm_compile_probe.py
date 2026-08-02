@@ -39,9 +39,10 @@ SCAN_DS = (512, 768, 1024, 1536, 2048, 2560, 3072, 3584, 4096, 5120, 6144, 8192,
 OPS = ("layer_norm", "rms_norm", "softmax")
 GAMMAS = ("rand", "ones", "const")     # const = 1.1 (folds); ones = identity scale
 BETAS = ("rand", "zeros", "const")     # const = 0.1 (folds); zeros = no shift
-# the affine 2x2 (+ rms control) that separates the two bugs; each is (label, gamma, beta)
+# the affine 2x2 (+ rms control) that separates the two bugs; each is (label, gamma, beta).
+# rms_norm ignores beta, so its beta is a valid-but-unused placeholder ("zeros").
 AFFINE_CONFIGS = (("cc", "const", "const"), ("rz", "rand", "zeros"),
-                  ("or", "ones", "rand"), ("rr", "rand", "rand"), ("rms", "rand", "-"))
+                  ("or", "ones", "rand"), ("rr", "rand", "rand"), ("rms", "rand", "zeros"))
 
 
 def _attempt(R: int, D: int, op: str, seed: int, gamma: str, beta: str) -> str:
