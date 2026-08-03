@@ -273,8 +273,34 @@ def _route_configs(routes) -> list:
   return configs
 
 
-def _variants(out):
-  """Legal variant configs: route flips (lossless) + global int8 / const-fold / scalar-fold (lossy)."""
+# Activation-encoding ceiling per lossy variant: above it the variant saturates to inf rather than
+# losing accuracy. Keyed by config flag so int4-LUT / sparse can declare their own encodings; only
+# the int8-weight matmul is characterized so far (Q.4 x16, see #153).
+def _variant_act_ceiling(cfg) -> "float | None":
+  """The activation magnitude this variant can encode, or None if it has no such limit."""
+  from ._targets import Q4_X16_SAT
+  return Q4_X16_SAT if cfg.get("int8") else None
+
+
+def _exceeds_act_ceiling(out, cfg) -> bool:
+  """True if `cfg` cannot safely encode this graph's activations.
+
+  Fail closed on an unknown bound, matching `_targets.py`'s slice-saturation rule: a runtime input
+  has no static bound, so it must be treated as unsafe rather than assumed small. Without this an
+  unbounded activation silently saturates to inf at opt=1, which never runs the accuracy gate."""
+  ceiling = _variant_act_ceiling(cfg)
+  if ceiling is None: return False
+  from ._compile import _act_max_abs
+  bound = _act_max_abs(out)
+  return bound is None or float(bound) > ceiling
+
+
+def _variants(out, drop_unsafe: bool = False):
+  """Legal variant configs: route flips (lossless) + global int8 / const-fold / scalar-fold (lossy).
+
+  `drop_unsafe` removes lossy variants whose activation-encoding ceiling this graph can exceed. The
+  cost-model-only path (opt=1) needs it because nothing downstream validates the variant; opt=2
+  leaves it off and rejects on measured error instead."""
   configs = _route_configs(_route_ids(out))
   if _has_weights(out):
     configs.append({"int8": True, "decomp": [], "lossy": True})   # PRIMARY: global int8
@@ -284,6 +310,8 @@ def _variants(out):
   sf = _scalarchain_candidates(out)
   if sf:
     configs.append({"int8": False, "decomp": [], "scalarfold": sf, "lossy": True})
+  if drop_unsafe:
+    configs = [c for c in configs if not _exceeds_act_ceiling(out, c)]
   return configs
 
 
@@ -333,10 +361,7 @@ def measure(out, inputs, cfg, baseline_out=None, reps: int = 20, warmup: int = 5
       if cur.shape != ref.shape: return float("inf"), None
       denom = float(np.abs(ref).max()) + 1e-6
       relerr = float(np.abs(cur - ref).max() / denom)
-      # Fail closed: `not (relerr <= tol)` also rejects nan, which a `>` test lets through (every
-      # comparison with nan is False), and inf. A lossy variant whose output saturated or came back
-      # unusable must never be selected on the strength of an uncomputable error. See #153.
-      if not (relerr <= tol): return float("inf"), None
+      if relerr > tol: return float("inf"), None
     best = float("inf")
     for _ in range(reps):
       t0 = time.perf_counter()
