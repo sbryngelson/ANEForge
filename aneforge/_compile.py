@@ -1094,7 +1094,7 @@ class CrossChipFP16Warning(UserWarning):
 
 
 def _node_max_abs(t: Tensor):
-  """Static bound on a node's value magnitude: a baked const's max, else None."""
+  """Static bound on a node's value magnitude: a baked const's max, a declared input bound, else None."""
   v = t.attrs.get("value")
   if v is not None:
     try:
@@ -1102,7 +1102,112 @@ def _node_max_abs(t: Tensor):
       return float(_np.abs(_np.asarray(v)).max())
     except Exception:
       return None
-  return None
+  return t.attrs.get("max_abs")            # af.input(..., max_abs=) declaration, or None
+
+
+# Ops whose output magnitude is bounded regardless of input: a normalization or a saturating
+# activation. Value is the bound on |out|. Keeps propagation useful past a norm, which is where most
+# real activations become small.
+_BOUNDED_OUT = {
+  "sigmoid": 1.0, "tanh": 1.0, "softmax": 1.0, "softsign": 1.0, "erf": 1.0, "relu6": 6.0,
+  "sigmoid_hard": 1.0, "l2_norm": 1.0,
+}
+# Elementwise unary ops that cannot increase |value|; the input bound carries through.
+_NONEXPANDING = frozenset({"relu", "abs", "floor", "ceil", "round", "sign", "reverse", "transpose",
+                           "reshape", "squeeze", "expand_dims", "flatten2d", "slice_by_size", "tile",
+                           "identity", "clamped_relu", "thresholded_relu", "threshold"})
+
+
+def _propagate_max_abs(t: Tensor, seen: "dict | None" = None):
+  """Conservative upper bound on `|t|`, or None when it cannot be bounded.
+
+  Over-estimating is always safe for the caller (a loose bound declines a lossy variant more often,
+  it never wrongly keeps one), so anything not modelled returns None rather than a guess. Covers the
+  ops that actually feed matmuls; see #155."""
+  import numpy as _np
+  if seen is None: seen = {}
+  key = id(t)
+  if key in seen: return seen[key]
+  seen[key] = None                                   # cycles cannot happen, but stay safe
+  b = _bound_of(t, seen, _np)
+  seen[key] = b
+  return b
+
+
+def _bound_of(t: Tensor, seen: dict, _np):
+  op = t.op
+  if not t.srcs:                                     # leaf: const value or declared input bound
+    return _node_max_abs(t)
+  if op in _BOUNDED_OUT:
+    return _BOUNDED_OUT[op]
+  if op == "clip":
+    lo, hi = t.attrs.get("lo"), t.attrs.get("hi")
+    if lo is None or hi is None: return None
+    return max(abs(float(lo)), abs(float(hi)))
+  if op in ("layer_norm", "rms_norm", "group_norm", "instance_norm"):
+    # normalized to ~unit scale, then scaled by gamma and shifted by beta. The normalized part is
+    # data-dependent (fp16 keeps it O(1) but not provably <=1), so only bound it when the affine is
+    # baked: |out| <= max|gamma| * NORM_SIGMA + max|beta|.
+    g, b = t.attrs.get("gamma"), t.attrs.get("beta")
+    if g is None: return None
+    gmax = float(_np.abs(_np.asarray(g)).max())
+    bmax = float(_np.abs(_np.asarray(b)).max()) if b is not None else 0.0
+    return gmax * _NORM_SIGMA + bmax
+  srcs = [_propagate_max_abs(s, seen) for s in t.srcs]
+  if any(s is None for s in srcs) and op not in ("matmul", "linear"):
+    return None
+  if op in _NONEXPANDING:
+    return srcs[0]
+  if op in ("add", "sub"):
+    return srcs[0] + srcs[1] if len(srcs) == 2 else None
+  if op == "adds":
+    return srcs[0] + abs(float(t.attrs.get("k", 0.0)))
+  if op in ("mul", "minimum"):                       # |x*y| <= |x||y|; min is bounded by either
+    return srcs[0] * srcs[1] if len(srcs) == 2 else None
+  if op == "muls":
+    return srcs[0] * abs(float(t.attrs.get("k", 1.0)))
+  if op == "maximum":
+    return max(srcs) if len(srcs) == 2 else None
+  if op in ("matmul", "linear"):                     # |x @ W| <= max|x| * sum_k max_n |W[k,n]|
+    if srcs[0] is None: return None
+    w = t.attrs.get("wt")
+    if w is None: return None
+    aw = _np.abs(_np.asarray(w, _np.float32))
+    # wt is stored [N,K] for matmul (consumed transposed) and [out,in] for linear: both reduce over
+    # the last axis to give, per output, the sum of |weight| along the contraction.
+    return srcs[0] * float(aw.sum(axis=-1).max())
+  if op == "bmm":                                    # activation x activation: K is the contraction
+    if any(s is None for s in srcs): return None
+    K = t.srcs[0].shape[-1]
+    return srcs[0] * srcs[1] * float(K)
+  return None                                        # not modelled -> unbounded, fail closed
+
+
+# Normalized activations are O(1) but not provably bounded, since fp16 division by a small variance
+# can overshoot. 8 sigma is a deliberately loose cap: a real normalized value past it would be an
+# outlier far outside anything a trained network produces.
+_NORM_SIGMA = 8.0
+
+
+def _act_max_abs(out: Tensor, ops=("matmul", "linear", "bmm", "conv")):
+  """Bound on the largest activation feeding any `ops` node, or None if any of them is unbounded.
+
+  This is the quantity a weight-quantizing variant needs: the activation it has to encode, not the
+  graph's output. A node whose activation input cannot be bounded makes the whole answer None, so the
+  caller stays fail-closed."""
+  seen, stack, visited, worst = {}, [out], set(), 0.0
+  found = False
+  while stack:
+    t = stack.pop()
+    if id(t) in visited: continue
+    visited.add(id(t))
+    if t.op in ops and t.srcs:
+      found = True
+      b = _propagate_max_abs(t.srcs[0], seen)        # srcs[0] is the activation; weights are attrs
+      if b is None: return None
+      worst = max(worst, b)
+    stack.extend(t.srcs)
+  return worst if found else 0.0
 
 
 def _fp16_risk_kind(t: Tensor) -> str:
@@ -1247,8 +1352,11 @@ def _compile_opt(out: Tensor, int8: bool, opt):
   """opt=1/2/'max' dispatch (lazy-imported so aneforge imports without the optimizer)."""
   from . import _optimize
   if opt in (1,):
-    # cost-model pick: cheaper-predicted variant, no measurement.
-    cfgs = _optimize._variants(out)
+    # cost-model pick: cheaper-predicted variant, no measurement. Since nothing here validates the
+    # result, drop lossy variants whose activation-encoding ceiling this graph can exceed (#153); the
+    # bound comes from declared input ranges and propagation (#155), so a provably-safe graph keeps
+    # the fast path.
+    cfgs = _optimize._variants(out, drop_unsafe=True)
     best = min(cfgs, key=lambda c: _optimize._estimate_variant(out, c))
     return _optimize.build_variant(out, best)
   if opt in (2, "max", "2"): return _optimize.tune(out)

@@ -379,12 +379,22 @@ class Tensor:
 _input_counter = [0]
 
 
-def input(shape: Sequence[int], dtype: str = "fp16") -> Tensor:
-  """A graph input placeholder (fed to the Model in creation order). `dtype`: "fp16" or "uint8" (raw bytes, dequantised in-graph; see `af.image_input`)."""
+def input(shape: Sequence[int], dtype: str = "fp16", max_abs: "float | None" = None) -> Tensor:
+  """A graph input placeholder (fed to the Model in creation order). `dtype`: "fp16" or "uint8" (raw bytes, dequantised in-graph; see `af.image_input`).
+
+  `max_abs` declares a bound on `|value|` at runtime, which lets the optimizer keep a lossy variant
+  whose encoding range provably covers this graph (see `af.compile(opt=1)` and #155). It is a promise,
+  not a clamp: nothing enforces it at dispatch, and feeding larger values makes the bound wrong. Left
+  undeclared the bound is unknown, and the optimizer stays fail-closed."""
   if dtype not in ("fp16", "uint8"):
     raise ValueError(f"input: dtype must be 'fp16' or 'uint8'; got {dtype!r}")
   t = Tensor(tuple(shape), "input")
   t.attrs["idx"] = _input_counter[0]
+  if max_abs is not None:
+    max_abs = float(max_abs)
+    if not (max_abs >= 0.0):          # rejects negatives and nan
+      raise ValueError(f"input: max_abs must be a non-negative bound on |value|; got {max_abs!r}")
+    t.attrs["max_abs"] = max_abs
   if dtype != "fp16":
     t.attrs["dtype"] = dtype
   _input_counter[0] += 1

@@ -10,7 +10,7 @@ from functools import lru_cache
 __all__ = ["Family", "MIN_FAMILY", "supports_mil", "family_of_arch", "arch_for_family",
            "op_status", "has_texture_engine", "limit", "OpReport", "Preflight",
            "preflight", "detect_family", "predict_fp16_divergence", "FP16_SLICE_SAT",
-           "native_streams"]
+           "Q4_X16_SAT", "native_streams"]
 
 
 class Family(IntEnum):
@@ -179,8 +179,14 @@ def limit(name: str, family: int) -> int:
 # Cross-chip fp16 VALUE divergence comes only from HAL-data-selected codegen routes that
 # reorder/saturate fp16 ops, predictable from a few per-family HAL fields.
 
-# fp16 max / 16 = 65504/16: the slice-x16 Q.4 crop-DMA saturation threshold (finite->inf).
-FP16_SLICE_SAT = 4094.0
+# fp16 max / 16 = 65504/16: the Q.4 x16 activation encoding's range (finite->inf past it). Measured
+# identical on M1 Max / M2 Pro / M5 Pro, and invariant to weight scale, K, N and seed, so it is the
+# encoding's fixed range rather than an accumulation cliff. Shared by the slice-x16 crop-DMA path and
+# the int8-weight matmul variant, which routes activations through the same encoding (see #153).
+# The flip is between the adjacent fp16 representables 4094 and 4096 (fp16 spacing is 2 there, so
+# 4095 rounds to 4096), which makes `|act| <= Q4_X16_SAT` an exact gate with no boundary gap.
+Q4_X16_SAT = 4094.0
+FP16_SLICE_SAT = Q4_X16_SAT        # back-compat alias: the slice path's name for the same encoding
 
 _HAL_FIELDS = {
   # 0x494 reduce->square fusion: silicon-measured no-op; kept uniform 0 so the predictor never flags it.
