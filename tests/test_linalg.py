@@ -348,3 +348,44 @@ def test_solve_rejects():
   with pytest.raises(ValueError): L.solve(A, np.zeros(3, f16))                       # b rows != n
   with pytest.raises(np.linalg.LinAlgError):
     L.solve(f16([[1.0, 2.0], [2.0, 4.0]]), f16([1.0, 2.0]))                          # singular
+
+
+@pytest.mark.parametrize("n", [4, 6, 8])
+def test_expm_matches_scipy(n):
+  scipy_linalg = pytest.importorskip("scipy.linalg")
+  r = np.random.default_rng(40 + n)
+  Q = np.linalg.qr(r.standard_normal((n, n)))[0]
+  A = f16((Q * np.geomspace(0.3, 0.8, n)) @ Q.T)        # modest norm, well conditioned
+  got = L.expm(A)
+  ref = scipy_linalg.expm(A.astype(np.float64))
+  assert relerr(got, ref) <= 5e-3, f"expm n={n}: relerr {relerr(got, ref)}"
+
+
+@pytest.mark.parametrize("scale", [2.0, 5.0])
+def test_expm_scaling_path(scale):
+  # norm > 1/2 forces s >= 1, i.e. the squaring loop actually runs; the Taylor sum alone would
+  # diverge here, so this covers the scaling half of scaling-and-squaring
+  scipy_linalg = pytest.importorskip("scipy.linalg")
+  r = np.random.default_rng(43)
+  Q = np.linalg.qr(r.standard_normal((6, 6)))[0]
+  A = f16(((Q * np.geomspace(0.2, 1.0, 6)) @ Q.T) * scale)
+  assert np.abs(A.astype(np.float64)).sum(axis=0).max() > 0.5, "this case must need scaling"
+  ref = scipy_linalg.expm(A.astype(np.float64))
+  assert relerr(L.expm(A), ref) <= 1e-2
+
+
+def test_expm_zero_is_identity():
+  assert np.abs(L.expm(np.zeros((5, 5), f16)) - np.eye(5)) .max() <= 1e-6
+
+
+def test_expm_diagonal_is_elementwise_exp():
+  # a diagonal argument has a closed form, so this pins the Taylor sum without a reference solver
+  d = np.array([0.1, 0.2, 0.3, 0.4])
+  got = L.expm(f16(np.diag(d)))
+  assert np.abs(got - np.diag(np.exp(d))).max() <= 5e-3
+
+
+def test_expm_rejects():
+  A = f16(np.random.default_rng(44).standard_normal((4, 4)) * 0.1)
+  with pytest.raises(ValueError): L.expm(np.zeros((2, 3), f16))     # not square
+  with pytest.raises(ValueError): L.expm(A, order=0)                # needs at least one term

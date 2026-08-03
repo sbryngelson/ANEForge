@@ -531,7 +531,7 @@ def eigvals(A, iters: int = 60):
 __all__ = [
   "conjugate_gradient", "jacobi", "gauss_seidel", "iterative_refine",
   "least_squares", "lsqr", "gmres",
-  "qr", "cholesky", "lu", "lu_pivoted", "solve", "solve_triangular",
+  "qr", "cholesky", "lu", "lu_pivoted", "solve", "solve_triangular", "expm",
   "eigh", "eigvals", "generalized_eigh", "dominant_eig",
   "svd", "dominant_svd", "svdvals_topk", "randomized_svd", "pca",
 ]
@@ -684,6 +684,38 @@ def norm(A, order="fro"):
   v = float(np.ravel(np.asarray(net(A16), np.float64))[0])
   net.release()
   return v
+
+
+def expm(A, order: int = 8):
+  """exp(A) by scaling and squaring: exp(A) = exp(A / 2^s)^(2^s), with the inner exponential a
+  Taylor sum of `order` terms.
+
+  The host picks `s` from `norm(A, 1)` so the scaled matrix has norm <= 1/2, which is where a
+  low-order Taylor sum is accurate; everything after that is on-engine gemms, O(order + s) of them.
+
+  fp16 squaring compounds error the same way `matrix_power` does, so this is for modest norms on
+  well-conditioned matrices. Oracle is `scipy.linalg.expm`.
+  """
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2 or A16.shape[0] != A16.shape[1]:
+    raise ValueError(f"linalg.expm: expected a square matrix; got shape {A16.shape}")
+  if order < 1:
+    raise ValueError(f"linalg.expm: order must be >= 1; got {order}")
+  n = A16.shape[0]
+  nrm = float(np.abs(np.asarray(A16, np.float64)).sum(axis=0).max())      # 1-norm, max abs col sum
+  s = max(0, int(np.ceil(np.log2(nrm / 0.5)))) if nrm > 0.5 else 0
+  As = (np.asarray(A16, np.float64) / (2.0 ** s)).astype(f16)
+
+  # Taylor: I + As + As^2/2! + ... The term recurrence keeps one gemm per order rather than
+  # recomputing powers, and 1/k! folds into the host-side scalar so no extra dispatch.
+  acc = np.eye(n, dtype=np.float64)
+  term = np.eye(n, dtype=np.float64)
+  for k in range(1, order + 1):
+    term = np.asarray(_ane_gemm(term.astype(f16), As), np.float64) / k
+    acc = acc + term
+  for _ in range(s):                                                     # undo the scaling
+    acc = np.asarray(_ane_gemm(acc.astype(f16), acc.astype(f16)), np.float64)
+  return acc.astype(np.float32)
 
 
 def matrix_power(A, n: int):
