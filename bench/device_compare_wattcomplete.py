@@ -578,7 +578,7 @@ def wl_vit_b16():
     if not HAVE_TV:
         note(wl, "skipped - torchvision unavailable.")
         return
-    # i very strongly do believe this is the right way to do it?
+    # graceful skip: examples/vit_demo.py is not always present (optional / gitignored); see #141
     try:
         sys.path.insert(0, str(REPO / "examples"))
         import vit_demo as vd
