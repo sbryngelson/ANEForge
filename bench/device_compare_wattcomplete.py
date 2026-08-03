@@ -578,8 +578,13 @@ def wl_vit_b16():
     if not HAVE_TV:
         note(wl, "skipped - torchvision unavailable.")
         return
-    sys.path.insert(0, str(REPO / "examples"))
-    import vit_demo as vd
+    # graceful skip: examples/vit_demo.py is not always present (optional / gitignored); see #141
+    try:
+        sys.path.insert(0, str(REPO / "examples"))
+        import vit_demo as vd
+    except ImportError:
+        note(wl, "skipped - examples/vit_demo.py unavailable.")
+        return
     rng = np.random.default_rng(0)
     img = rng.standard_normal((1, 3, vd.IMG, vd.IMG)).astype(np.float32)
     m, sd = vd.load_vit_weights()
