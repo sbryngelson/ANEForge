@@ -76,6 +76,7 @@ nav:
       - FAQ: faq.md
   - Use the engine well:
       - Cross-chip deployment: cross-chip.md
+      - Numeric correctness cliffs: numeric-cliffs.md
       - Dispatch backends: dispatch.md
       - e5rt dispatch reference: e5rt-dispatch-reference.md
   - Know what works:
