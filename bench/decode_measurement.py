@@ -126,6 +126,23 @@ def ref_decode(cfg: Cfg, W, x, dt=np.float64):
     return h @ W["Wvocab"].astype(dt).T
 
 
+# Vocab head is tiled along the output (vocab) axis so no single matmul output dim exceeds this.
+# A 32000-vocab head exceeds the 16384 max matmul dimension on the A13-A15 families (M1/M2), where
+# an untiled head raises NotImplementedError; only A16+ (M5) fits it untiled. Tiling the SAME way on
+# every chip (fixed size, not gated on the family cap) keeps the decode number comparable across
+# generations. 16384 == the smallest supported cap, so a chunk of exactly this size is allowed.
+LMHEAD_TILE = 16384
+
+
+def _lm_head(h, Wvocab_f16):
+    """logits = h @ Wvocab.T -> [B, vocab], tiled along vocab so each matmul output dim <= LMHEAD_TILE."""
+    V = Wvocab_f16.shape[0]
+    if V <= LMHEAD_TILE:
+        return h.linear(Wvocab_f16)
+    parts = [h.linear(Wvocab_f16[i:i + LMHEAD_TILE]) for i in range(0, V, LMHEAD_TILE)]
+    return af.concat(parts, axis=1)                                # [B, sum(chunks)] = [B, vocab]
+
+
 # ANE graph (aneforge) - full per-token stack, batch B
 def build_ane(cfg: Cfg, W, B, int8=False):
     """B-stream per-token decoder forward as one aneforge graph; int8=True streams per-channel int8 weights, KV cache fed as graph inputs. Returns (Model, cache-arrays)."""
@@ -164,7 +181,7 @@ def build_ane(cfg: Cfg, W, B, int8=False):
         f = (g.silu() * u).linear(w["Wd"].astype(f16))
         h = h + f
     h = h.rms_norm(W["lnf"].astype(f16))
-    logits = h.linear(W["Wvocab"].astype(f16))
+    logits = _lm_head(h, W["Wvocab"].astype(f16))
     net = af.compile(logits, int8=int8)
     return net, [arr for (_, arr) in cache_inputs]
 
