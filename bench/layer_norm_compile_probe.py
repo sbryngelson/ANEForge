@@ -29,9 +29,10 @@ and seed are reported so cells are comparable across generations (per the #115 s
 from __future__ import annotations
 
 import argparse
-import os
-import subprocess
 import sys
+
+from bench._probe import chip as _chip
+from bench._probe import probe_cell, probe_isolated, short as _short
 
 RS = (64, 128, 256, 512)
 DS = (1024, 2048, 3072, 4096)
@@ -50,59 +51,34 @@ def _attempt(R: int, D: int, op: str, seed: int, gamma: str, beta: str) -> str:
 
   gamma/beta are drawn single-stream (gamma then beta) from `seed` so beta is identical regardless of
   the gamma choice, matching how a real learned affine and the original probe are constructed."""
-  os.environ["ANEFORGE_DISABLE_COMPILE_BREAKER"] = "1"   # one compile per process: nothing to pace
-  os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-  import warnings
-
   import numpy as np
-  warnings.filterwarnings("ignore")
-  import aneforge as af
 
+  # One stream for the whole cell, drawn in the original order (gamma, beta, input) so a given seed
+  # keeps producing byte-identical tensors. Materialized up front rather than re-derived per callable,
+  # which would make the two share a stream position by accident.
   rng = np.random.default_rng(seed)
   g_rand = (rng.standard_normal(D).astype(np.float32) * 0.1 + 1.0).astype(np.float16)
   b_rand = (rng.standard_normal(D).astype(np.float32) * 0.1).astype(np.float16)
-  g = {"rand": g_rand, "ones": np.ones(D, np.float16), "const": np.full(D, 1.1, np.float16)}[gamma]
-  x = af.input((R, D))
-  if op == "rms_norm":
-    graph = x.rms_norm(g)
-  elif op == "softmax":
-    graph = x.softmax(-1)
-  else:
+  x_in = rng.standard_normal((R, D)).astype(np.float16)
+
+  def build():
+    import aneforge as af
+    g = {"rand": g_rand, "ones": np.ones(D, np.float16), "const": np.full(D, 1.1, np.float16)}[gamma]
+    x = af.input((R, D))
+    if op == "rms_norm":
+      return x.rms_norm(g)
+    if op == "softmax":
+      return x.softmax(-1)
     b = {"rand": b_rand, "zeros": np.zeros(D, np.float16), "const": np.full(D, 0.1, np.float16)}[beta]
-    graph = x.layer_norm(g, b)
-  try:
-    net = af.compile(graph)
-  except Exception as e:                                # noqa: BLE001 - any failure is the datum
-    return f"C-FAIL {type(e).__name__}"
-  try:
-    out = np.asarray(net(rng.standard_normal((R, D)).astype(np.float16)), np.float32)
-    return "OK" if np.isfinite(out).all() else "D-FAIL nonfinite"
-  except Exception as e:                                # noqa: BLE001
-    return f"D-FAIL {type(e).__name__}"
+    return x.layer_norm(g, b)
+
+  return probe_cell(build, lambda: x_in)
 
 
 def _isolated(R: int, D: int, op: str, seed: int, gamma: str, beta: str) -> str:
-  """Run _attempt in a fresh interpreter so no compiler or breaker state carries over."""
-  env = dict(os.environ, PYTHONPATH=os.environ.get("PYTHONPATH", "."))
-  p = subprocess.run([sys.executable, __file__, "--worker", "--op", op, "--seed", str(seed),
-                      "--gamma", gamma, "--beta", beta, "--one", str(R), str(D)],
-                     capture_output=True, text=True, env=env)
-  for line in reversed(p.stdout.splitlines()):          # stderr carries E5RT noise; parse stdout
-    if line.startswith(("OK", "C-FAIL", "D-FAIL")):
-      return line.strip()
-  return "C-FAIL nolines"
-
-
-def _short(res: str) -> str:
-  return res.split()[0]
-
-
-def _chip() -> str:
-  try:
-    from bench import _machine
-    return _machine.fingerprint()["hardware"]["chip"]
-  except Exception:                                     # noqa: BLE001 - the probe works without it
-    return "unknown chip"
+  """One _attempt in a fresh interpreter so no compiler or breaker state carries over."""
+  return probe_isolated(["--worker", "--op", op, "--seed", str(seed), "--gamma", gamma,
+                         "--beta", beta, "--one", str(R), str(D)], __file__)
 
 
 def main() -> int:
