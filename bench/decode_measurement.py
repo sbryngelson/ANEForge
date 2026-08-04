@@ -28,6 +28,7 @@ relerr = dc.relerr
 
 if HAVE_ANE:
     import aneforge as af
+    from aneforge._compile import compile_multi   # not re-exported; tests use it the same way
 if HAVE_MLX:
     import mlx.core as mx
 
@@ -135,12 +136,18 @@ LMHEAD_TILE = 16384
 
 
 def _lm_head(h, Wvocab_f16):
-    """logits = h @ Wvocab.T -> [B, vocab], tiled along vocab so each matmul output dim <= LMHEAD_TILE."""
+    """logits = h @ Wvocab.T, tiled along vocab so each matmul output dim <= LMHEAD_TILE.
+
+    Returns a LIST of tiles, never a concatenated [B, vocab] tensor: the target gate rejects any
+    tensor over the family cap, not just matmul outputs, so an in-graph concat of the tiles is
+    itself oversize on family 3 (a 32000 vocab concat is [B, 32000] > 16384) and the tiling buys
+    nothing. Keeping the tiles as separate output ports is what actually fits, and since logits is
+    the terminal node nothing downstream needs them fused on-engine.
+    """
     V = Wvocab_f16.shape[0]
     if V <= LMHEAD_TILE:
-        return h.linear(Wvocab_f16)
-    parts = [h.linear(Wvocab_f16[i:i + LMHEAD_TILE]) for i in range(0, V, LMHEAD_TILE)]
-    return af.concat(parts, axis=1)                                # [B, sum(chunks)] = [B, vocab]
+        return [h.linear(Wvocab_f16)]
+    return [h.linear(Wvocab_f16[i:i + LMHEAD_TILE]) for i in range(0, V, LMHEAD_TILE)]
 
 
 # ANE graph (aneforge) - full per-token stack, batch B
@@ -181,9 +188,24 @@ def build_ane(cfg: Cfg, W, B, int8=False):
         f = (g.silu() * u).linear(w["Wd"].astype(f16))
         h = h + f
     h = h.rms_norm(W["lnf"].astype(f16))
-    logits = _lm_head(h, W["Wvocab"].astype(f16))
-    net = af.compile(logits, int8=int8)
+    tiles = _lm_head(h, W["Wvocab"].astype(f16))
+    # One output port per vocab tile (see _lm_head); a single-tile head still goes through the
+    # plain compile path so the common case keeps its existing single-output program.
+    net = af.compile(tiles[0], int8=int8) if len(tiles) == 1 else compile_multi(tiles, int8=int8)
     return net, [arr for (_, arr) in cache_inputs]
+
+
+def _logits_from(net, out):
+    """Stitch a tiled lm_head result into [B, vocab] for the accuracy check.
+
+    A MultiModel returns a dict keyed by port name, so reassemble by walking `net.output_ports`,
+    which is the tile order `_lm_head` built. Host-side and outside the timed region: the tiles are
+    what the ANE produced, and concatenating them here does not change the measured latency.
+    """
+    if not isinstance(out, dict):
+        return np.asarray(out, np.float32)
+    return np.concatenate(
+        [np.asarray(out[name], np.float32) for _, name in net.output_ports], axis=1)
 
 
 # MLX graph (GPU)
@@ -378,7 +400,7 @@ def main():
                     sta["o"] = net(xf, *caches)
                 r = measure_device("ANE", ane_run, B=B, cfg=cfg, ref=ref, window=window,
                                    reps=reps, warmup=warmup,
-                                   get_out=lambda: sta["o"])
+                                   get_out=lambda: _logits_from(net, sta["o"]))
             except Exception as e:
                 import traceback; traceback.print_exc()
                 r = {"device": "ANE", "batch": B, "status": f"{type(e).__name__}: {e}"}
@@ -395,7 +417,7 @@ def main():
                     sta8["o"] = net8(xf, *caches8)
                 r = measure_device("ANE8", ane8_run, B=B, cfg=cfg, ref=ref, window=window,
                                    reps=reps, warmup=warmup,
-                                   get_out=lambda: sta8["o"])
+                                   get_out=lambda: _logits_from(net8, sta8["o"]))
             except Exception as e:
                 import traceback; traceback.print_exc()
                 r = {"device": "ANE8", "batch": B, "status": f"{type(e).__name__}: {e}"}
