@@ -251,6 +251,11 @@ def render(reports: list[dict]) -> str:
             "and per-rail watts live in each machine's JSON under `perf_rooflines`. "
             "Perf depends on power/thermals, so the state is shown per row.",
             "",
+            "**Peak fp16 GEMM (TF/s)** is the headline compute number -- measured directly on every "
+            "machine and the most robust cross-chip comparison. Bandwidth/ridge come from the streaming "
+            "sweep and are more dispatch-overhead-sensitive on smaller/older parts, so read them as "
+            "indicative. Decode is migrating to a tiled vocab head (#181); see the note under the table.",
+            "",
             "| Chip | Model | Peak fp16 GEMM (TF/s) | Bandwidth (GB/s) | Ridge (FLOP/byte) | Peak perf/W (GF/s/W) | Decode @b1 (tok/s) | Power |",
             "| --- | --- | --- | --- | --- | --- | --- | --- |",
             *perf_rows,
@@ -258,9 +263,10 @@ def render(reports: list[dict]) -> str:
         ]
         if any_decode_blocked:
             lines += [
-                "_`n/a` decode = the decode benchmark's 32000-vocab lm_head matmul exceeds "
-                "that ANE family's 16384 max matmul dimension, so it cannot run untiled -- a "
-                "real per-generation limit (older families), not a missing measurement._",
+                "_`n/a` decode = a stale datapoint from before the tiled vocab head (#181). The old "
+                "untiled 32000-vocab lm_head exceeds the 16384 max matmul dimension on the A13-A15 "
+                "families, so only A16+ (M5) reported. The tiled head fixes this; the older machines "
+                "re-run to populate it. Until then, use **Peak fp16 GEMM (TF/s)** as the headline._",
                 "",
             ]
     else:
