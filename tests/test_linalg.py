@@ -287,3 +287,64 @@ def test_matrix_power_identity_and_rejects():
   assert relerr(L.matrix_power(A, 1), A) == 0.0                              # n=1 -> A itself
   with pytest.raises(ValueError): L.matrix_power(np.zeros((2, 3), f16), 2)   # not square
   with pytest.raises(ValueError): L.matrix_power(A, -1)                      # needs an inverse
+
+
+@pytest.mark.parametrize("lower", [True, False])
+def test_solve_triangular_matrix_rhs(lower):
+  # the m columns solve in one fused graph; each must match the single-vector answer exactly, since
+  # the substitution is the same recurrence widened from a [1,1] row slice to [1,m]
+  r = np.random.default_rng(21); n, m = 7, 3
+  T = np.tril(r.standard_normal((n, n))) + np.eye(n) * 4.0
+  if not lower: T = T.T
+  X = r.standard_normal((n, m)); B = T @ X
+  got = L.solve_triangular(f16(T), f16(B), lower=lower)
+  assert got.shape == (n, m), got.shape
+  assert relerr(got, X) <= 5e-3, f"matrix rhs: relerr {relerr(got, X)}"
+  for j in range(m):                                    # column j == solving that column alone
+    solo = L.solve_triangular(f16(T), f16(B[:, j]), lower=lower)
+    assert relerr(got[:, j], solo) <= 5e-3, f"column {j} disagrees with the vector solve"
+
+
+def test_solve_triangular_vector_shape_unchanged():
+  # a 1-D b must still come back 1-D, not [n, 1]
+  r = np.random.default_rng(22); n = 5
+  T = np.tril(r.standard_normal((n, n))) + np.eye(n) * 4.0
+  assert L.solve_triangular(f16(T), f16(r.standard_normal(n))).shape == (n,)
+
+
+@pytest.mark.parametrize("n", [4, 6, 8])
+def test_solve_matches_numpy(n):
+  # general (non-symmetric) A: this is the path conjugate_gradient cannot take
+  r = np.random.default_rng(30 + n)
+  A = f16(r.standard_normal((n, n)) + np.eye(n) * n)
+  b = f16(r.standard_normal(n))
+  got = L.solve(A, b)
+  ref = np.linalg.solve(A.astype(np.float64), b.astype(np.float64))
+  assert relerr(got, ref) <= 5e-3, f"solve n={n}: relerr {relerr(got, ref)}"
+
+
+def test_solve_matrix_rhs():
+  r = np.random.default_rng(31); n, m = 6, 3
+  A = f16(r.standard_normal((n, n)) + np.eye(n) * n)
+  B = f16(r.standard_normal((n, m)))
+  got = L.solve(A, B)
+  ref = np.linalg.solve(A.astype(np.float64), B.astype(np.float64))
+  assert got.shape == (n, m) and relerr(got, ref) <= 5e-3, f"solve matrix rhs: {got.shape}"
+
+
+def test_solve_residual_is_small():
+  # the property that matters to a caller: A x ~ b, checked without a reference solver
+  r = np.random.default_rng(32); n = 8
+  A = f16(r.standard_normal((n, n)) + np.eye(n) * n)
+  b = f16(r.standard_normal(n))
+  x = L.solve(A, b)
+  res = A.astype(np.float64) @ x.astype(np.float64) - b.astype(np.float64)
+  assert np.abs(res).max() / np.abs(b.astype(np.float64)).max() <= 5e-3
+
+
+def test_solve_rejects():
+  A = f16(np.random.default_rng(33).standard_normal((4, 4)) + np.eye(4) * 4)
+  with pytest.raises(ValueError): L.solve(np.zeros((3, 4), f16), np.zeros(3, f16))   # not square
+  with pytest.raises(ValueError): L.solve(A, np.zeros(3, f16))                       # b rows != n
+  with pytest.raises(np.linalg.LinAlgError):
+    L.solve(f16([[1.0, 2.0], [2.0, 4.0]]), f16([1.0, 2.0]))                          # singular

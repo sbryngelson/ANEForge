@@ -531,7 +531,7 @@ def eigvals(A, iters: int = 60):
 __all__ = [
   "conjugate_gradient", "jacobi", "gauss_seidel", "iterative_refine",
   "least_squares", "lsqr", "gmres",
-  "qr", "cholesky", "lu", "lu_pivoted",
+  "qr", "cholesky", "lu", "lu_pivoted", "solve", "solve_triangular",
   "eigh", "eigvals", "generalized_eigh", "dominant_eig",
   "svd", "dominant_svd", "svdvals_topk", "randomized_svd", "pca",
 ]
@@ -575,20 +575,50 @@ def _diag_dominant(n, cond_scale, seed):
 # Determinants, pseudoinverse, triangular solve - composed from the routines above.
 
 def solve_triangular(A, b, lower: bool = True):
-  """Solve T x = b for triangular T by substitution on the ANE, without forming the inverse
-  (the routed accessor keeps large entries finite, as in cholesky/lu)."""
+  """Solve T X = B for triangular T by substitution on the ANE, without forming the inverse
+  (the routed accessor keeps large entries finite, as in cholesky/lu).
+
+  `b` is a vector [n] or a matrix [n, m]; the m columns are solved in one fused graph, since the
+  substitution is a row recurrence and each row is already a full-width slice. A 1-D `b` returns
+  shape [n], a 2-D one returns [n, m]."""
   A16 = np.asarray(A, f16); n = A16.shape[0]
-  b16 = np.asarray(b, f16).reshape(n, 1)
-  At = af.input((n, n)); bt = af.input((n, 1))
+  b_in = np.asarray(b, f16)
+  vec = b_in.ndim == 1
+  b16 = b_in.reshape(n, 1) if vec else b_in.reshape(n, -1)
+  m = b16.shape[1]
+  At = af.input((n, n)); bt = af.input((n, m))
   el = _els_routed(At, n)
-  bl = lambda i: bt.slice_by_size([i, 0], [1, 1])          # height-axis slice: begin stays 0 on the last axis
+  bl = lambda i: bt.slice_by_size([i, 0], [1, m])          # whole row: all m right-hand sides at once
   X: dict = {}
   for i in (range(n) if lower else range(n - 1, -1, -1)):
     s = bl(i)
     for k in (range(i) if lower else range(i + 1, n)): s = s - el(i, k) * X[k]
     X[i] = s / el(i, i)
   out = af.concat([X[i] for i in range(n)], axis=0)
-  return _solve_once(out, A16, b16).ravel().astype(np.float32)
+  y = _solve_once(out, A16, b16).reshape(n, m)
+  return (y.ravel() if vec else y).astype(np.float32)
+
+
+def solve(A, b):
+  """Solve A x = b for general square A via the on-ANE pivoted LU (P A = L U).
+
+  The direct counterpart to the iterative `conjugate_gradient`/`gmres`: factor once, then forward-
+  and back-substitute. `b` is a vector [n] or a matrix [n, m]. The permutation is applied host-side
+  (P is a permutation matrix, so P b is a row gather, not a matmul worth dispatching)."""
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2 or A16.shape[0] != A16.shape[1]:
+    raise ValueError(f"solve: A must be square 2-D; got shape {A16.shape}")
+  n = A16.shape[0]
+  b_in = np.asarray(b, f16)
+  if b_in.shape[0] != n:
+    raise ValueError(f"solve: b has {b_in.shape[0]} rows but A is {n}x{n}")
+
+  P, L, U = lu_pivoted(A16)
+  if np.any(np.diag(U) == 0.0):
+    raise np.linalg.LinAlgError("solve: A is singular (zero pivot in U)")
+  Pb = np.asarray(P, np.float32) @ np.asarray(b_in, np.float32)          # row permutation of b
+  y = solve_triangular(L, Pb.astype(f16), lower=True)
+  return solve_triangular(U, np.asarray(y, f16), lower=False)
 
 
 def _perm_parity(perm) -> float:
