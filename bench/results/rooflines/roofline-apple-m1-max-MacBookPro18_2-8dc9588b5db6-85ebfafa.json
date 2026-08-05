@@ -1,0 +1,2504 @@
+{
+  "suite": "roofline",
+  "schema_version": 2,
+  "contributor": "sbryngelson",
+  "machine": {
+    "hardware": {
+      "model_identifier": "MacBookPro18,2",
+      "chip": "Apple M1 Max",
+      "physical_cpu": 10,
+      "p_cores": 8,
+      "e_cores": 2,
+      "gpu_cores": 32,
+      "memory_architecture": "unified",
+      "ram_gb": 32,
+      "ram_bytes": 34359738368,
+      "ane_rated_tops": 11.0
+    },
+    "hardware_hash": "8dc9588b5db6",
+    "environment": {
+      "model_name": "MacBook Pro",
+      "macos_version": "26.5.1",
+      "macos_build": "25F80",
+      "aneforge_version": "0.2.0",
+      "aneforge_git": {
+        "commit": "1f8b477a539715b34f565da5fabf47cbb70b3be2",
+        "short": "1f8b477a5397",
+        "branch": "main",
+        "dirty": false,
+        "main": {
+          "ref": "origin/main",
+          "merge_base": "1f8b477a539715b34f565da5fabf47cbb70b3be2",
+          "merge_base_short": "1f8b477a5397",
+          "commits_ahead": 0,
+          "commits_behind": 0
+        }
+      },
+      "power": {
+        "source": "ac",
+        "is_laptop": true,
+        "energy_mode": {
+          "mode": "high_power",
+          "raw": 2,
+          "key": "powermode"
+        },
+        "battery_pct": 100,
+        "battery_state": "charged"
+      },
+      "gpu_wired_limit_mb": 0,
+      "thermal_state": "nominal",
+      "have_sudo": true,
+      "timestamp_utc": "2026-08-05T20:14:25Z",
+      "sudo_authorized": true
+    },
+    "run_id": "85ebfafa"
+  },
+  "numeric_cliffs": {
+    "plane": "numeric",
+    "matmul_saturation": {
+      "metric": "output_magnitude_inf_cliff",
+      "expected": 32752,
+      "by_K": [
+        {
+          "cliff": 32758.8,
+          "K": 4,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 8,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 32,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 64,
+          "expected": 32752
+        },
+        {
+          "cliff": 32758.8,
+          "K": 128,
+          "expected": 32752
+        }
+      ]
+    },
+    "slice_saturation": {
+      "metric": "sliced_value_inf_cliff",
+      "cliff": 4094.1,
+      "expected_pre_a16": 4094,
+      "interpretation": "None == exact (A16/M5); a number == the pre-A16 clamp"
+    },
+    "reduce_exactness": {
+      "metric": "last_all_exact_integer_row_sum",
+      "expected_boundary": 2048,
+      "n_terms": 8,
+      "last_all_exact": 2048,
+      "first_wrong": {
+        "target": 2049,
+        "got": 2050.0
+      }
+    }
+  },
+  "perf_rooflines": [
+    {
+      "script": "device_saturation_sweep.py",
+      "result_file": "device_saturation_sweep_results.json",
+      "returncode": 0,
+      "seconds": 250.3,
+      "summary": {
+        "gemm": [
+          {
+            "N": 512,
+            "gflop": 0.268435456,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 0.8184160105884075,
+                "gflops": 327.99389616902283,
+                "relerr": 4.0286235201448194e-07,
+                "power": {
+                  "active_pkg_W": 28.4275,
+                  "active_pkg_cv_pct": 0.43948881812400564,
+                  "iter_ms": 0.9651123070614647,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 28451.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 278.1390870636823,
+                  "perf_per_W": 9.78415573172746
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 0.48766692634671926,
+                "gflops": 550.4483521385023,
+                "relerr": 0.0025780039702379184,
+                "power": {
+                  "active_pkg_W": 3.552,
+                  "active_pkg_cv_pct": 8.362956497503037,
+                  "iter_ms": 0.36856683784614064,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 1198.5,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 2378.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 728.3223242999936,
+                  "perf_per_W": 205.04569940878199
+                }
+              }
+            }
+          },
+          {
+            "N": 1024,
+            "gflop": 2.147483648,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 4.967167042195797,
+                "gflops": 432.33570156937554,
+                "relerr": 4.063342037754029e-07,
+                "power": {
+                  "active_pkg_W": 32.1785,
+                  "active_pkg_cv_pct": 0.6071393378912401,
+                  "iter_ms": 5.772493875877236,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 32414.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 372.0200825113306,
+                  "perf_per_W": 11.561138104987199
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 1.3323330786079168,
+                "gflops": 1611.8219103617769,
+                "relerr": 0.005528352999597524,
+                "power": {
+                  "active_pkg_W": 5.0615,
+                  "active_pkg_cv_pct": 6.574906530983078,
+                  "iter_ms": 1.0123849343919828,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 2141.0,
+                  "gpu_active_mW": 0.0,
+                  "cpu_active_mW": 2931.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 2121.2125694953506,
+                  "perf_per_W": 419.08773476150367
+                }
+              }
+            }
+          },
+          {
+            "N": 2048,
+            "gflop": 17.179869184,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 35.885666962713,
+                "gflops": 478.739024186195,
+                "relerr": 4.211573548868625e-07,
+                "power": {
+                  "active_pkg_W": 35.9675,
+                  "active_pkg_cv_pct": 1.092389445001594,
+                  "iter_ms": 42.56956847890726,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 6.0,
+                  "cpu_active_mW": 35957.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 403.57160755605105,
+                  "perf_per_W": 11.220452006840928
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 4.37262502964586,
+                "gflops": 3928.960079476881,
+                "relerr": 0.012131920427695626,
+                "power": {
+                  "active_pkg_W": 5.495,
+                  "active_pkg_cv_pct": 6.4677965479812025,
+                  "iter_ms": 4.592907091533763,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 3011.5,
+                  "gpu_active_mW": 28.0,
+                  "cpu_active_mW": 2449.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 3740.521818015466,
+                  "perf_per_W": 680.7137066452168
+                }
+              }
+            }
+          },
+          {
+            "N": 4096,
+            "gflop": 137.438953472,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 255.7621248997748,
+                "gflops": 537.3702362140526,
+                "relerr": 4.410294839666285e-07,
+                "power": {
+                  "active_pkg_W": 40.06,
+                  "active_pkg_cv_pct": 1.8189985677432705,
+                  "iter_ms": 281.63567127841003,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 29.5,
+                  "cpu_active_mW": 40032.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 488.0026484149984,
+                  "perf_per_W": 12.181793520094818
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 29.965082998387516,
+                "gflops": 4586.636835926532,
+                "relerr": 0.027237621125542205,
+                "power": {
+                  "active_pkg_W": 4.973,
+                  "active_pkg_cv_pct": 1.6875621694909901,
+                  "iter_ms": 30.802550324232786,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 3585.0,
+                  "gpu_active_mW": 58.5,
+                  "cpu_active_mW": 1305.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4461.934223799479,
+                  "perf_per_W": 897.2318970037159
+                }
+              }
+            }
+          }
+        ],
+        "conv": [
+          {
+            "C": 64,
+            "B": 8,
+            "HxW": "64x64",
+            "gflop": 2.415919104,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 70.29791607055813,
+                "gflops": 4.2958583252580675,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 4.9955,
+                  "active_pkg_cv_pct": 1.5869197996010862,
+                  "iter_ms": 569.7099815588444,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 35.5,
+                  "cpu_active_mW": 4965.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4.240612210074931,
+                  "perf_per_W": 0.848886439810816
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 1.356292050331831,
+                "gflops": 1781.2676137185351,
+                "relerr": 0.0003671660721200674,
+                "power": {
+                  "active_pkg_W": 5.7065,
+                  "active_pkg_cv_pct": 0.9259591888620291,
+                  "iter_ms": 1.3885589164712675,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 1844.0,
+                  "gpu_active_mW": 45.0,
+                  "cpu_active_mW": 3827.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 1739.875114654518,
+                  "perf_per_W": 304.89356254350616
+                }
+              }
+            }
+          },
+          {
+            "C": 128,
+            "B": 8,
+            "HxW": "64x64",
+            "gflop": 9.663676416,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 280.93562508001924,
+                "gflops": 4.29977348602882,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 5.3645,
+                  "active_pkg_cv_pct": 1.981721995777202,
+                  "iter_ms": 2257.2439026553184,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 38.0,
+                  "cpu_active_mW": 5334.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4.281183971582377,
+                  "perf_per_W": 0.798058341240074
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 3.0479589477181435,
+                "gflops": 3170.540214537574,
+                "relerr": 0.0003752040423183182,
+                "power": {
+                  "active_pkg_W": 5.7575,
+                  "active_pkg_cv_pct": 5.920761855406141,
+                  "iter_ms": 3.311347037173029,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 2338.0,
+                  "gpu_active_mW": 44.5,
+                  "cpu_active_mW": 3371.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 2918.352050544994,
+                  "perf_per_W": 506.8783413886225
+                }
+              }
+            }
+          },
+          {
+            "C": 256,
+            "B": 4,
+            "HxW": "64x64",
+            "gflop": 19.327352832,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 1119.5405839243904,
+                "gflops": 4.315911613550156,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 5.3685,
+                  "active_pkg_cv_pct": 0.8539959079027123,
+                  "iter_ms": 4482.203270483296,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 47.0,
+                  "cpu_active_mW": 5327.5,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4.312020599171982,
+                  "perf_per_W": 0.8032077114970628
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 4.0695000207051635,
+                "gflops": 4749.318769791025,
+                "relerr": 0.0003900783744201334,
+                "power": {
+                  "active_pkg_W": 5.905,
+                  "active_pkg_cv_pct": 6.1406531317499535,
+                  "iter_ms": 4.37962886460941,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 3174.5,
+                  "gpu_active_mW": 44.0,
+                  "cpu_active_mW": 2675.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4413.011565472838,
+                  "perf_per_W": 747.3347274297778
+                }
+              }
+            }
+          },
+          {
+            "C": 512,
+            "B": 2,
+            "HxW": "64x64",
+            "gflop": 38.654705664,
+            "devices": {
+              "CPU": {
+                "dtype": "fp32",
+                "lat_ms": 4462.206250056624,
+                "gflops": 4.331344574615918,
+                "relerr": 0.0,
+                "note": "B=1 timed, per-element GFLOP/s",
+                "power": {
+                  "active_pkg_W": 5.332,
+                  "active_pkg_cv_pct": 0.6027056768509385,
+                  "iter_ms": 8988.869291031733,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 0.0,
+                  "gpu_active_mW": 56.0,
+                  "cpu_active_mW": 5278.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 4.30028565467807,
+                  "perf_per_W": 0.8065051865487752
+                }
+              },
+              "ANE": {
+                "dtype": "fp16",
+                "lat_ms": 5.644625052809715,
+                "gflops": 6848.055504547448,
+                "relerr": 0.0004190581983637058,
+                "power": {
+                  "active_pkg_W": 6.4395,
+                  "active_pkg_cv_pct": 2.0069117388360485,
+                  "iter_ms": 5.751211229263146,
+                  "n_pm_samples": 8,
+                  "ane_active_mW": 4510.5,
+                  "gpu_active_mW": 59.5,
+                  "cpu_active_mW": 1865.0,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gflops_sustained": 6721.141707909848,
+                  "perf_per_W": 1043.736580155268
+                }
+              }
+            }
+          }
+        ],
+        "peaks": {
+          "gemm": {
+            "CPU": {
+              "peak_gflops": 537.3702362140526,
+              "peak_gflops_size": 4096,
+              "peak_gflops_relerr": 4.410294839666285e-07,
+              "peak_perf_per_W": 12.181793520094818,
+              "peak_perf_per_W_size": 4096
+            },
+            "ANE": {
+              "peak_gflops": 4586.636835926532,
+              "peak_gflops_size": 4096,
+              "peak_gflops_relerr": 0.027237621125542205,
+              "peak_perf_per_W": 897.2318970037159,
+              "peak_perf_per_W_size": 4096
+            }
+          },
+          "conv": {
+            "CPU": {
+              "peak_gflops": 4.331344574615918,
+              "peak_gflops_size": 512,
+              "peak_gflops_relerr": 0.0,
+              "peak_perf_per_W": 0.848886439810816,
+              "peak_perf_per_W_size": 64
+            },
+            "ANE": {
+              "peak_gflops": 6848.055504547448,
+              "peak_gflops_size": 512,
+              "peak_gflops_relerr": 0.0004190581983637058,
+              "peak_perf_per_W": 1043.736580155268,
+              "peak_perf_per_W_size": 512
+            }
+          }
+        },
+        "meta": {
+          "backends": {
+            "ane": true,
+            "mlx": false,
+            "sudo": true
+          },
+          "gemm_ns": [
+            512,
+            1024,
+            2048,
+            4096
+          ],
+          "conv_configs": [
+            [
+              64,
+              8
+            ],
+            [
+              128,
+              8
+            ],
+            [
+              256,
+              4
+            ],
+            [
+              512,
+              2
+            ]
+          ],
+          "conv_spatial": 64,
+          "power_window_s": 2.5,
+          "reps": 8,
+          "idle_mW": {
+            "ane": 0.0,
+            "cpu": 401.0,
+            "gpu": 721.0
+          },
+          "idle_pkg_mW": 1126.0
+        }
+      }
+    },
+    {
+      "script": "device_bandwidth_roofline.py",
+      "result_file": "device_bandwidth_roofline_results.json",
+      "returncode": 0,
+      "seconds": 116.6,
+      "summary": {
+        "backends": {
+          "ane": true,
+          "mlx": false,
+          "sudo": true
+        },
+        "window_s": 2.0,
+        "pm_interval_ms": 500,
+        "sizes": [
+          1048576,
+          8388608,
+          33554432
+        ],
+        "idle_mW": {
+          "ane": 0.0,
+          "cpu": 447.5,
+          "gpu": 814.5
+        },
+        "idle_pkg_mW": 1247.5,
+        "results": {
+          "roofline": {
+            "streaming (relu / x*2)": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "ane_gbps": 4.400775507634613,
+                  "ane_lat_ms": 0.9530829265713692,
+                  "ane_relerr": 0.00020780100009547926,
+                  "cpu_gbps": 79.89151646825567,
+                  "cpu_lat_ms": 0.10499998461455107
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "ane_gbps": 6.719342034338274,
+                  "ane_lat_ms": 4.993707989342511,
+                  "ane_relerr": 0.000207619501174141,
+                  "cpu_gbps": 64.64690878181494,
+                  "cpu_lat_ms": 1.0380831081420183
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "ane_gbps": 7.44310148858767,
+                  "ane_lat_ms": 18.03250005468726,
+                  "ane_relerr": 0.00020772223594448558,
+                  "cpu_gbps": 73.53054411057393,
+                  "cpu_lat_ms": 3.650665981695056
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 7.44310148858767,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 79.89151646825567,
+                  "at_nelem": 1048576
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 19.076029618596095,
+                  "iters": 249,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 238.0,
+                  "ane_active_mW": 238.0,
+                  "cpu_loaded_mW": 4808.0,
+                  "cpu_active_mW": 4360.5,
+                  "gpu_loaded_mW": 745.5,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 5.787,
+                  "active_pkg_W": 4.5395,
+                  "active_pkg_mean_W": 4.515875,
+                  "active_pkg_min_W": 4.4195,
+                  "active_pkg_p90_W": 4.5943000000000005,
+                  "active_pkg_cv_pct": 1.3112578861261568,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 7.03593623429684,
+                  "gbps_per_W": 1.5499363882138648
+                },
+                "cpu": {
+                  "iter_ms": 3.8523023803623357,
+                  "iters": 1225,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 5549.0,
+                  "cpu_active_mW": 5101.5,
+                  "gpu_loaded_mW": 759.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 6.307,
+                  "active_pkg_W": 5.0595,
+                  "active_pkg_mean_W": 5.05725,
+                  "active_pkg_min_W": 4.9875,
+                  "active_pkg_p90_W": 5.1253,
+                  "active_pkg_cv_pct": 0.7835085295646647,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 69.68182387976299,
+                  "gbps_per_W": 13.772472354928944
+                }
+              }
+            },
+            "gelu (light compute)": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "ane_gbps": 3.9748562934969454,
+                  "ane_lat_ms": 1.0552089661359787,
+                  "ane_relerr": 0.002399125839984875,
+                  "cpu_gbps": 64.28049035174175,
+                  "cpu_lat_ms": 0.13050006236881018
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "ane_gbps": 6.5671216038427,
+                  "ane_lat_ms": 5.109457997605205,
+                  "ane_relerr": 0.0024010734360187433,
+                  "cpu_gbps": 100.8397738977101,
+                  "cpu_lat_ms": 0.6654999451711774
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "ane_gbps": 6.892769386657421,
+                  "ane_lat_ms": 19.472249899990857,
+                  "ane_relerr": 0.002402333254135391,
+                  "cpu_gbps": 97.17120706291847,
+                  "cpu_lat_ms": 2.762499963864684
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 6.892769386657421,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 100.8397738977101,
+                  "at_nelem": 8388608
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 20.651293117249306,
+                  "iters": 230,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 297.0,
+                  "ane_active_mW": 297.0,
+                  "cpu_loaded_mW": 4569.0,
+                  "cpu_active_mW": 4121.5,
+                  "gpu_loaded_mW": 753.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 5.622,
+                  "active_pkg_W": 4.3745,
+                  "active_pkg_mean_W": 4.549,
+                  "active_pkg_min_W": 3.9065,
+                  "active_pkg_p90_W": 5.018,
+                  "active_pkg_cv_pct": 11.539658283621435,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 6.499240858089056,
+                  "gbps_per_W": 1.4857105630561334
+                },
+                "cpu": {
+                  "iter_ms": 2.9212491258457165,
+                  "iters": 1621,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 5756.0,
+                  "cpu_active_mW": 5308.5,
+                  "gpu_loaded_mW": 783.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 6.5365,
+                  "active_pkg_W": 5.289,
+                  "active_pkg_mean_W": 5.33075,
+                  "active_pkg_min_W": 5.1515,
+                  "active_pkg_p90_W": 5.4749,
+                  "active_pkg_cv_pct": 2.2025260822916843,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 91.89064144684565,
+                  "gbps_per_W": 17.37391594759797
+                }
+              }
+            },
+            "reduction (sum)": {
+              "byte_factor": 1,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "ane_gbps": 3.151436432885543,
+                  "ane_lat_ms": 0.6654590833932161,
+                  "ane_relerr": 0.0007224220967624156,
+                  "cpu_gbps": 9.856404926278023,
+                  "cpu_lat_ms": 0.4255409585312009
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "ane_gbps": 11.084129604955558,
+                  "ane_lat_ms": 1.5136250294744968,
+                  "ane_relerr": 0.000809213207233167,
+                  "cpu_gbps": 23.80521885168952,
+                  "cpu_lat_ms": 1.40954100061208
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "ane_gbps": 13.191146787858887,
+                  "ane_lat_ms": 5.087416968308389,
+                  "ane_relerr": 0.0008128390012191241,
+                  "cpu_gbps": 23.70482755274163,
+                  "cpu_lat_ms": 5.662041949108243
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 13.191146787858887,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 23.80521885168952,
+                  "at_nelem": 8388608
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 5.580023563205272,
+                  "iters": 847,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 954.0,
+                  "ane_active_mW": 954.0,
+                  "cpu_loaded_mW": 3730.5,
+                  "cpu_active_mW": 3283.0,
+                  "gpu_loaded_mW": 774.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 5.4565,
+                  "active_pkg_W": 4.209,
+                  "active_pkg_mean_W": 4.175,
+                  "active_pkg_min_W": 3.8095,
+                  "active_pkg_p90_W": 4.2803,
+                  "active_pkg_cv_pct": 2.7117733738650003,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 12.026627350199107,
+                  "gbps_per_W": 2.857359788595654
+                },
+                "cpu": {
+                  "iter_ms": 5.871926296820724,
+                  "iters": 822,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 9600.5,
+                  "cpu_active_mW": 9153.0,
+                  "gpu_loaded_mW": 766.5,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 10.367,
+                  "active_pkg_W": 9.1195,
+                  "active_pkg_mean_W": 9.40725,
+                  "active_pkg_min_W": 6.9395,
+                  "active_pkg_p90_W": 12.6071,
+                  "active_pkg_cv_pct": 21.09636117480988,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 22.857529406094624,
+                  "gbps_per_W": 2.5064454636871125
+                }
+              }
+            },
+            "softmax": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "ane_gbps": 4.727974523327221,
+                  "ane_lat_ms": 0.8871249156072736,
+                  "ane_relerr": 0.0010240666804474938,
+                  "cpu_gbps": 3.031021944386333,
+                  "cpu_lat_ms": 2.76758405379951
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "ane_gbps": 5.271985404316503,
+                  "ane_lat_ms": 6.364667089655995,
+                  "ane_relerr": 0.0010582602743864904,
+                  "cpu_gbps": 2.8784946351739187,
+                  "cpu_lat_ms": 23.313874960877
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "ane_gbps": 5.576604946167428,
+                  "ane_lat_ms": 24.068000027909875,
+                  "ane_relerr": 0.0010575844059769537,
+                  "cpu_gbps": 2.8750840409478067,
+                  "cpu_lat_ms": 93.36612501647323
+                }
+              ],
+              "peak": {
+                "ane": {
+                  "gbps": 5.576604946167428,
+                  "at_nelem": 33554432
+                },
+                "cpu": {
+                  "gbps": 3.031021944386333,
+                  "at_nelem": 1048576
+                }
+              },
+              "power": {
+                "ane": {
+                  "iter_ms": 25.862411037716715,
+                  "iters": 185,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 583.5,
+                  "ane_active_mW": 583.5,
+                  "cpu_loaded_mW": 4626.0,
+                  "cpu_active_mW": 4178.5,
+                  "gpu_loaded_mW": 764.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 5.968,
+                  "active_pkg_W": 4.7205,
+                  "active_pkg_mean_W": 4.744375,
+                  "active_pkg_min_W": 4.0265,
+                  "active_pkg_p90_W": 5.452,
+                  "active_pkg_cv_pct": 9.571354253962067,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 5.189683506470537,
+                  "gbps_per_W": 1.0993927563754977
+                },
+                "cpu": {
+                  "iter_ms": 94.19554004025665,
+                  "iters": 51,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 5917.5,
+                  "cpu_active_mW": 5470.0,
+                  "gpu_loaded_mW": 774.5,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 6.7005,
+                  "active_pkg_W": 5.453,
+                  "active_pkg_mean_W": 5.47275,
+                  "active_pkg_min_W": 5.3775,
+                  "active_pkg_p90_W": 5.5552,
+                  "active_pkg_cv_pct": 0.9416997214374914,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 2.849768214984254,
+                  "gbps_per_W": 0.5226055776607837
+                }
+              }
+            },
+            "layer_norm": {
+              "byte_factor": 2,
+              "sizes": [
+                {
+                  "nelem": 1048576,
+                  "shape": [
+                    256,
+                    4096
+                  ],
+                  "ane_err": "RuntimeError: ane_e5rt_program_compile failed (mil=/Users/spencer/Models/.aneforge-cache/be7f77f75c7f8bb1d93ab898/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+                  "cpu_gbps": 4.238008408188765,
+                  "cpu_lat_ms": 1.9793750252574682
+                },
+                {
+                  "nelem": 8388608,
+                  "shape": [
+                    2048,
+                    4096
+                  ],
+                  "ane_err": "RuntimeError: ane_e5rt_program_compile failed (mil=/Users/spencer/Models/.aneforge-cache/f4e66bff1746589c0ee1c4a8/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+                  "cpu_gbps": 3.8758857055834337,
+                  "cpu_lat_ms": 17.314458964392543
+                },
+                {
+                  "nelem": 33554432,
+                  "shape": [
+                    8192,
+                    4096
+                  ],
+                  "ane_err": "RuntimeError: ane_e5rt_program_compile failed (mil=/Users/spencer/Models/.aneforge-cache/b0b6bcd88301a762baa4cc10/model.mil, mask=0x4). See stderr for the actual Espresso error.",
+                  "cpu_gbps": 3.8142813654905243,
+                  "cpu_lat_ms": 70.37641701754183
+                }
+              ],
+              "peak": {
+                "cpu": {
+                  "gbps": 4.238008408188765,
+                  "at_nelem": 1048576
+                }
+              },
+              "power": {
+                "cpu": {
+                  "iter_ms": 71.86644713380444,
+                  "iters": 67,
+                  "n_pm_samples": 8,
+                  "ane_loaded_mW": 0.0,
+                  "ane_active_mW": 0.0,
+                  "cpu_loaded_mW": 5681.0,
+                  "cpu_active_mW": 5233.5,
+                  "gpu_loaded_mW": 782.0,
+                  "gpu_active_mW": 0.0,
+                  "loaded_pkg_W": 6.4615,
+                  "active_pkg_W": 5.214,
+                  "active_pkg_mean_W": 5.222125,
+                  "active_pkg_min_W": 5.1025,
+                  "active_pkg_p90_W": 5.3525,
+                  "active_pkg_cv_pct": 1.4096469681471266,
+                  "flags": [
+                    "only 8 pm samples - short window, treat as indicative"
+                  ],
+                  "gbps_loop": 3.735198645624068,
+                  "gbps_per_W": 0.7163787199125561
+                }
+              }
+            }
+          },
+          "coverage": {
+            "rows": [
+              {
+                "op": "abs",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "add",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "adds",
+                "set": "_EMIT",
+                "class": "dispatch/latency-bound",
+                "where": "floor finding (CPU wins tiny)"
+              },
+              {
+                "op": "affine",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "atan",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "avg_pool",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "batch_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "bmm",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "bmm_w",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "cast",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "ceil",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "channel_layer_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "clamped_relu",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "clip",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "concat",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "const_array",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "conv",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "conv_transpose",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "cos",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "crop",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "depth_to_space",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "dynamic_conv",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "einsum",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "elu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "erf",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "exp",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "exp2",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "expand_dims",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "flatten2d",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "floor",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "gelu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "greater",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "greater_equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "group_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "instance_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "inverse",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "l2_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "layer_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "leaky_relu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "less",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "less_equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "linear_activation",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "local_response_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "log",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "logical_not",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "matmul",
+                "set": "_EMIT",
+                "class": "compute-bound",
+                "where": "saturation sweep (GEMM/conv peaks)"
+              },
+              {
+                "op": "max_pool",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "maximum",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "minimum",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "mul",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "muls",
+                "set": "_EMIT",
+                "class": "dispatch/latency-bound",
+                "where": "floor finding (CPU wins tiny)"
+              },
+              {
+                "op": "not_equal",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "pixel_shuffle",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "pixel_unshuffle",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "pow",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "prelu",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "real_div",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_l1_norm",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reduce_log_sum",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reduce_log_sum_exp",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reduce_max",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_mean",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_min",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_sum",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reduce_sum_square",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "relu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "relu6",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "reshape",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "resize_bilinear",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "resize_nearest_neighbor",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "reverse",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "rms_norm",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "round",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "rsqrt",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "scaled_tanh",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "select",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sigmoid",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "sigmoid_hard",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sign",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "silu",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "sin",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "slice_by_size",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "softmax",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "softplus",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "softsign",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "space_to_depth",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "split",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sqrt",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "square",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "squeeze",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "stack",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "sub",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "tanh",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "threshold",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "thresholded_relu",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "tile",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "transpose",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "upsample",
+                "set": "_EMIT",
+                "class": "bandwidth-bound",
+                "where": "THIS bandwidth roofline"
+              },
+              {
+                "op": "upsample_bilinear",
+                "set": "_EMIT",
+                "class": "UNCLASSIFIED",
+                "where": "!! add to a class"
+              },
+              {
+                "op": "argmax",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:worker-raceable",
+                "where": "bridge:worker (raceable silicon via persistent worker)"
+              },
+              {
+                "op": "batch_to_space",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "channel_to_space",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "cost_volume",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "cross_correlation",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "cross_product",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "dynamic_slice",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "flatten",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "fps",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "input_view",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "lrn",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "minmax_norm",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "radius_search",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "scaled_elementwise",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "sdpa",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:worker-raceable",
+                "where": "bridge:worker (raceable - covered as attention class)"
+              },
+              {
+                "op": "sort",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "space_to_batch",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "space_to_channel",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:subprocess-not-raceable",
+                "where": "subprocess-per-call: dispatch-bound ARTIFACT, NOT a fair speed race (needs a persistent worker to benchmark silicon)"
+              },
+              {
+                "op": "topk",
+                "set": "NETPLIST_OPS",
+                "class": "bridge:worker-raceable",
+                "where": "bridge:worker (raceable silicon via persistent worker)"
+              }
+            ],
+            "counts": {
+              "compute-bound": 4,
+              "bandwidth-bound": 44,
+              "dispatch/latency-bound": 2,
+              "bridge:worker-raceable": 3,
+              "bridge:subprocess-not-raceable": 16,
+              "UNCLASSIFIED": 50
+            },
+            "n_emit": 100,
+            "n_netplist": 19,
+            "worker_ops": [
+              "argmax",
+              "sdpa",
+              "topk"
+            ],
+            "a1_only_ops": [
+              "batch_to_space",
+              "channel_to_space",
+              "cost_volume",
+              "cross_correlation",
+              "cross_product",
+              "dynamic_slice",
+              "flatten",
+              "fps",
+              "input_view",
+              "lrn",
+              "minmax_norm",
+              "radius_search",
+              "scaled_elementwise",
+              "sort",
+              "space_to_batch",
+              "space_to_channel"
+            ],
+            "unclassified": [
+              "affine",
+              "atan",
+              "bmm_w",
+              "cast",
+              "ceil",
+              "channel_layer_norm",
+              "clamped_relu",
+              "const_array",
+              "crop",
+              "depth_to_space",
+              "dynamic_conv",
+              "einsum",
+              "equal",
+              "exp2",
+              "expand_dims",
+              "flatten2d",
+              "floor",
+              "greater",
+              "greater_equal",
+              "instance_norm",
+              "inverse",
+              "less",
+              "less_equal",
+              "linear_activation",
+              "local_response_norm",
+              "logical_not",
+              "not_equal",
+              "prelu",
+              "reduce_l1_norm",
+              "reduce_log_sum",
+              "reduce_log_sum_exp",
+              "reduce_sum_square",
+              "resize_bilinear",
+              "resize_nearest_neighbor",
+              "reverse",
+              "round",
+              "scaled_tanh",
+              "select",
+              "sigmoid_hard",
+              "sign",
+              "slice_by_size",
+              "softsign",
+              "space_to_depth",
+              "split",
+              "squeeze",
+              "stack",
+              "threshold",
+              "thresholded_relu",
+              "tile",
+              "upsample_bilinear"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "script": "decode_measurement.py",
+      "result_file": "decode_measurement_results.json",
+      "returncode": 0,
+      "seconds": 113.3,
+      "summary": {
+        "config": {
+          "d_model": 1024,
+          "n_layers": 4,
+          "n_heads": 16,
+          "d_head": 64,
+          "d_ff": 4096,
+          "vocab": 32000,
+          "s_kv": 128
+        },
+        "quick": true,
+        "batch": 32,
+        "flops_per_token": {
+          "1": 201850880.0,
+          "32": 6459228160.0
+        },
+        "have": {
+          "ane": true,
+          "mlx": false,
+          "sudo": true
+        },
+        "idle_pkg_W": 1.243,
+        "rows": [
+          {
+            "device": "CPU",
+            "batch": 1,
+            "status": "ok",
+            "latency_per_step_ms": 38.59658294823021,
+            "latency_per_token_ms": 38.59658294823021,
+            "tokens_per_s": 25.909029339237236,
+            "relerr": 8.415643295642995e-07,
+            "active_pkg_W": 6.8775,
+            "active_pkg_cv_pct": 5.609015522056151,
+            "ane_active_mW": 0.0,
+            "gpu_active_mW": 0.0,
+            "cpu_active_mW": 6930.5,
+            "energy_iter_ms": 39.338428959380224,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 25.420435600836335,
+            "tokens_per_s_per_W": 3.69617384236079,
+            "mJ_per_token": 270.5500451681375
+          },
+          {
+            "device": "ANE",
+            "batch": 1,
+            "status": "ok",
+            "latency_per_step_ms": 4.106167005375028,
+            "latency_per_token_ms": 4.106167005375028,
+            "tokens_per_s": 243.53612473408572,
+            "relerr": 0.01648614637890685,
+            "active_pkg_W": 1.642,
+            "active_pkg_cv_pct": 3.8285198536978795,
+            "ane_active_mW": 1333.0,
+            "gpu_active_mW": 0.0,
+            "cpu_active_mW": 337.0,
+            "energy_iter_ms": 4.234077444746017,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 236.17895823820612,
+            "tokens_per_s_per_W": 143.8361499623667,
+            "mJ_per_token": 6.9523551642729595
+          },
+          {
+            "device": "ANE8",
+            "batch": 1,
+            "status": "ok",
+            "latency_per_step_ms": 2.308832947164774,
+            "latency_per_token_ms": 2.308832947164774,
+            "tokens_per_s": 433.1192524032503,
+            "relerr": 0.03898390467819101,
+            "active_pkg_W": 1.9065,
+            "active_pkg_cv_pct": 2.2557177409037346,
+            "ane_active_mW": 1361.0,
+            "gpu_active_mW": 0.0,
+            "cpu_active_mW": 588.5,
+            "energy_iter_ms": 2.433123512687889,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 410.99434319110776,
+            "tokens_per_s_per_W": 215.5753176979322,
+            "mJ_per_token": 4.638749976939461
+          },
+          {
+            "device": "CPU",
+            "batch": 32,
+            "status": "ok",
+            "latency_per_step_ms": 106.44775000400841,
+            "latency_per_token_ms": 3.326492187625263,
+            "tokens_per_s": 300.61696934688615,
+            "relerr": 1.6604349836602382e-06,
+            "active_pkg_W": 16.311,
+            "active_pkg_cv_pct": 2.2585474521636804,
+            "ane_active_mW": 0.0,
+            "gpu_active_mW": 0.0,
+            "cpu_active_mW": 16359.0,
+            "energy_iter_ms": 122.60235897384774,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 261.00639716749583,
+            "tokens_per_s_per_W": 16.001863599257913,
+            "mJ_per_token": 62.492721163200954
+          },
+          {
+            "device": "ANE",
+            "batch": 32,
+            "status": "ok",
+            "latency_per_step_ms": 11.10904198139906,
+            "latency_per_token_ms": 0.3471575619187206,
+            "tokens_per_s": 2880.5364183140805,
+            "relerr": 0.01667825814118959,
+            "active_pkg_W": 3.026,
+            "active_pkg_cv_pct": 7.204078202944045,
+            "ane_active_mW": 1290.0,
+            "gpu_active_mW": 0.0,
+            "cpu_active_mW": 1777.0,
+            "energy_iter_ms": 11.68189717325299,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 2739.2810881153428,
+            "tokens_per_s_per_W": 905.2482115384478,
+            "mJ_per_token": 1.1046694014457359
+          },
+          {
+            "device": "ANE8",
+            "batch": 32,
+            "status": "ok",
+            "latency_per_step_ms": 9.829915943555534,
+            "latency_per_token_ms": 0.30718487323611043,
+            "tokens_per_s": 3255.3686301843827,
+            "relerr": 0.03514946247704795,
+            "active_pkg_W": 3.226,
+            "active_pkg_cv_pct": 1.0727462514930466,
+            "ane_active_mW": 1317.5,
+            "gpu_active_mW": 0.0,
+            "cpu_active_mW": 1937.5,
+            "energy_iter_ms": 10.357744609600081,
+            "flags": [
+              "only 8 pm samples - short window, treat as indicative"
+            ],
+            "tokens_per_s_sustained": 3089.475673144208,
+            "tokens_per_s_per_W": 957.679997874832,
+            "mJ_per_token": 1.0441901284553081
+          }
+        ]
+      }
+    },
+    {
+      "script": "roofline_analysis.py",
+      "result_file": "roofline_analysis_results.json",
+      "returncode": 0,
+      "seconds": 2.3,
+      "summary": {
+        "ceilings": {
+          "compute": {
+            "CPU": {
+              "gemm_peak_gflops": 537.3702362140526,
+              "gemm_peak_at_N": 4096,
+              "conv_peak_gflops": 4.331344574615918,
+              "conv_peak_at_C": 512
+            },
+            "ANE": {
+              "gemm_peak_gflops": 4586.636835926532,
+              "gemm_peak_at_N": 4096,
+              "conv_peak_gflops": 6848.055504547448,
+              "conv_peak_at_C": 512
+            }
+          },
+          "bandwidth_gbps": {
+            "CPU": 79.89151646825567,
+            "ANE": 7.44310148858767
+          },
+          "ridge_flop_per_byte": {
+            "CPU": 6.7262490433207995,
+            "ANE": 616.2265613278432
+          },
+          "archetype_achieved_gbps": {
+            "streaming (relu / x*2)": {
+              "CPU": 79.89151646825567,
+              "ANE": 7.44310148858767
+            },
+            "gelu (light compute)": {
+              "CPU": 100.8397738977101,
+              "ANE": 6.892769386657421
+            },
+            "reduction (sum)": {
+              "CPU": 23.80521885168952,
+              "ANE": 13.191146787858887
+            },
+            "softmax": {
+              "CPU": 3.031021944386333,
+              "ANE": 5.576604946167428
+            },
+            "layer_norm": {
+              "CPU": 4.238008408188765
+            }
+          }
+        },
+        "archetype_ai": [
+          {
+            "archetype": "matmul square N=512",
+            "class": "compute",
+            "formula": "AI = 2N^3 / (3N^2 * 2B) = N/3",
+            "flops": 268435456.0,
+            "bytes_fp16": 1572864,
+            "ai_fp16": 170.66666666666666,
+            "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
+            "represents": [
+              "matmul(large)",
+              "bmm",
+              "linear"
+            ]
+          },
+          {
+            "archetype": "matmul square N=2048",
+            "class": "compute",
+            "formula": "AI = 2N^3 / (3N^2 * 2B) = N/3",
+            "flops": 17179869184.0,
+            "bytes_fp16": 25165824,
+            "ai_fp16": 682.6666666666666,
+            "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
+            "represents": [
+              "matmul(large)",
+              "bmm",
+              "linear"
+            ]
+          },
+          {
+            "archetype": "matmul square N=8192",
+            "class": "compute",
+            "formula": "AI = 2N^3 / (3N^2 * 2B) = N/3",
+            "flops": 1099511627776.0,
+            "bytes_fp16": 402653184,
+            "ai_fp16": 2730.6666666666665,
+            "note": "AI = 2N^3 / (3N^2 * 2) = N/3. Grows with N -> large GEMM is compute-bound.",
+            "represents": [
+              "matmul(large)",
+              "bmm",
+              "linear"
+            ]
+          },
+          {
+            "archetype": "matmul GEMV M=1 (decode), K=N=4096",
+            "class": "memory",
+            "formula": "2*1*K*N / (1*K + K*N + 1*N)*2B  ~ 2KN/(KN*2B) = 1/bpe = 1.0 FLOP/byte (fp16)",
+            "flops": 33554432.0,
+            "bytes_fp16": 33570816,
+            "ai_fp16": 0.9995119570522206,
+            "note": "weight matrix (KxN) read once, used once -> the AI floor. With the standard 2-flop/MAC count it is 1.0 FLOP/byte fp16 (the often-quoted '~0.5' uses a 1-flop/MAC convention; same physics, factor-2 bookkeeping). Memory-bound on EVERY device: well below the lowest ridge (CPU ~15).",
+            "represents": [
+              "GEMV",
+              "LLM decode matmul",
+              "M=1 projection"
+            ]
+          },
+          {
+            "archetype": "conv 3x3 (C=512,B=4,64x64)",
+            "class": "compute",
+            "formula": "2*B*Cout*Cin*9*H*W / (in+wt+out)*2B",
+            "flops": 77309411328.0,
+            "bytes_fp16": 38273024,
+            "ai_fp16": 2019.945205479452,
+            "note": "reuse: each input elem in ~9*Cout MACs -> high AI, clears every ridge.",
+            "represents": [
+              "conv",
+              "conv_transpose"
+            ]
+          },
+          {
+            "archetype": "conv 3x3 (C=64,B=16,64x64)",
+            "class": "compute",
+            "formula": "2*B*Cout*Cin*9*H*W / (in+wt+out)*2B",
+            "flops": 4831838208.0,
+            "bytes_fp16": 16850944,
+            "ai_fp16": 286.7399124939232,
+            "note": "fewer channels -> lower reuse -> lower AI than the C=512 config, still >> ridge.",
+            "represents": [
+              "conv (small-channel)"
+            ]
+          },
+          {
+            "archetype": "relu / copy (1R+1W, ~1 flop)",
+            "class": "memory",
+            "formula": "1 flop / (2 elem * 2B) = 0.25; counting copy as ~0 flop -> ~0.2",
+            "flops": 16777216,
+            "bytes_fp16": 67108864,
+            "ai_fp16": 0.25,
+            "bw_archetype": "streaming (relu / x*2)",
+            "represents": [
+              "relu",
+              "abs",
+              "copy",
+              "reshape",
+              "transpose",
+              "add",
+              "sub",
+              "mul"
+            ]
+          },
+          {
+            "archetype": "gelu / silu (~10 flop, 1R+1W)",
+            "class": "memory",
+            "formula": "~10 flop / (2 elem * 2B) = 2.5 FLOP/byte",
+            "flops": 167772160,
+            "bytes_fp16": 67108864,
+            "ai_fp16": 2.5,
+            "bw_archetype": "gelu (light compute)",
+            "represents": [
+              "gelu",
+              "silu",
+              "erf",
+              "tanh",
+              "sigmoid",
+              "exp"
+            ]
+          },
+          {
+            "archetype": "softmax (~5 flop, 1R+1W)",
+            "class": "memory",
+            "formula": "~5 flop / (2 elem * 2B) = 1.25 FLOP/byte",
+            "flops": 83886080,
+            "bytes_fp16": 67108864,
+            "ai_fp16": 1.25,
+            "bw_archetype": "softmax",
+            "represents": [
+              "softmax"
+            ]
+          },
+          {
+            "archetype": "layer_norm (~10 flop, 1R+1W)",
+            "class": "memory",
+            "formula": "~10 flop / (2 elem * 2B) = 2.5 FLOP/byte",
+            "flops": 167772160,
+            "bytes_fp16": 67108864,
+            "ai_fp16": 2.5,
+            "bw_archetype": "layer_norm",
+            "represents": [
+              "layer_norm",
+              "rms_norm",
+              "group_norm",
+              "batch_norm",
+              "l2_norm"
+            ]
+          }
+        ],
+        "gap_measurements": {
+          "attention": {
+            "config": {
+              "S": 512,
+              "D": 64,
+              "H": 12,
+              "flops": 821035008.0
+            },
+            "ANE": {
+              "dtype": "fp16",
+              "lat_ms": 1.4501250116154552,
+              "gflops": 566.182226651865
+            },
+            "CPU": {
+              "dtype": "fp32",
+              "lat_ms": 73.77920800354332,
+              "gflops": 11.128270826119047
+            }
+          },
+          "fused_block": {
+            "ANE": {
+              "config": {
+                "B": 4,
+                "C": 256,
+                "HxW": "64x64",
+                "n_conv": 3
+              },
+              "dtype": "fp16",
+              "lat_ms": 7.289084023796022,
+              "gflops": 7954.642628169898,
+              "fused_flops": 57982058496.0,
+              "ai_one_conv_standalone": 1076.3211678832117,
+              "ai_fused_est": 2853.9870967741936,
+              "ai_3conv_standalone_est": 1076.3211678832117,
+              "note": "fused AI is an ESTIMATE: intermediates stay on-chip so not counted in fused_bytes; standalone-3x would spill each intermediate."
+            }
+          },
+          "gemv": {
+            "ANE": {
+              "dtype": "fp16",
+              "lat_ms": 0.7559589575976133,
+              "gflops": 44.386579010365494
+            },
+            "CPU": {
+              "dtype": "fp32",
+              "lat_ms": 1.026791986078024,
+              "gflops": 32.67889938269373
+            }
+          },
+          "available": {
+            "mlx_err": "No module named 'mlx'",
+            "ane": true,
+            "mlx": false
+          }
+        },
+        "placement": {
+          "CPU": [
+            {
+              "archetype": "matmul square N=512",
+              "class": "compute",
+              "ai": 85.33333333333333,
+              "applicable_roof_gflops": 537.3702362140526,
+              "achieved_gflops": 327.99389616902283,
+              "pct_roof": 61.03685579607946,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "matmul square N=2048",
+              "class": "compute",
+              "ai": 341.3333333333333,
+              "applicable_roof_gflops": 537.3702362140526,
+              "achieved_gflops": 478.739024186195,
+              "pct_roof": 89.08923344155912,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "matmul square N=8192",
+              "class": "compute",
+              "ai": 1365.3333333333333,
+              "applicable_roof_gflops": 537.3702362140526,
+              "achieved_gflops": null,
+              "pct_roof": null,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "matmul GEMV M=1 (decode), K=N=4096",
+              "class": "memory",
+              "ai": 0.4997559785261103,
+              "applicable_roof_gflops": 39.926262988527974,
+              "achieved_gflops": null,
+              "pct_roof": null,
+              "source": null
+            },
+            {
+              "archetype": "conv 3x3 (C=512,B=4,64x64)",
+              "class": "compute",
+              "ai": 1009.972602739726,
+              "applicable_roof_gflops": 4.331344574615918,
+              "achieved_gflops": 4.331344574615918,
+              "pct_roof": 100.0,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "conv 3x3 (C=64,B=16,64x64)",
+              "class": "compute",
+              "ai": 143.3699562469616,
+              "applicable_roof_gflops": 4.331344574615918,
+              "achieved_gflops": 4.2958583252580675,
+              "pct_roof": 99.18071054503908,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "relu / copy (1R+1W, ~1 flop)",
+              "class": "memory",
+              "ai": 0.125,
+              "applicable_roof_gflops": 9.98643955853196,
+              "achieved_gflops": 9.98643955853196,
+              "pct_roof": 100.0,
+              "source": "DERIVED: AI x achieved 79.9 GB/s (streaming (relu / x*2))"
+            },
+            {
+              "archetype": "gelu / silu (~10 flop, 1R+1W)",
+              "class": "memory",
+              "ai": 1.25,
+              "applicable_roof_gflops": 99.86439558531958,
+              "achieved_gflops": 126.04971737213762,
+              "pct_roof": 126.22087845557178,
+              "source": "DERIVED: AI x achieved 100.8 GB/s (gelu (light compute))"
+            },
+            {
+              "archetype": "softmax (~5 flop, 1R+1W)",
+              "class": "memory",
+              "ai": 0.625,
+              "applicable_roof_gflops": 49.93219779265979,
+              "achieved_gflops": 1.8943887152414582,
+              "pct_roof": 3.7939221564165555,
+              "source": "DERIVED: AI x achieved 3.0 GB/s (softmax)"
+            },
+            {
+              "archetype": "layer_norm (~10 flop, 1R+1W)",
+              "class": "memory",
+              "ai": 1.25,
+              "applicable_roof_gflops": 99.86439558531958,
+              "achieved_gflops": 5.2975105102359565,
+              "pct_roof": 5.30470392294119,
+              "source": "DERIVED: AI x achieved 4.2 GB/s (layer_norm)"
+            },
+            {
+              "archetype": "attention block [1,12,512,64]",
+              "class": "composite (matmul-dom)",
+              "ai": 26.1,
+              "applicable_roof_gflops": 537.3702362140526,
+              "achieved_gflops": 11.128270826119047,
+              "pct_roof": 2.0708759205796956,
+              "source": "MEASURED attention"
+            },
+            {
+              "archetype": "GEMV M=1 K=N=4096 (decode)",
+              "class": "memory",
+              "ai": 0.4997559785261103,
+              "applicable_roof_gflops": 39.926262988527974,
+              "achieved_gflops": 32.67889938269373,
+              "pct_roof": 81.84812936808879,
+              "source": "MEASURED GEMV"
+            }
+          ],
+          "ANE": [
+            {
+              "archetype": "matmul square N=512",
+              "class": "compute",
+              "ai": 170.66666666666666,
+              "applicable_roof_gflops": 1270.2893207189622,
+              "achieved_gflops": 550.4483521385023,
+              "pct_roof": 43.33251828228847,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "matmul square N=2048",
+              "class": "compute",
+              "ai": 682.6666666666666,
+              "applicable_roof_gflops": 4586.636835926532,
+              "achieved_gflops": 3928.960079476881,
+              "pct_roof": 85.66102397080681,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "matmul square N=8192",
+              "class": "compute",
+              "ai": 2730.6666666666665,
+              "applicable_roof_gflops": 4586.636835926532,
+              "achieved_gflops": null,
+              "pct_roof": null,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "matmul GEMV M=1 (decode), K=N=4096",
+              "class": "memory",
+              "ai": 0.9995119570522206,
+              "applicable_roof_gflops": 7.439468935396559,
+              "achieved_gflops": null,
+              "pct_roof": null,
+              "source": null
+            },
+            {
+              "archetype": "conv 3x3 (C=512,B=4,64x64)",
+              "class": "compute",
+              "ai": 2019.945205479452,
+              "applicable_roof_gflops": 6848.055504547448,
+              "achieved_gflops": 6848.055504547448,
+              "pct_roof": 100.0,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "conv 3x3 (C=64,B=16,64x64)",
+              "class": "compute",
+              "ai": 286.7399124939232,
+              "applicable_roof_gflops": 2134.234269521018,
+              "achieved_gflops": 1781.2676137185351,
+              "pct_roof": 83.46167237387212,
+              "source": "saturation sweep (size-specific)"
+            },
+            {
+              "archetype": "relu / copy (1R+1W, ~1 flop)",
+              "class": "memory",
+              "ai": 0.25,
+              "applicable_roof_gflops": 1.8607753721469176,
+              "achieved_gflops": 1.8607753721469176,
+              "pct_roof": 100.0,
+              "source": "DERIVED: AI x achieved 7.4 GB/s (streaming (relu / x*2))"
+            },
+            {
+              "archetype": "gelu / silu (~10 flop, 1R+1W)",
+              "class": "memory",
+              "ai": 2.5,
+              "applicable_roof_gflops": 18.607753721469177,
+              "achieved_gflops": 17.231923466643554,
+              "pct_roof": 92.6061453982045,
+              "source": "DERIVED: AI x achieved 6.9 GB/s (gelu (light compute))"
+            },
+            {
+              "archetype": "softmax (~5 flop, 1R+1W)",
+              "class": "memory",
+              "ai": 1.25,
+              "applicable_roof_gflops": 9.303876860734588,
+              "achieved_gflops": 6.970756182709285,
+              "pct_roof": 74.9231345927219,
+              "source": "DERIVED: AI x achieved 5.6 GB/s (softmax)"
+            },
+            {
+              "archetype": "layer_norm (~10 flop, 1R+1W)",
+              "class": "memory",
+              "ai": 2.5,
+              "applicable_roof_gflops": 18.607753721469177,
+              "achieved_gflops": null,
+              "pct_roof": null,
+              "source": null
+            },
+            {
+              "archetype": "attention block [1,12,512,64]",
+              "class": "composite (matmul-dom)",
+              "ai": 52.2,
+              "applicable_roof_gflops": 388.52989770427644,
+              "achieved_gflops": 566.182226651865,
+              "pct_roof": 145.72423640942193,
+              "source": "MEASURED attention"
+            },
+            {
+              "archetype": "GEMV M=1 K=N=4096 (decode)",
+              "class": "memory",
+              "ai": 0.9995119570522206,
+              "applicable_roof_gflops": 7.439468935396559,
+              "achieved_gflops": 44.386579010365494,
+              "pct_roof": 596.6363916001685,
+              "source": "MEASURED GEMV"
+            }
+          ]
+        },
+        "ascii_rooflines": {
+          "CPU": " CPU roofline  (compute roof gemm=537 GF/s conv=4 GF/s, bw=80 GB/s, ridge R=7 FLOP/byte)\n y=GFLOP/s [1..806]  x=AI [0.1..2731]  (log-log)\n |                         R______________________________________\n |                        //                        1             \n |                     ///                 0                      \n |                  ///                                           \n |               7//                                              \n |             ///                                                \n |           //                                                   \n |        /b/                                                     \n |     ///                                                        \n |   //                                                           \n |/6/                               a                             \n |               9                                                \n |                                            5           4       \n |                                                                \n |           8                                                    \n |                                                                \n |                                                                \n |                                                                \n +----------------------------------------------------------------  AI->\n   [0] matmul square N=512                AI=  85.333     328.0 GFLOP/s  61.0%roof\n   [1] matmul square N=2048               AI= 341.333     478.7 GFLOP/s  89.1%roof\n   [4] conv 3x3 (C=512,B=4,64x64)         AI=1009.973       4.3 GFLOP/s  100.0%roof\n   [5] conv 3x3 (C=64,B=16,64x64)         AI= 143.370       4.3 GFLOP/s  99.2%roof\n   [6] relu / copy (1R+1W, ~1 flop)       AI=   0.125      10.0 GFLOP/s  100.0%roof\n   [7] gelu / silu (~10 flop, 1R+1W)      AI=   1.250     126.0 GFLOP/s  126.2%roof\n   [8] softmax (~5 flop, 1R+1W)           AI=   0.625       1.9 GFLOP/s  3.8%roof\n   [9] layer_norm (~10 flop, 1R+1W)       AI=   1.250       5.3 GFLOP/s  5.3%roof\n   [a] attention block [1,12,512,64]      AI=  26.100      11.1 GFLOP/s  2.1%roof\n   [b] GEMV M=1 K=N=4096 (decode)         AI=   0.500      32.7 GFLOP/s  81.8%roof",
+          "ANE": " ANE roofline  (compute roof gemm=4.6 TF/s conv=6.8 TF/s, bw=7 GB/s, ridge R=616 FLOP/byte)\n y=GFLOP/s [1..10272]  x=AI [0.1..5461]  (log-log)\n |                                                         4      \n |                                                 /1_____________\n |                                              ///               \n |                                          ///5                  \n |                                       ///                      \n |                                    a//   0                     \n |                                ////                            \n |                             ///                                \n |                          ///                                   \n |             b        ////                                      \n |                   ///                                          \n |                //7                                             \n |            //8/                                                \n |         ///                                                    \n |     6///                                                       \n |  ////                                                          \n |//                                                              \n |                                                                \n +----------------------------------------------------------------  AI->\n   [0] matmul square N=512                AI= 170.667     550.4 GFLOP/s  43.3%roof\n   [1] matmul square N=2048               AI= 682.667    3929.0 GFLOP/s  85.7%roof\n   [4] conv 3x3 (C=512,B=4,64x64)         AI=2019.945    6848.1 GFLOP/s  100.0%roof\n   [5] conv 3x3 (C=64,B=16,64x64)         AI= 286.740    1781.3 GFLOP/s  83.5%roof\n   [6] relu / copy (1R+1W, ~1 flop)       AI=   0.250       1.9 GFLOP/s  100.0%roof\n   [7] gelu / silu (~10 flop, 1R+1W)      AI=   2.500      17.2 GFLOP/s  92.6%roof\n   [8] softmax (~5 flop, 1R+1W)           AI=   1.250       7.0 GFLOP/s  74.9%roof\n   [a] attention block [1,12,512,64]      AI=  52.200     566.2 GFLOP/s  145.7%roof\n   [b] GEMV M=1 K=N=4096 (decode)         AI=   1.000      44.4 GFLOP/s  596.6%roof"
+        },
+        "meta": {
+          "source_compute_json": "/Users/spencer/Downloads/aneforge-new/bench/results/device_saturation_sweep_results.json",
+          "source_bandwidth_json": "/Users/spencer/Downloads/aneforge-new/bench/results/device_bandwidth_roofline_results.json",
+          "fp16_bytes": 2,
+          "cpu_fp32_bytes": 4
+        }
+      }
+    }
+  ]
+}

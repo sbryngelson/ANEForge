@@ -35,15 +35,15 @@
     "aneforge_version": "0.2.0",
     "power": "ac (high-power)",
     "contributor": "sbryngelson",
-    "peak_fp16_gemm_tflops": 4.56,
-    "bandwidth_gbps": 6.92,
-    "ridge_flop_per_byte": 659.0,
-    "peak_perf_per_w_gflops": 918.0,
-    "decode_tok_s": null,
+    "peak_fp16_gemm_tflops": 4.59,
+    "bandwidth_gbps": 7.44,
+    "ridge_flop_per_byte": 616.0,
+    "peak_perf_per_w_gflops": 897.0,
+    "decode_tok_s": 244.0,
     "matmul_inf_cliff": "~32759",
     "slice_x16_cliff": "clamp @ 4094",
     "reduce_exact_sum": "<= 2048",
-    "timestamp_utc": "2026-08-01T23:53:56Z"
+    "timestamp_utc": "2026-08-05T20:14:25Z"
   },
   {
     "chip": "Apple M2 Pro",
