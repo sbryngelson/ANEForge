@@ -292,15 +292,21 @@ def build_headline_json(reports: list[dict]) -> list[dict]:
     for _, g in sorted(groups.items(), key=lambda kv: str(kv[1]["latest"]["machine"]["hardware"].get("chip"))):
         hw = g["latest"]["machine"]["hardware"]
         matmul, slice_cell, reduce_cell = _fmt_cliff(g["latest"].get("numeric_cliffs"))
-        sub = next((r for r in reversed(g["submissions"]) if r.get("perf_rooflines")), None)
-        h = _perf_headline(sub) if sub else {}
-        env = (sub or g["latest"])["machine"]["environment"]
+        sub = next((r for r in reversed(g["submissions"]) if r.get("perf_rooflines")), None) or g["latest"]
+        h = _perf_headline(sub)
+        env = sub["machine"]["environment"]
         handle = next((r.get("contributor") for r in reversed(g["submissions"]) if r.get("contributor")), None)
         rows.append({
             "chip": hw.get("chip"),
             "model_identifier": hw.get("model_identifier"),
+            "hardware_hash": sub["machine"].get("hardware_hash"),
+            "p_cores": hw.get("p_cores"),
+            "e_cores": hw.get("e_cores"),
             "gpu_cores": hw.get("gpu_cores"),
             "ram_gb": hw.get("ram_gb"),
+            "macos_version": env.get("macos_version"),
+            "macos_build": env.get("macos_build"),
+            "aneforge_version": env.get("aneforge_version"),
             "power": _power_label(env.get("power", {})),
             "contributor": handle,
             "peak_fp16_gemm_tflops": _num(h.get("gemm_tflops"), 2),
@@ -311,6 +317,7 @@ def build_headline_json(reports: list[dict]) -> list[dict]:
             "matmul_inf_cliff": matmul,
             "slice_x16_cliff": slice_cell,
             "reduce_exact_sum": reduce_cell,
+            "timestamp_utc": env.get("timestamp_utc"),
         })
     return rows
 
