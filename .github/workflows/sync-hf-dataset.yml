@@ -1,0 +1,28 @@
+name: Sync HF dataset
+
+# Mirror committed roofline datapoints to the aneforge/ane-rooflines Hugging Face dataset
+# whenever they change on main. No-op (stays green) unless the HF_TOKEN secret is set.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bench/results/rooflines.json"
+      - "bench/results/ROOFLINES.md"
+      - "bench/results/rooflines/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install huggingface_hub
+      - run: python scripts/sync_hf_dataset.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
