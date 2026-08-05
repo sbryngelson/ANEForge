@@ -7,6 +7,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2606.17090-b31b1b.svg)](https://arxiv.org/abs/2606.17090)
 [![ANE guide](https://img.shields.io/badge/ANE%20guide-arXiv%202606.22283-b31b1b.svg)](https://arxiv.org/abs/2606.22283)
 [![Zenodo](https://zenodo.org/badge/DOI/10.5281/zenodo.20672609.svg)](https://doi.org/10.5281/zenodo.20672609)
+[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-aneforge-ffce1c.svg)](https://huggingface.co/aneforge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e6b69.svg)](LICENSE)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-macOS%2014%2B-b84310.svg)](#install)
 
@@ -123,9 +124,10 @@ Reproduce with [`bench/device_compare_wattcomplete.py`](bench/device_compare_wat
 > measures its numeric cliffs -- the magnitudes where fp16 on the engine silently goes
 > wrong, which differ by silicon -- plus, on AC power, the full performance battery.
 > PR the JSON and your chip joins the cross-hardware table in
-> [`bench/results/ROOFLINES.md`](bench/results/ROOFLINES.md), auto-credited to your
-> GitHub handle. We especially want chips we don't own: see the pinned issue
-> [#137](https://github.com/sbryngelson/ANEForge/issues/137).
+> [`bench/results/ROOFLINES.md`](bench/results/ROOFLINES.md) and the interactive
+> [**ANE leaderboard**](https://huggingface.co/spaces/aneforge/ane-leaderboard) on Hugging Face,
+> auto-credited to your GitHub handle. We especially want chips we don't own: see the pinned
+> issue [#137](https://github.com/sbryngelson/ANEForge/issues/137).
 
 ## A fluid simulation on the Neural Engine
 
