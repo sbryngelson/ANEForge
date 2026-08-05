@@ -34,6 +34,58 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
+# Paths the suite itself rewrites while it runs, excluded from the `dirty` check.
+#
+# Each perf step writes its raw output to a TRACKED file under bench/results/
+# (bench/roofline_suite.py's PERF_FAST/PERF_FULL tables), and the next step reads
+# it as input - roofline_analysis.py consumes device_saturation_sweep_results.json.
+# So by the time the fingerprint is taken, the suite has modified tracked files by
+# doing exactly what it is supposed to do, and `git status --porcelain` reports
+# them. That made every --perf submission from a pristine checkout self-report
+# `dirty: true`, which defeats the field: it could not distinguish "the contributor
+# had uncommitted edits" from "the suite wrote its own outputs".
+#
+# Matched against porcelain paths (repo-relative, forward slashes).
+_SUITE_WRITES_GLOBS = (
+    "bench/results/*_results.json",
+)
+
+
+def _is_suite_output(path: str) -> bool:
+    """True if `path` is a file the suite rewrites as part of running.
+
+    Uses PurePosixPath.match, not fnmatch: fnmatch lets `*` cross `/`, which would
+    also swallow bench/results/<subdir>/*_results.json - and bench/results/rooflines/
+    holds the committed submissions, which must stay visible as real changes."""
+    from pathlib import PurePosixPath
+    p = PurePosixPath(path)
+    return any(p.match(g) and len(p.parts) == len(PurePosixPath(g).parts)
+               for g in _SUITE_WRITES_GLOBS)
+
+
+def _porcelain_paths(status: str) -> list[str]:
+    """Repo-relative paths from `git status --porcelain` output.
+
+    Porcelain v1 lines are 'XY <path>', and renames are 'XY <old> -> <new>' - we
+    take the destination. Paths containing special characters come back quoted;
+    strip the quotes so the globs match.
+
+    Splits on whitespace instead of slicing line[3:]: _git() strips the whole
+    stdout, so a leading ' M' (modified, unstaged - the common case) loses its
+    first space and a fixed offset would eat a character off the first path,
+    turning bench/... into ench/... and silently failing to match.
+    """
+    paths = []
+    for line in status.splitlines():
+        parts = line.strip().split(maxsplit=1)      # ['XY', '<path...>']
+        if len(parts) != 2:
+            continue
+        p = parts[1]
+        if " -> " in p:                             # rename/copy: score the destination
+            p = p.split(" -> ", 1)[1]
+        paths.append(p.strip().strip('"'))
+    return paths
+
 
 def _sysctl(key: str) -> str | None:
     try:
@@ -147,14 +199,21 @@ def _git_info() -> dict:
     uncommitted edits - so results taken 'today' may not match main tomorrow. We
     pin all of it: the exact HEAD, dirty flag, and the main merge-base (the commit
     on main this code derives from) plus ahead/behind counts. main_ref prefers the
-    canonical remote (origin/main) over a possibly-stale local main."""
+    canonical remote (origin/main) over a possibly-stale local main.
+
+    `dirty` ignores the suite's own outputs (see _SUITE_WRITES_GLOBS) so it means
+    "the contributor's tree differed from HEAD", not "the benchmark ran"."""
     commit = _git("rev-parse", "HEAD")
     status = _git("status", "--porcelain")
+    dirty = None
+    if status is not None:
+        edits = [p for p in _porcelain_paths(status) if not _is_suite_output(p)]
+        dirty = bool(edits)
     info = {
         "commit": commit,
         "short": commit[:12] if commit else None,
         "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
-        "dirty": bool(status) if status is not None else None,
+        "dirty": dirty,
     }
 
     # relationship to canonical main (prefer origin/main; fall back to local main)
