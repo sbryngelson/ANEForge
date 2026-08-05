@@ -40,6 +40,18 @@ demo logic itself stays in each file so every example is self-contained.
 - `sentence_embeddings.py` - all-MiniLM-L6-v2 + a tiny semantic search.
 - `superres_espcn.py` - ESPCN super-resolution (sub-pixel conv / pixel-shuffle).
 
+**DSP / embeddings / ONNX**
+
+| Demo | What it shows |
+|------|---------------|
+| `fft.py` | Staged Cooley-Tukey as dense-DFT matmuls (sub-quadratic MACs). |
+| `spectral_analysis.py` | Real-input DFT as a twiddle-matrix matmul, fused into one program and validated vs `numpy.fft`. |
+| `sentence_embeddings.py` | all-MiniLM-L6-v2 sentence encoder on the ANE with a tiny semantic search, validated vs fp32. |
+| `sentence_transformers_ane.py` | Drop-in `sentence-transformers` `SentenceTransformer` running the encoder on the ANE. |
+| `rag_embeddings.py` | ANEForge embeddings as a LangChain `Embeddings` adapter for RAG, running on the ANE. |
+| `onnx_import.py` | Import an ONNX model and run it on the ANE, validated against onnxruntime. |
+| `onnx_finetune.py` | Transfer-learning from an imported ONNX model entirely on the ANE: frozen feature extractor + a fresh linear head trained on-engine. |
+
 **Training fully on the ANE** (forward + backward + Adam, K steps unrolled into one
 program per dispatch - no per-step host loop, and optimizer state stays RESIDENT
 on-device across dispatches; via `af.UnrolledTrainer`)
