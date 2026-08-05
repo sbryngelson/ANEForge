@@ -153,6 +153,71 @@ class Encoder:
     return np.asarray(vecs, dtype=np.float32)
 
 
+class CrossEncoder:
+  """Reranker: scores (query, passage) pairs with a BERT-family sequence-classification
+  model, the transformer running on the ANE. Mirrors `sentence_transformers.CrossEncoder`:
+  `CrossEncoder(name).predict([(query, passage), ...])` returns one relevance score per pair
+  (raw logits -- order is what a reranker needs). Higher is more relevant."""
+
+  def __init__(self, name: str, int8: bool = False) -> None:
+    from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # lazy
+    cfg = AutoConfig.from_pretrained(name)
+    self.tok = AutoTokenizer.from_pretrained(name)
+    sd = AutoModelForSequenceClassification.from_pretrained(name).state_dict()
+    g = lambda k: sd[k].detach().numpy().astype(np.float32)
+    # The base transformer sits under a model-specific prefix (bert / roberta / ...).
+    marker = ".embeddings.word_embeddings.weight"
+    pref = next((k[: -len(marker)] for k in sd if k.endswith(marker)), None)
+    if pref is None or f"{pref}.pooler.dense.weight" not in sd or "classifier.weight" not in sd:
+      raise ValueError(
+        f"CrossEncoder: {name!r} is not a supported reranker -- it needs a BERT-family "
+        "sequence-classification head (token-type embeddings, a pooler, and a classifier). "
+        "RoBERTa/DistilBERT-style heads are not handled yet.")
+    self.D, self.H = cfg.hidden_size, cfg.num_attention_heads
+    self.L, self.eps, self.int8 = cfg.num_hidden_layers, cfg.layer_norm_eps, int8
+    self.word = g(f"{pref}.embeddings.word_embeddings.weight")
+    self.pos = g(f"{pref}.embeddings.position_embeddings.weight")
+    self.typ = g(f"{pref}.embeddings.token_type_embeddings.weight")
+    self.eln_w, self.eln_b = g(f"{pref}.embeddings.LayerNorm.weight"), g(f"{pref}.embeddings.LayerNorm.bias")
+    self.layers = [{k: g(f"{pref}.encoder.layer.{i}." + v) for k, v in _BERT_KEYS.items()}
+                   for i in range(self.L)]
+    self.pool_w, self.pool_b = g(f"{pref}.pooler.dense.weight"), g(f"{pref}.pooler.dense.bias")
+    self.cls_w, self.cls_b = g("classifier.weight"), g("classifier.bias")
+    self._cache: dict[int, Model | SegmentedModel] = {}
+
+  def _build(self, S: int) -> Model | SegmentedModel:
+    h = input((S, self.D))
+    for w in self.layers:
+      attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H)
+      h = (h + attn).layer_norm(w["ln1w"], w["ln1b"], self.eps)
+      ff = h.linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
+      h = (h + ff).layer_norm(w["ln2w"], w["ln2b"], self.eps)
+    return compile(h, int8=self.int8)
+
+  def _embed(self, ids: np.ndarray, typ_ids: np.ndarray) -> np.ndarray:
+    """Host-side token + position + segment embedding lookup, then LayerNorm."""
+    e = self.word[ids] + self.pos[np.arange(len(ids))] + self.typ[typ_ids]
+    m = e.mean(-1, keepdims=True)
+    v = ((e - m) ** 2).mean(-1, keepdims=True)
+    return ((e - m) / np.sqrt(v + self.eps) * self.eln_w + self.eln_b).astype(np.float32)
+
+  def predict(self, pairs) -> np.ndarray:
+    """`pairs` is a (query, passage) tuple or a list of them; returns a relevance score each."""
+    if pairs and isinstance(pairs[0], str):     # a single (query, passage) pair
+      pairs = [pairs]
+    scores = []
+    for query, passage in pairs:
+      enc = self.tok(query, passage, truncation=True)
+      ids = np.asarray(enc["input_ids"], dtype=np.int64)
+      typ = np.asarray(enc.get("token_type_ids") or [0] * len(ids), dtype=np.int64)
+      net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
+      cls = net(self._embed(ids, typ))[0]                              # [CLS] state, on the ANE
+      pooled = np.tanh(cls @ self.pool_w.T + self.pool_b)              # BERT pooler
+      logits = pooled @ self.cls_w.T + self.cls_b                      # [num_labels]
+      scores.append(float(logits[0]))
+    return np.asarray(scores, dtype=np.float32)
+
+
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):
   """Any-batch GroupNorm with trainable affine, built from VJP-bearing primitives; `x` is [N,C,H,W], gamma/beta [1,C,1,1]."""
   N, C, H, W = x.shape
