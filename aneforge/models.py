@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .graph import Tensor, conv, input, mha
+from .graph import Tensor, concat, conv, input, mha, space_to_depth
 from .autograd import conv2d, conv_param, parameter
 from ._compile import Model, SegmentedModel, compile
 
@@ -151,6 +151,172 @@ class Encoder:
         v = _l2_normalizer(self.D)(v.reshape(1, self.D))[0]
       vecs.append(v)
     return np.asarray(vecs, dtype=np.float32)
+
+
+class CrossEncoder:
+  """Reranker: scores (query, passage) pairs with a BERT-family sequence-classification
+  model, the transformer running on the ANE. Mirrors `sentence_transformers.CrossEncoder`:
+  `CrossEncoder(name).predict([(query, passage), ...])` returns one relevance score per pair
+  (raw logits -- order is what a reranker needs). Higher is more relevant."""
+
+  def __init__(self, name: str, int8: bool = False) -> None:
+    from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # lazy
+    cfg = AutoConfig.from_pretrained(name)
+    self.tok = AutoTokenizer.from_pretrained(name)
+    sd = AutoModelForSequenceClassification.from_pretrained(name).state_dict()
+    g = lambda k: sd[k].detach().numpy().astype(np.float32)
+    # The base transformer sits under a model-specific prefix (bert / roberta / ...).
+    marker = ".embeddings.word_embeddings.weight"
+    pref = next((k[: -len(marker)] for k in sd if k.endswith(marker)), None)
+    if pref is None or f"{pref}.pooler.dense.weight" not in sd or "classifier.weight" not in sd:
+      raise ValueError(
+        f"CrossEncoder: {name!r} is not a supported reranker -- it needs a BERT-family "
+        "sequence-classification head (token-type embeddings, a pooler, and a classifier). "
+        "RoBERTa/DistilBERT-style heads are not handled yet.")
+    self.D, self.H = cfg.hidden_size, cfg.num_attention_heads
+    self.L, self.eps, self.int8 = cfg.num_hidden_layers, cfg.layer_norm_eps, int8
+    self.word = g(f"{pref}.embeddings.word_embeddings.weight")
+    self.pos = g(f"{pref}.embeddings.position_embeddings.weight")
+    self.typ = g(f"{pref}.embeddings.token_type_embeddings.weight")
+    self.eln_w, self.eln_b = g(f"{pref}.embeddings.LayerNorm.weight"), g(f"{pref}.embeddings.LayerNorm.bias")
+    self.layers = [{k: g(f"{pref}.encoder.layer.{i}." + v) for k, v in _BERT_KEYS.items()}
+                   for i in range(self.L)]
+    self.pool_w, self.pool_b = g(f"{pref}.pooler.dense.weight"), g(f"{pref}.pooler.dense.bias")
+    self.cls_w, self.cls_b = g("classifier.weight"), g("classifier.bias")
+    self._cache: dict[int, Model | SegmentedModel] = {}
+
+  def _build(self, S: int) -> Model | SegmentedModel:
+    h = input((S, self.D))
+    for w in self.layers:
+      attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H)
+      h = (h + attn).layer_norm(w["ln1w"], w["ln1b"], self.eps)
+      ff = h.linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
+      h = (h + ff).layer_norm(w["ln2w"], w["ln2b"], self.eps)
+    return compile(h, int8=self.int8)
+
+  def _embed(self, ids: np.ndarray, typ_ids: np.ndarray) -> np.ndarray:
+    """Host-side token + position + segment embedding lookup, then LayerNorm."""
+    e = self.word[ids] + self.pos[np.arange(len(ids))] + self.typ[typ_ids]
+    m = e.mean(-1, keepdims=True)
+    v = ((e - m) ** 2).mean(-1, keepdims=True)
+    return ((e - m) / np.sqrt(v + self.eps) * self.eln_w + self.eln_b).astype(np.float32)
+
+  def predict(self, pairs) -> np.ndarray:
+    """`pairs` is a (query, passage) tuple or a list of them; returns a relevance score each."""
+    if pairs and isinstance(pairs[0], str):     # a single (query, passage) pair
+      pairs = [pairs]
+    scores = []
+    for query, passage in pairs:
+      enc = self.tok(query, passage, truncation=True)
+      ids = np.asarray(enc["input_ids"], dtype=np.int64)
+      typ = np.asarray(enc.get("token_type_ids") or [0] * len(ids), dtype=np.int64)
+      net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
+      cls = net(self._embed(ids, typ))[0]                              # [CLS] state, on the ANE
+      pooled = np.tanh(cls @ self.pool_w.T + self.pool_b)              # BERT pooler
+      logits = pooled @ self.cls_w.T + self.cls_b                      # [num_labels]
+      scores.append(float(logits[0]))
+    return np.asarray(scores, dtype=np.float32)
+
+
+def load_vit(name: str, int8: bool = False) -> "ViT":
+  """Load a Hugging Face ViT image classifier (ViTForImageClassification) as a fused ANE program."""
+  return ViT(name, int8=int8)
+
+
+def _row0(h: Tensor) -> Tensor:
+  """Row 0 of h [M, D] -> [1, D] via a one-hot picker matmul (a bare row slice is walled on the ANE)."""
+  M, _ = h.shape
+  return h.transpose([1, 0]).linear(np.eye(1, M, dtype=np.float32)).transpose([1, 0])
+
+
+def _vit_layer_keys(sd: dict, pref: str) -> tuple[str, dict]:
+  """(layer-prefix format, key map) for a HF ViT encoder, handling both the modern
+  (`<base>.layers.{i}.attention.q_proj`, `mlp.fc1/fc2`) and the legacy
+  (`<base>.encoder.layer.{i}.attention.attention.query`, `intermediate.dense`) namings."""
+  if f"{pref}.layers.0.attention.q_proj.weight" in sd:
+    return (pref + ".layers.{i}.",
+            {"q": "attention.q_proj", "k": "attention.k_proj", "v": "attention.v_proj",
+             "o": "attention.o_proj", "ln1": "layernorm_before", "ln2": "layernorm_after",
+             "fc1": "mlp.fc1", "fc2": "mlp.fc2"})
+  return (pref + ".encoder.layer.{i}.",
+          {"q": "attention.attention.query", "k": "attention.attention.key",
+           "v": "attention.attention.value", "o": "attention.output.dense",
+           "ln1": "layernorm_before", "ln2": "layernorm_after",
+           "fc1": "intermediate.dense", "fc2": "output.dense"})
+
+
+class ViT:
+  """Vision Transformer image classifier from Hugging Face, running on the ANE.
+  `ViT(name)(image)` returns logits [1, num_labels]; `.classify(image)` returns top labels.
+  Scope: ViT-family classifiers with a CLS token and a pre-norm encoder (ViTForImageClassification
+  and compatible DeiT/BEiT-style models)."""
+
+  def __init__(self, name: str, int8: bool = False) -> None:
+    from transformers import AutoConfig, AutoImageProcessor, AutoModelForImageClassification  # lazy
+    cfg = AutoConfig.from_pretrained(name)
+    self.proc = AutoImageProcessor.from_pretrained(name)
+    sd = {k: v.detach().numpy().astype(np.float32)
+          for k, v in AutoModelForImageClassification.from_pretrained(name).state_dict().items()}
+    marker = ".embeddings.cls_token"
+    pref = next((k[: -len(marker)] for k in sd if k.endswith(marker)), None)
+    if pref is None or "classifier.weight" not in sd:
+      raise ValueError(f"load_vit: {name!r} is not a ViT-family image classifier with a CLS token "
+                       "(needs <base>.embeddings.cls_token and a classifier head).")
+    self.int8 = int8
+    self.D, self.H, self.L = cfg.hidden_size, cfg.num_attention_heads, cfg.num_hidden_layers
+    self.P, self.img, self.eps = cfg.patch_size, cfg.image_size, cfg.layer_norm_eps
+    self.id2label = getattr(cfg, "id2label", {}) or {}
+    self._pref, self._g = pref, (lambda k: sd[k])
+    self._lfmt, self._km = _vit_layer_keys(sd, pref)
+    n = (self.img // self.P) ** 2                                      # number of patches
+    self._cls = sd[f"{pref}.embeddings.cls_token"].reshape(1, self.D)
+    self._pos = sd[f"{pref}.embeddings.position_embeddings"].reshape(n + 1, self.D)
+    self._model = self._build(n)
+
+  def _build(self, n: int) -> Model | SegmentedModel:
+    g, pref, D, eps, H = self._g, self._pref, self.D, self.eps, self.H
+    x = input((1, 3, self.img, self.img)); cls = input((1, D)); pos = input((n + 1, D))
+    # a strided PxP patch conv is walled on the ANE -> space_to_depth(P) + a 1x1 conv
+    w_pe = np.ascontiguousarray(
+      g(f"{pref}.embeddings.patch_embeddings.projection.weight").transpose(0, 2, 3, 1)).reshape(D, -1, 1, 1)
+    h = conv(space_to_depth(x, self.P), w_pe,
+             bias=g(f"{pref}.embeddings.patch_embeddings.projection.bias"))
+    patches = h.reshape(1, D, n).transpose([0, 2, 1]).reshape(n, D)
+    seq = concat([cls, patches], axis=0) + pos
+    km = self._km
+    for i in range(self.L):
+      p = self._lfmt.format(i=i)
+      xn = seq.layer_norm(g(p + km["ln1"] + ".weight"), g(p + km["ln1"] + ".bias"), eps)
+      attn = mha(xn,
+                 g(p + km["q"] + ".weight"), g(p + km["q"] + ".bias"),
+                 g(p + km["k"] + ".weight"), g(p + km["k"] + ".bias"),
+                 g(p + km["v"] + ".weight"), g(p + km["v"] + ".bias"),
+                 g(p + km["o"] + ".weight"), g(p + km["o"] + ".bias"), H)
+      seq = seq + attn
+      yn = seq.layer_norm(g(p + km["ln2"] + ".weight"), g(p + km["ln2"] + ".bias"), eps)
+      y = yn.linear(g(p + km["fc1"] + ".weight"), g(p + km["fc1"] + ".bias")).gelu()
+      seq = seq + y.linear(g(p + km["fc2"] + ".weight"), g(p + km["fc2"] + ".bias"))
+    seq = seq.layer_norm(g(f"{pref}.layernorm.weight"), g(f"{pref}.layernorm.bias"), eps)
+    return compile(_row0(seq).linear(g("classifier.weight"), g("classifier.bias")), int8=self.int8)
+
+  def _pixels(self, image) -> np.ndarray:
+    if isinstance(image, np.ndarray) and image.ndim == 4:
+      return image.astype(np.float32)
+    return np.asarray(self.proc(image, return_tensors="np")["pixel_values"], np.float32)
+
+  def __call__(self, image) -> np.ndarray:
+    return np.asarray(self._model(self._pixels(image), self._cls, self._pos), np.float32)
+
+  def classify(self, image, top_k: int = 5):
+    """Top-k (label, logit) for an image (PIL, path, or preprocessed pixel array)."""
+    logits = self(image)[0]
+    return [(self.id2label.get(int(i), str(int(i))), float(logits[i]))
+            for i in np.argsort(-logits)[:top_k]]
+
+  def release(self) -> None: self._model.release()
+
+  @property
+  def n_ops(self) -> int: return self._model.n_ops
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):

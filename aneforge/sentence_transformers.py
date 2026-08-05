@@ -8,7 +8,9 @@ import os
 
 import numpy as np
 
-from .models import Encoder
+from .models import CrossEncoder, Encoder  # Encoder backs the drop-in; CrossEncoder is re-exported
+
+__all__ = ["SentenceTransformer", "CrossEncoder"]
 
 
 def _read_text(name: str, rel: str) -> str | None:
