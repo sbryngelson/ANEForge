@@ -249,6 +249,13 @@ centers badly:
 - **erfc** is evaluated directly (A&S 7.1.26), *not* as `1 - erf`: in fp16,
   `1 - erf(x)` cancels to 0 for x > ~2 (`fp16(1 - erf(3)) == 0`, but
   `erfc(3) = 2.2e-5`).
+- **erf** is the mirror case, and gets its own polynomial for the same reason:
+  `x * P(x^2)`, a deg-5 minimax of `erf(x)/x` on [0, 2], *not* `1 - erfc`. Near 0
+  `erf` is small while `erfc → 1`, so the subtraction cancels exactly where `erf`
+  is wanted: on `geomspace(1e-3, 1)` the naive form is off by **187%** against
+  0.10% for the direct one, and it returns `-0.000977` at `x = 0` — a negative
+  value for a function that is odd through the origin. Past |x| ~ 2 the two swap
+  roles and `1 - erfc(|x|)` is the accurate path, since there `erfc` is small.
 - **lgamma / gamma** evaluate in a *centered* variable (`x - 4.5`, `x - 1.5`). A raw
   Horner in `x` has terms up to ~1e7 with alternating large coefficients that cancel
   catastrophically (abserr ~8); centering keeps the powers small and the chain

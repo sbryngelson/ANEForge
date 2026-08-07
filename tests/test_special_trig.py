@@ -51,3 +51,35 @@ def test_log1p_still_works_after_const_change():
   out = _run(special.log1p, x)
   ref = np.log1p(x.astype(np.float32))
   assert np.abs(out - ref).max() / (np.abs(ref).max() + 1e-6) < 5e-2
+
+
+def test_erf_matches_scipy_on_device():
+  import scipy.special as sp
+  x = np.linspace(-2.0, 2.0, 128).astype(np.float16).reshape(1, 128)
+  out = _run(special.erf, x)
+  assert np.abs(out - sp.erf(x.astype(np.float32))).max() < 3e-3
+
+
+def test_erf_is_accurate_near_zero_where_one_minus_erfc_is_not():
+  # erf's whole reason to exist as its own function: 1 - erfc(x) cancels for
+  # small x, where erf is small and erfc -> 1. Per-point relative error, on a
+  # geometric grid so small x is actually sampled.
+  import scipy.special as sp
+  x = np.geomspace(1e-3, 1.0, 64).astype(np.float16).reshape(1, 64)
+  ref = sp.erf(x.astype(np.float32))
+  direct = _run(special.erf, x)
+  naive = 1.0 - _run(special.erfc, x)
+  direct_err = np.abs((direct - ref) / ref).max()
+  naive_err = np.abs((naive - ref) / ref).max()
+  assert direct_err < 5e-3, direct_err
+  # the naive form is off by more than 100% somewhere on this grid
+  assert naive_err > 1.0, naive_err
+  assert direct_err < naive_err / 100
+
+
+def test_erf_is_odd_and_exactly_zero_at_the_origin():
+  x = np.linspace(-0.5, 0.5, 65).astype(np.float16).reshape(1, 65)  # odd count -> hits 0
+  out = _run(special.erf, x)
+  assert (np.abs(x[0]) < 1e-6).any(), "grid must contain 0"
+  assert np.abs(out[0][np.abs(x[0]) < 1e-6]).max() == 0.0
+  assert np.abs(out[0] + out[0][::-1]).max() < 1e-3
