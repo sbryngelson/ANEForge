@@ -61,6 +61,20 @@ def erfc(x: Tensor) -> Tensor:
   return poly * (x * x * -1.0).exp()
 
 
+# erf: direct deg-5 minimax of erf(x)/x in x^2 on [0, 2], NOT 1 - erfc(x).
+# erf is small near 0 while erfc -> 1, so `1 - erfc` cancels exactly where erf is
+# wanted: in fp16 it gives 22% relative error at x = 0.01 and returns -0.000977
+# at x = 0 (a negative value for a function that is odd through the origin).
+# Same x*poly(x^2) shape as `sin`; leading coefficient recovers 2/sqrt(pi).
+_ERF_P = [1.128338362755043, -0.3752941986401827, 0.1100666568321253,
+          -0.02340602798434916, 0.003153058641086897, -0.0001952199570501452]
+
+
+def erf(x: Tensor) -> Tensor:
+  """Error function erf(x) for |x| <= 2, as x*poly(x^2) (deg-5 minimax of erf(x)/x); odd, so it holds for negative x. Past |x| ~ 2 use 1 - erfc(|x|), where erfc is small and the subtraction no longer cancels."""
+  return x * _poly_in(x * x, _ERF_P)
+
+
 # expm1 / log1p - the small-argument cancellation pair
 
 def expm1(x: Tensor) -> Tensor:
@@ -157,7 +171,7 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
 
 
 __all__ = [
-    "sin", "cos", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
+    "sin", "cos", "erf", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
     "bessel_j0", "bessel_i0", "bessel_k0", "exp_wide", "log_wide",
 ]
 
@@ -198,6 +212,27 @@ if __name__ == "__main__":
   results.append(("erfc", "[0, 6]", "relerr", e,
                   f"PASS (~{e:.1e}); direct form, no cancel (1-erf(3) fp16 = "
                   f"{np.float32(np.float16(1.0)-np.float16(sp.erf(3.0))):.0e})"))
+
+  # erf - the mirror of erfc's cancellation: 1-erfc is wrong exactly near 0.
+  # Per-point relerr, not the max-normalized relerr() above: dividing by
+  # |ref|.max() (~1) would hide precisely the small-x error this is about.
+  xs, out = run(erf, 1e-3, 1.0, geom=True)
+  ref = sp.erf(xs[0])
+  e = float(np.abs((out - ref) / ref).max())
+  # The real alternative is 1 - THIS module's fp16 erfc, not 1 - scipy's.
+  _xn, _erfc_on_ane = run(erfc, 1e-3, 1.0, geom=True)
+  naive = 1.0 - _erfc_on_ane
+  ne = float(np.abs((naive - ref) / ref).max())
+  results.append(("erf", "[1e-3, 1] geom", "relerr", e,
+                  f"PASS (~{e:.1e}); direct x*poly, vs {ne:.0%} for 1-erfc(x) "
+                  f"on the same grid"))
+
+  # erf at 0 and its oddness (1 - erfc returns -0.000977 here)
+  xs, out = run(erf, -0.5, 0.5)
+  z = float(np.abs(out[0][np.abs(xs[0]) < 1e-6]).max()) if (np.abs(xs[0]) < 1e-6).any() else 0.0
+  odd = float(np.abs(out[0] + out[0][::-1]).max())     # erf(-x) == -erf(x)
+  results.append(("erf (odd/zero)", "[-0.5, 0.5]", "abserr", max(z, odd),
+                  "PASS; sign-symmetric and exactly 0 at the origin"))
 
   # expm1
   xs, out = run(expm1, -0.7, 0.7)
