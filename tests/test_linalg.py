@@ -389,3 +389,89 @@ def test_expm_rejects():
   A = f16(np.random.default_rng(44).standard_normal((4, 4)) * 0.1)
   with pytest.raises(ValueError): L.expm(np.zeros((2, 3), f16))     # not square
   with pytest.raises(ValueError): L.expm(A, order=0)                # needs at least one term
+
+
+# ------------------------------- inv, lstsq ------------------------------- #
+
+@pytest.mark.parametrize("n", [4, 6, 8])
+def test_inv_matches_numpy(n):
+  A = f16(_square(n, 10.0, 50 + n))
+  got = L.inv(A)
+  ref = np.linalg.inv(A.astype(np.float64))
+  assert got.shape == (n, n)
+  assert relerr(got, ref) <= 1e-2, f"inv n={n}: relerr {relerr(got, ref)}"
+
+
+def test_inv_times_a_is_identity():
+  # the property a caller relies on, checked without a reference inverse
+  n = 6
+  A = f16(_square(n, 5.0, 51))
+  prod = A.astype(np.float64) @ L.inv(A).astype(np.float64)
+  assert np.abs(prod - np.eye(n)).max() <= 2e-2
+
+
+def test_inv_agrees_with_solve_column_by_column():
+  # inv is the matrix solve against I, so column j must be solve(A, e_j)
+  n = 5
+  A = f16(_square(n, 5.0, 52))
+  got = L.inv(A)
+  for j in range(n):
+    e = np.zeros(n, f16); e[j] = 1.0
+    assert relerr(got[:, j], L.solve(A, e)) <= 5e-3, f"column {j} disagrees with solve"
+
+
+def test_inv_rejects():
+  with pytest.raises(ValueError): L.inv(np.zeros((3, 4), f16))          # not square
+  with pytest.raises(ValueError): L.inv(np.zeros(4, f16))               # not 2-D
+  with pytest.raises(np.linalg.LinAlgError): L.inv(np.zeros((3, 3), f16))   # singular
+
+
+@pytest.mark.parametrize("shape", [(10, 4), (16, 6), (12, 12)])
+def test_lstsq_matches_numpy(shape):
+  m, n = shape
+  A = f16(_general(m, n, 10.0, 60 + m))
+  b = f16(np.random.default_rng(60 + m).standard_normal(m))
+  got = L.lstsq(A, b)
+  ref = np.linalg.lstsq(A.astype(np.float64), b.astype(np.float64), rcond=None)[0]
+  assert got.shape == (n,)
+  assert relerr(got, ref) <= 1e-2, f"lstsq {shape}: relerr {relerr(got, ref)}"
+
+
+def test_lstsq_residual_is_orthogonal_to_the_column_space():
+  # the defining property of a least-squares solution: A^T (A x - b) ~ 0, no reference solver needed
+  m, n = 14, 5
+  A = f16(_general(m, n, 5.0, 61))
+  b = f16(np.random.default_rng(61).standard_normal(m))
+  A64 = A.astype(np.float64)
+  res = A64 @ L.lstsq(A, b).astype(np.float64) - b.astype(np.float64)
+  scale = np.linalg.norm(A64, 2) * np.linalg.norm(b.astype(np.float64))
+  assert np.abs(A64.T @ res).max() / scale <= 2e-2
+
+
+def test_lstsq_matrix_rhs():
+  m, n, k = 10, 4, 3
+  A = f16(_general(m, n, 5.0, 62))
+  B = f16(np.random.default_rng(62).standard_normal((m, k)))
+  got = L.lstsq(A, B)
+  ref = np.linalg.lstsq(A.astype(np.float64), B.astype(np.float64), rcond=None)[0]
+  assert got.shape == (n, k), got.shape
+  assert relerr(got, ref) <= 1e-2
+  for j in range(k):                                    # column j == solving that column alone
+    assert relerr(got[:, j], L.lstsq(A, B[:, j])) <= 5e-3, f"column {j} disagrees"
+
+
+def test_lstsq_beats_normal_equations_on_a_squared_condition_number():
+  # why QR and not A^T A: squaring squares the condition number, so least_squares loses accuracy
+  # on a case QR still resolves
+  m, n = 12, 4
+  A = f16(_general(m, n, 60.0, 63))
+  x = np.random.default_rng(63).standard_normal(n)
+  b = f16(A.astype(np.float64) @ x)
+  assert relerr(L.lstsq(A, b), x) < relerr(L.least_squares(A, b), x)
+
+
+def test_lstsq_rejects():
+  with pytest.raises(ValueError): L.lstsq(np.zeros((4, 10), f16), np.zeros(4, f16))    # m < n
+  with pytest.raises(ValueError): L.lstsq(np.zeros(4, f16), np.zeros(4, f16))          # not 2-D
+  with pytest.raises(ValueError): L.lstsq(np.zeros((10, 4), f16), np.zeros(9, f16))    # b rows != m
+  with pytest.raises(np.linalg.LinAlgError): L.lstsq(np.zeros((10, 4), f16), np.zeros(10, f16))
