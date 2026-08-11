@@ -44,9 +44,11 @@ Peak ANE numbers only; the full per-size sweeps, all-engine comparison, and per-
 | Apple M1 | MacBookPro17,1 | 2.7 | 0.86 | 3149 | 442 | n/a | ac |
 | Apple M1 Max | MacBookPro18,2 | 4.6 | 7.4 | 616 | 897 | 244 | ac (high-power) |
 | Apple M2 Pro | Mac14,12 | 3.4 | 0.98 | 3429 | 744 | 276 | ac |
-| Apple M4 | Mac16,12 | 5.4 | 7.7 | 708 | 1112 | 23 | ac |
+| Apple M4 | Mac16,12 | 5.4 | 7.7 | 708 | 1112 | - | ac |
 | Apple M5 | Mac17,3 | 8.7 | 20 | 431 | 1184 | 228 | ac |
-| Apple M5 Pro | Mac17,8 | 10.0 | 24 | 418 | 918 | 117 | ac (high-power) |
+| Apple M5 Pro | Mac17,8 | 10.0 | 24 | 418 | 918 | - | ac (high-power) |
 
 _`n/a` decode = a stale datapoint from before the tiled vocab head (#181). The old untiled 32000-vocab lm_head exceeds the 16384 max matmul dimension on the A13-A15 families, so only A16+ (M5) reported. The tiled head fixes this; the older machines re-run to populate it. Until then, use **Peak fp16 GEMM (TF/s)** as the headline._
+
+_Blank decode (Apple M4, Apple M5 Pro): the submission measured decode with `--perf-full`, whose model is ~4x heavier than the canonical `--perf` model, so its tok/s is real but not comparable to the other rows. It is dropped from this column rather than ranked against a different model; re-run decode in the default (`--perf`) mode to populate it._
 
