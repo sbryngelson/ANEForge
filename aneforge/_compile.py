@@ -726,9 +726,16 @@ def _e_rms_norm(em, t, n, s):
 
 @op("layer_norm")
 def _e_layer_norm(em, t, n, s):
+  # The affine consts stay on the LAST axis at rank 2, applied AFTER the reshape back, not inside the
+  # rank-4 body. A non-uniform const multiplied between the reshape-in and reshape-out fails
+  # ANECCompile from D=1024 up (#162), and it is non-uniformity that trips it, not being runtime:
+  # a gamma differing in one element out of 1024 fails exactly like a random one, while an all-equal
+  # vector compiles. Not the channel axis per se -- channel_layer_norm applies the same [1,C,1,1]
+  # const at [512,1024,1,1] with no reshape pair and compiles. The reduce still needs the rank-4
+  # form, so only the affine moves.
   M, D = t.shape[0], t.shape[-1]
-  g4 = em.weight(f"{n}_g", t.attrs["gamma"].reshape(1, D, 1, 1), allow_int8=False)
-  b4 = em.weight(f"{n}_b", t.attrs["beta"].reshape(1, D, 1, 1), allow_int8=False)
+  g2 = em.weight(f"{n}_g", t.attrs["gamma"].reshape(1, D), allow_int8=False)
+  b2 = em.weight(f"{n}_b", t.attrs["beta"].reshape(1, D), allow_int8=False)
   eps = float(np.float16(t.attrs["eps"])).hex()
   em.line(f'tensor<int32,[4]> {n}_rs = const()[name=string("{n}_rs"), val=tensor<int32,[4]>([{M},{D},1,1])];')
   em.line(f'tensor<int32,[{len(t.shape)}]> {n}_ro = const()[name=string("{n}_ro"), val=tensor<int32,[{len(t.shape)}]>({list(t.shape)})];')
@@ -743,9 +750,9 @@ def _e_layer_norm(em, t, n, s):
   em.line(f'tensor<fp16,[{M},1,1,1]> {n}_ve = add(x={n}_var, y={n}_ep)[name=string("{n}_ve")];')
   em.line(f'tensor<fp16,[{M},1,1,1]> {n}_rr = rsqrt(epsilon=fp16(0.0), x={n}_ve)[name=string("{n}_rr")];')
   em.line(f'tensor<fp16,[{M},{D},1,1]> {n}_xn = mul(x={n}_xc, y={n}_rr)[name=string("{n}_xn")];')
-  em.line(f'tensor<fp16,[{M},{D},1,1]> {n}_gg = mul(x={n}_xn, y={g4})[name=string("{n}_gg")];')
-  em.line(f'tensor<fp16,[{M},{D},1,1]> {n}_bb = add(x={n}_gg, y={b4})[name=string("{n}_bb")];')
-  em.line(f'{em.ty(t.shape)} {n} = reshape(shape={n}_ro, x={n}_bb)[name=string("{n}")];')
+  em.line(f'{em.ty(t.shape)} {n}_rb = reshape(shape={n}_ro, x={n}_xn)[name=string("{n}_rb")];')
+  em.line(f'{em.ty(t.shape)} {n}_gg = mul(x={n}_rb, y={g2})[name=string("{n}_gg")];')
+  em.line(f'{em.ty(t.shape)} {n} = add(x={n}_gg, y={b2})[name=string("{n}")];')
 
 
 @op("channel_layer_norm")
