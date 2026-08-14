@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 import aneforge as af
-from aneforge._compile import _lower_fused_to_dir
-from aneforge.models import GPT2, _gpt2_layers, _gelu_new, _lm_head_tiles
+from aneforge._compile import MultiModel, _lower_fused_to_dir
+from aneforge.models import GPT2, _gpt2_layers, _gelu_new, _lm_head_tiles, _logits_from
 
 
 def _synthetic_sd(D=16, H=4, L=2, V=100):
@@ -91,3 +91,18 @@ def test_gpt2_tiled_head_lowers():
   wte = np.zeros((50257, 1024), np.float32)
   tiles = _lm_head_tiles(h, wte.astype(np.float16))
   _lower_fused_to_dir(tiles[0], None, int8=True)
+
+
+def test_logits_from_stitches_multimodel_tiles_in_port_order():
+  """A tiled head's per-tile outputs stitch into one [S, vocab] array in output_ports order."""
+  net = MultiModel.__new__(MultiModel)
+  net.output_ports = [(None, "t0"), (None, "t1")]
+  out = {"t0": np.array([[1.0, 2.0]], np.float32), "t1": np.array([[3.0]], np.float32)}
+  stitched = _logits_from(net, out)
+  assert np.array_equal(stitched, np.array([[1.0, 2.0, 3.0]], np.float32))
+
+
+def test_logits_from_passes_through_a_plain_model_output():
+  """A single-tile head (a plain Model, not a MultiModel) passes its output through unchanged."""
+  out = np.array([[9.0, 8.0]], np.float32)
+  assert np.array_equal(_logits_from(object(), out), out)
