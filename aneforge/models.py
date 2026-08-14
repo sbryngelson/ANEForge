@@ -12,6 +12,9 @@ from ._compile import Model, SegmentedModel, MultiModel, compile, compile_multi
 
 _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
 
+# smallest supported matmul output dim on family 3 (A13-A15, M1/M2); see bench/decode_measurement.py:130-135
+_LMHEAD_TILE = 16384
+
 
 def _l2_normalizer(D: int) -> Model | SegmentedModel:
   """Cached fused-ANE program L2-normalizing a [1, D] vector over its last axis."""
@@ -355,10 +358,6 @@ def _gelu_new(x: Tensor) -> Tensor:
   `approximate="tanh"` handler, aneforge/onnx.py:352-360)."""
   inner = (x + x.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
   return (x * 0.5) * inner.tanh().adds(1.0)
-
-
-# smallest supported matmul output dim on family 3 (A13-A15, M1/M2); see bench/decode_measurement.py:130-135
-_LMHEAD_TILE = 16384
 
 
 def _lm_head_tiles(h: Tensor, wte: np.ndarray) -> list[Tensor]:
