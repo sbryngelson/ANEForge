@@ -2,10 +2,11 @@
 off-device MIL lowering (no ANE dispatch; CI-safe). Numerics are validated on-device by
 examples/gpt2.py."""
 import numpy as np
+import pytest
 
 import aneforge as af
 from aneforge._compile import _lower_fused_to_dir
-from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles
+from aneforge.models import GPT2, _gpt2_layers, _gelu_new, _lm_head_tiles
 
 
 def _synthetic_sd(D=16, H=4, L=2, V=100):
@@ -66,6 +67,16 @@ def test_gpt2_lm_head_tiles_shapes():
   assert all(t.op == "matmul" for t in tiles)
   small = _lm_head_tiles(h, np.zeros((1000, 1024), np.float16))
   assert len(small) == 1 and small[0].shape == (1, 1000)
+
+
+def test_gpt2_embed_rejects_sequence_beyond_max_positions():
+  """`_embed` raises a clear error instead of a raw numpy broadcast failure when the sequence
+  is longer than the model's position table."""
+  g = GPT2.__new__(GPT2)
+  g.wte = np.zeros((100, 16), np.float32)
+  g.wpe = np.zeros((10, 16), np.float32)
+  with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
+    g._embed(np.arange(11, dtype=np.int64))
 
 
 def test_gpt2_gelu_new_lowers():

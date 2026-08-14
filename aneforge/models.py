@@ -437,6 +437,9 @@ class GPT2:
 
   def _embed(self, ids: np.ndarray) -> np.ndarray:
     """Host-side token + position embedding lookup (gather is not an ANE op)."""
+    n_pos = self.wpe.shape[0]
+    if len(ids) > n_pos:
+      raise ValueError(f"GPT2: sequence length {len(ids)} exceeds this model's {n_pos} max positions")
     return (self.wte[ids] + self.wpe[:len(ids)]).astype(np.float32)
 
   def __call__(self, ids) -> np.ndarray:
