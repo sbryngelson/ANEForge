@@ -150,6 +150,20 @@ def _swiglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"])
 
 
+def _gelu_tanh(x: Tensor) -> Tensor:
+  """PyTorch 'tanh' GELU (Gemma's `gelu_pytorch_tanh`): 0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3)))."""
+  x3 = (x * x) * x
+  inner = (x3 * 0.044715) + x
+  t = inner.scaled_tanh(1.0, 0.7978845608028654)
+  return (x * t.adds(1.0)) * 0.5
+
+
+def _geglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
+  """GeGLU MLP with its residual: `h + down(gelu_tanh(gate(norm(h))) * up(norm(h)))`."""
+  hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
+  return h + (_gelu_tanh(hn.linear(w["wgate"])) * hn.linear(w["wup"])).linear(w["wdown"])
+
+
 def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin, ls: LayerSpec | None = None) -> Tensor:
   """One pre-norm decoder block (mixer + MLP). Back-compatible: with no `ls`, QK-norm is detected from `w`."""
   ls = ls or LayerSpec(qk_norm="q_norm" in w)
@@ -187,9 +201,9 @@ def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict,
 
 
 PREFILL_MIXERS = {"attention": _attn_prefill}
-PREFILL_MLPS = {"swiglu": _swiglu}
+PREFILL_MLPS = {"swiglu": _swiglu, "geglu": _geglu}
 DECODE_MIXERS = {"attention": _attn_decode}
-DECODE_MLPS = {"swiglu": _swiglu}
+DECODE_MLPS = {"swiglu": _swiglu, "geglu": _geglu}
 # Per-position decode inputs a mixer may read from `ctx` (created per chunk, shared across its layers).
 _DECODE_CTX = ("oh", "inv", "mask", "cosp", "sinp")
 
@@ -446,6 +460,40 @@ def _dense_adapter(c, sd) -> tuple[LlamaConfig, dict]:
   return cfg, _weights_from_state_dict(sd, cfg)
 
 
+def _rope_theta(c) -> float:
+  """HF RoPE base, reading the transformers-5.x `rope_parameters` dict with a legacy fallback."""
+  rp = getattr(c, "rope_parameters", None)
+  if isinstance(rp, dict) and "rope_theta" in rp:
+    return float(rp["rope_theta"])
+  return float(getattr(c, "rope_theta", 10000.0))
+
+
+def _rope_scaling(c):
+  """HF rope_scaling, but only when the runner implements the type (Llama-3.1 "llama3")."""
+  s = getattr(c, "rope_scaling", None)
+  return s if isinstance(s, dict) and s.get("rope_type") == "llama3" else None
+
+
+def _gemma_adapter(c, sd) -> tuple[LlamaConfig, dict]:
+  """Adapter for Gemma decoders. The runner's graph is Llama-shaped, so the differences are baked
+  into the weights: embeddings are scaled by sqrt(dim) at input, the FFN is GeGLU (gelu_pytorch_tanh,
+  via `LayerSpec(mlp="geglu")`), and the RMSNorm weights use the `(1 + weight)` convention."""
+  n = int(c.num_hidden_layers)
+  cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
+                    n_kv_heads=int(getattr(c, "num_key_value_heads", c.num_attention_heads)),
+                    ffn_dim=c.intermediate_size, vocab=c.vocab_size,
+                    rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0),
+                    layers=[LayerSpec(mixer="attention", mlp="geglu") for _ in range(n)])
+  w = _weights_from_state_dict(sd, cfg)
+  w["embed"] = w["embed"] * np.sqrt(c.hidden_size)        # HF: inputs_embeds * hidden_size**0.5
+  for lw in w["layers"]:                                   # HF GemmaRMSNorm: output * (1.0 + weight)
+    lw["attn_norm"] = lw["attn_norm"] + 1.0
+    lw["mlp_norm"] = lw["mlp_norm"] + 1.0
+  w["final_norm"] = w["final_norm"] + 1.0
+  return cfg, w
+
+
 def _cfg_from_hf(c) -> LlamaConfig:
   """Back-compat: a `LlamaConfig` (no per-layer plan) from a Hugging Face config."""
   return LlamaConfig(dim=c.hidden_size, n_layers=c.num_hidden_layers, n_heads=c.num_attention_heads,
@@ -457,7 +505,9 @@ def _cfg_from_hf(c) -> LlamaConfig:
 
 # Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, sd) -> (cfg, weights)); first match
 # wins, dense Llama/Qwen is the fallback. New archs append here (e.g. aneforge.moe) so the loader stays generic.
-ADAPTERS: list = []
+ADAPTERS: list = [
+  (lambda c: c.model_type == "gemma", _gemma_adapter),
+]
 
 
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
