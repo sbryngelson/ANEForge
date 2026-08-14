@@ -12,7 +12,7 @@ minutes.
 
 The `aneforge` package imports only `numpy`. `torch` / `torchvision` /
 `transformers` are lazy imports used only by the pretrained loaders
-(`af.load`, `af.load_resnet18`) and the diffusion examples; install them with
+(`af.load`, `af.load_resnet`) and the diffusion examples; install them with
 the `models` extra when you need them.
 
 ## Install

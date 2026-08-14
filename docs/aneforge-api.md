@@ -165,9 +165,11 @@ logits = clf(image)                                        # [1,3,224,224] -> [1
 - `af.load(name, int8=False) -> Encoder` - a BERT-family sentence encoder. The
   transformer layers run on the ANE as fused programs (cached per sequence
   length); tokenisation, embedding lookup, and mean-pooling run on the host.
-- `af.load_resnet18(int8=False) -> Vision` - torchvision ResNet-18 (ImageNet).
-  BatchNorm is folded into the preceding conv at load, so the ANE graph is pure
-  conv/relu/pool/add/fc.
+- `af.load_resnet(depth=18, int8=False) -> Vision` - torchvision ResNet 18/34/50/101
+  (ImageNet); `depth` takes `50`, `"50"` or `"resnet50"`. BatchNorm is folded into
+  the preceding conv at load, so the ANE graph is pure conv/relu/pool/add/fc.
+- `af.load_resnet18(int8=False) -> Vision` - ResNet-18, kept as the original
+  shorthand for `af.load_resnet(18)`.
 
 `transformers` / `torchvision` are imported lazily, only when these loaders are
 used.
@@ -182,7 +184,7 @@ used.
 | `Model` | a compiled single fused ANE program. Call with input array(s); `.n_ops` = fused graph ops; `.release()`. |
 | `SegmentedModel` | a compiled plan of e5rt regions interleaved with native bridge sub-programs. `.n_ops`, `.n_netplist`, `.release()`. |
 | `Encoder` | sentence-embedding model from `af.load`. |
-| `Vision` | ResNet-18 classifier from `af.load_resnet18`. |
+| `Vision` | ResNet classifier from `af.load_resnet` (18/34/50/101). |
 
 `compile(out, int8=False, build_dir=None)` returns a `Model`, or a
 `SegmentedModel` if the graph contains any netplist-bridge op.
