@@ -454,7 +454,7 @@ def _dense_adapter(c, sd) -> tuple[LlamaConfig, dict]:
   cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
                     n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                     ffn_dim=c.intermediate_size, vocab=c.vocab_size,
-                    rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
+                    rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
                     head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None),
                     layers=[LayerSpec(mixer="attention", mlp="swiglu", qk_norm=qk) for _ in range(n)])
   return cfg, _weights_from_state_dict(sd, cfg)
@@ -499,7 +499,7 @@ def _cfg_from_hf(c) -> LlamaConfig:
   return LlamaConfig(dim=c.hidden_size, n_layers=c.num_hidden_layers, n_heads=c.num_attention_heads,
                      n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                      ffn_dim=c.intermediate_size, vocab=c.vocab_size,
-                     rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
+                     rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
                      head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None))
 
 
@@ -513,9 +513,13 @@ ADAPTERS: list = [
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
   """Load a Llama/Qwen-class model from Hugging Face for ANE inference. `compress` ("int8"/"int4"/"blockwise")
   quantizes the ANE weights."""
+  import torch
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
-  sd = {k: v.detach().float().numpy() for k, v in hf.state_dict().items()}
+  # fp16 state dict: the weights are baked to fp16 (or quantized) for the ANE anyway, so an fp32 copy
+  # only wastes memory -- for a 7B that fp32 copy is ~28 GB on top of the loaded model, enough to OOM a
+  # 32 GB Mac. Rounding to fp16 here is the same rounding the bake would do, so outputs are unchanged.
+  sd = {k: v.detach().to(torch.float16).numpy() for k, v in hf.state_dict().items()}
   adapt = next((fn for pred, fn in ADAPTERS if pred(hf.config)), _dense_adapter)
   cfg, weights = adapt(hf.config, sd)
   return LlamaPrefill(cfg, weights, compress=compress)
