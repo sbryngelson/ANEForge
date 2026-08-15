@@ -130,6 +130,11 @@ every axis stays under the per-axis cap. This removes the former large-feature-m
 wall: the Stable Diffusion 1.5 wall shapes (640ch@64, 512ch@128) now compile and
 run (relerr ~ 0.002 vs fp32), and the unblock is family-wide.
 
+`layer_norm` applies its affine at rank 2 after the reshape back, not inside the
+rank-4 normalization body. A non-uniform affine in that inner position failed
+ANECCompile from `D = 1024` up, so this placement is what lets LayerNorm encoders
+and decoders (BERT-large, ViT, GPT-2) compile at transformer feature widths.
+
 ### Attention
 
 Three routes to attention, with different tradeoffs:
