@@ -455,7 +455,7 @@ def _dense_adapter(c, sd) -> tuple[LlamaConfig, dict]:
                     n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                     ffn_dim=c.intermediate_size, vocab=c.vocab_size,
                     rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
-                    head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=_rope_scaling(c),
                     layers=[LayerSpec(mixer="attention", mlp="swiglu", qk_norm=qk) for _ in range(n)])
   return cfg, _weights_from_state_dict(sd, cfg)
 
@@ -516,7 +516,7 @@ def _cfg_from_hf(c) -> LlamaConfig:
                      n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                      ffn_dim=c.intermediate_size, vocab=c.vocab_size,
                      rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
-                     head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None))
+                     head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=_rope_scaling(c))
 
 
 # Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, sd) -> (cfg, weights)); first match
@@ -526,6 +526,26 @@ ADAPTERS: list = [
   (lambda c: c.model_type == "mistral", _mistral_adapter),
 ]
 
+# model_types that are Llama-shaped enough to reach the _dense_adapter fallback but need semantics it
+# does not implement (logit softcapping; Gemma-2/3's GeGLU / (1+w)-norm / embed-scale). Loading one
+# through the dense path does not error -- it silently produces wrong logits (measured cosine ~0 vs HF).
+_DENSE_INCOMPATIBLE = {"gemma2", "gemma3", "gemma3_text"}
+
+
+def _assert_dense_compatible(c) -> None:
+  """Raise if a config reaches the dense fallback but carries semantics the dense path silently drops.
+
+  Feature-based first (`*_logit_softcapping`, which real Gemma-2/3 checkpoints set), so genuine
+  Llama-shaped finetunes with an unusual `model_type` are not rejected; the name set is a backstop."""
+  mt = getattr(c, "model_type", "?")
+  cap = getattr(c, "attn_logit_softcapping", None) or getattr(c, "final_logit_softcapping", None)
+  if cap or mt in _DENSE_INCOMPATIBLE:
+    why = "logit softcapping" if cap else "architecture-specific semantics"
+    raise ValueError(
+      f"load_llm: {mt!r} needs {why} that aneforge's dense loader does not implement, so the dense "
+      f"path would silently produce wrong logits. Supported: dense Llama/Qwen/Mistral, Gemma "
+      f"(model_type 'gemma'), and MoE. See docs/llm.md.")
+
 
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
   """Load a Llama/Qwen-class model from Hugging Face for ANE inference. `compress` ("int8"/"int4"/"blockwise")
@@ -533,10 +553,12 @@ def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
   import torch
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
+  adapt = next((fn for pred, fn in ADAPTERS if pred(hf.config)), _dense_adapter)
+  if adapt is _dense_adapter:            # fail fast, before the state-dict copy, on an unsupported arch
+    _assert_dense_compatible(hf.config)
   # fp16 state dict: the weights are baked to fp16 (or quantized) for the ANE anyway, so an fp32 copy
   # only wastes memory -- for a 7B that fp32 copy is ~28 GB on top of the loaded model, enough to OOM a
   # 32 GB Mac. Rounding to fp16 here is the same rounding the bake would do, so outputs are unchanged.
   sd = {k: v.detach().to(torch.float16).numpy() for k, v in hf.state_dict().items()}
-  adapt = next((fn for pred, fn in ADAPTERS if pred(hf.config)), _dense_adapter)
   cfg, weights = adapt(hf.config, sd)
   return LlamaPrefill(cfg, weights, compress=compress)
