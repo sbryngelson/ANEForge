@@ -30,17 +30,46 @@ The transformer layers run on the ANE as fused programs (cached per sequence len
 
 A model's correct mode lives in its sentence-transformers config; `aneforge.sentence_transformers` reads it for you (see below).
 
-## load_resnet18() — torchvision ImageNet classifier
+## CrossEncoder() — reranker
 
-`af.load_resnet18()` loads torchvision ResNet-18 as a fused ANE classifier:
+`aneforge.sentence_transformers.CrossEncoder` scores `(query, passage)` pairs, mirroring `sentence_transformers.CrossEncoder`:
 
 ```python
-clf    = af.load_resnet18()
+from aneforge.sentence_transformers import CrossEncoder
+ce = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+scores = ce.predict([(query, passage) for passage in passages])   # higher = more relevant
+```
+
+It reuses the same encoder graph as `load()`, then applies the sequence-classification head host-side. It supports BERT-family and RoBERTa/XLM-R (e.g. bge-reranker) `AutoModelForSequenceClassification` heads, detected by head shape; DistilBERT-style heads aren't wired up yet.
+
+## load_resnet() — torchvision ImageNet classifier
+
+`af.load_resnet()` loads a torchvision ResNet as a fused ANE classifier. Depths 18, 34, 50 and 101 are supported; `af.load_resnet18()` stays as the shorthand for depth 18.
+
+```python
+clf    = af.load_resnet(50)                  # 50, "50" and "resnet50" all work
 logits = clf(image)                          # [1,3,224,224] -> [1,1000]
-clf    = af.load_resnet18(compress="int4")   # 4-bit LUT weights
+clf    = af.load_resnet(18, compress="int4") # 4-bit LUT weights
 ```
 
 **BatchNorm is folded into the preceding conv at load**, so the ANE graph is pure conv/relu/pool/add/fc — conv is the ANE's strongest workload. `compress` picks the weight encoding (see `af.compile`); `build_dir` keeps the packed program on disk (its `weights.bin` is the packed-model size).
+
+18 and 34 are BasicBlock (3x3 -> 3x3); 50 and 101 are Bottleneck (1x1 -> 3x3 -> 1x1, 4x expansion). Two details are worth knowing if you touch this code:
+
+- **The stride sits on the Bottleneck's 3x3, not on its first 1x1.** That is torchvision's ResNet V1.5 variant. Moving it keeps every tensor shape intact and still agrees on top-1, so shape checks will not catch the mistake.
+- **A block's shortcut is projected or not according to its weights**, never according to its stage index. Bottleneck projects stage 1 (64 -> 256 at stride 1) while BasicBlock does not.
+
+## load_vit() — Hugging Face ViT image classifier
+
+`af.load_vit()` loads any HF `ViTForImageClassification` (and compatible DeiT/BEiT-style models with a CLS token) as a fused ANE classifier:
+
+```python
+vit    = af.load_vit("google/vit-base-patch16-224")
+logits = vit(image)             # [1,3,H,W] -> [1,num_labels]
+top    = vit.classify(image)    # top-k (label, logit)
+```
+
+A strided `PxP` patch conv is walled on the ANE, so patch embedding runs as `space_to_depth(P)` followed by a 1x1 conv; the CLS token's row is picked out of the encoder output via a one-hot picker matmul (a bare row slice is also walled). The loader auto-detects two HF layer namings: the modern one (`vit.layers.{i}.attention.q_proj`, `mlp.fc1/fc2`) and the legacy one (`vit.encoder.layer.{i}.attention.attention.query`, `intermediate.dense`).
 
 ## Weight layout: He init is layout-dependent
 

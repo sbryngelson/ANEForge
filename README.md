@@ -181,6 +181,7 @@ Pretrained models, each fused into one ANE program:
 | ResNet-18          | ImageNet classification    | cosine 1.0000           |
 | ViT-B/16           | vision transformer encoder | cosine 1.0000           |
 | all-MiniLM-L6-v2   | sentence embedding         | cosine 1.0000           |
+| ms-marco-MiniLM-L-6-v2 | reranker (CrossEncoder) | identical ranking, relerr 5e-4 |
 | ESPCN              | super-resolution           | runs end to end         |
 | Stable Diffusion 1.5 | U-Net + VAE (per component) | U-Net 1.5%, VAE 4.4% rel. |
 

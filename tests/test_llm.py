@@ -1,6 +1,6 @@
 import numpy as np
 import aneforge as af
-from aneforge.llm import LlamaConfig, LlamaPrefill, prefill_block, rope, rope_tables, _weights_from_state_dict, _cfg_from_hf
+from aneforge.llm import LlamaConfig, LlamaPrefill, prefill_block, rope, rope_tables, _weights_from_state_dict, _cfg_from_hf, _gemma_adapter, _mistral_adapter
 from _helpers import requires_ane, make_random_llama_model as _random_model
 
 pytestmark = requires_ane  # every test in this module compiles/dispatches to the ANE
@@ -114,3 +114,39 @@ def test_prefill_matches_huggingface_llama():  # the definitive check: ANE prefi
   ane = np.asarray(LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg)).prefill(toks)).ravel().astype(np.float32)
   cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE prefill vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
+
+
+@requires_ane
+def test_prefill_matches_huggingface_gemma():  # the Gemma adapter: embed scale, (1+w) norms, GeGLU
+  import torch
+  from transformers import GemmaConfig as HF, GemmaForCausalLM
+  hf_cfg = HF(**{"hidden_size": 64, "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 1,
+                 "head_dim": 16, "intermediate_size": 128, "vocab_size": 64, "rms_norm_eps": 1e-6,
+                 "max_position_embeddings": 64, "tie_word_embeddings": True,
+                 "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"}})
+  torch.manual_seed(0); m = GemmaForCausalLM(hf_cfg).eval()
+  toks = np.random.default_rng(0).integers(0, 64, 10)
+  with torch.no_grad(): ref = m(torch.tensor(toks)[None]).logits[0, -1].numpy()
+  sd = {k: v.detach().float().numpy() for k, v in m.state_dict().items()}
+  cfg, w = _gemma_adapter(m.config, sd)
+  ane = np.asarray(LlamaPrefill(cfg, w).prefill(toks)).ravel().astype(np.float32)
+  cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
+  assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE Gemma prefill vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
+
+
+@requires_ane
+def test_prefill_matches_huggingface_mistral():  # the Mistral adapter: GQA + sliding window surfaced in extra
+  import torch
+  from transformers import MistralConfig as HF, MistralForCausalLM
+  hf_cfg = HF(**{"hidden_size": 64, "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2,
+                 "intermediate_size": 128, "vocab_size": 64, "rms_norm_eps": 1e-5, "sliding_window": 32,
+                 "max_position_embeddings": 64, "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"}})
+  torch.manual_seed(0); m = MistralForCausalLM(hf_cfg).eval()
+  toks = np.random.default_rng(0).integers(0, 64, 10)
+  with torch.no_grad(): ref = m(torch.tensor(toks)[None]).logits[0, -1].numpy()
+  sd = {k: v.detach().float().numpy() for k, v in m.state_dict().items()}
+  cfg, w = _mistral_adapter(m.config, sd)
+  assert cfg.extra["sliding_window"] == 32, "sliding window must be surfaced in cfg.extra"
+  ane = np.asarray(LlamaPrefill(cfg, w).prefill(toks)).ravel().astype(np.float32)
+  cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
+  assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE Mistral prefill vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
