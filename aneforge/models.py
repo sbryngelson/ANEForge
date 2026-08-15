@@ -153,11 +153,48 @@ class Encoder:
     return np.asarray(vecs, dtype=np.float32)
 
 
+def _position_ids(ids: np.ndarray, pad_id: int | None) -> np.ndarray:
+  """Position ids as the reference implementations build them.
+
+  BERT counts from 0. RoBERTa counts from `padding_idx + 1` and skips pads, i.e. HF's
+  `create_position_ids_from_input_ids`: `cumsum(ids != pad) * mask + pad`. That offset is why a
+  RoBERTa position table has `max_position_embeddings + 2` rows; counting from 0 reads the wrong row
+  for every token and silently shifts the whole sequence."""
+  if pad_id is None:
+    return np.arange(len(ids))
+  mask = (ids != pad_id).astype(np.int64)
+  return np.cumsum(mask) * mask + pad_id
+
+
+def _seqcls_head(sd: dict, pref: str | None) -> tuple[str, str, str, str] | None:
+  """The two-layer tanh classification head, as (dense_w, dense_b, out_w, out_b) state-dict keys.
+
+  BERT is `pooler.dense -> tanh -> classifier`; RoBERTa is `RobertaClassificationHead`, i.e.
+  `classifier.dense -> tanh -> classifier.out_proj`, with no pooler at all. Same arithmetic on token 0,
+  different names. Returns None when neither shape is present.
+
+  RoBERTa is identified by its head, *not* by a missing token-type table: XLM-R does ship
+  `token_type_embeddings` (a single row, always index 0), so absence identifies nothing."""
+  if "classifier.dense.weight" in sd and "classifier.out_proj.weight" in sd:
+    return ("classifier.dense.weight", "classifier.dense.bias",
+            "classifier.out_proj.weight", "classifier.out_proj.bias")
+  if pref is not None and f"{pref}.pooler.dense.weight" in sd and "classifier.weight" in sd:
+    return (f"{pref}.pooler.dense.weight", f"{pref}.pooler.dense.bias",
+            "classifier.weight", "classifier.bias")
+  return None
+
+
 class CrossEncoder:
-  """Reranker: scores (query, passage) pairs with a BERT-family sequence-classification
+  """Reranker: scores (query, passage) pairs with a BERT- or RoBERTa-family sequence-classification
   model, the transformer running on the ANE. Mirrors `sentence_transformers.CrossEncoder`:
   `CrossEncoder(name).predict([(query, passage), ...])` returns one relevance score per pair
-  (raw logits -- order is what a reranker needs). Higher is more relevant."""
+  (raw logits -- order is what a reranker needs). Higher is more relevant.
+
+  Both families share the encoder graph and the `_BERT_KEYS` layer names; they differ only in host-side
+  plumbing, so the two are handled by weight selection rather than by a second code path:
+
+  - **Head.** See `_seqcls_head`: same two-layer tanh head on token 0, different key names.
+  - **Position ids.** See `_position_ids`: RoBERTa counts from `padding_idx + 1`, BERT from 0."""
 
   def __init__(self, name: str, int8: bool = False) -> None:
     from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # lazy
@@ -168,21 +205,24 @@ class CrossEncoder:
     # The base transformer sits under a model-specific prefix (bert / roberta / ...).
     marker = ".embeddings.word_embeddings.weight"
     pref = next((k[: -len(marker)] for k in sd if k.endswith(marker)), None)
-    if pref is None or f"{pref}.pooler.dense.weight" not in sd or "classifier.weight" not in sd:
+    head = _seqcls_head(sd, pref)
+    if pref is None or head is None:
       raise ValueError(
-        f"CrossEncoder: {name!r} is not a supported reranker -- it needs a BERT-family "
-        "sequence-classification head (token-type embeddings, a pooler, and a classifier). "
-        "RoBERTa/DistilBERT-style heads are not handled yet.")
+        f"CrossEncoder: {name!r} is not a supported reranker -- it needs either a BERT-family head "
+        "(a pooler plus `classifier`) or a RoBERTa-family one (`classifier.dense` plus "
+        "`classifier.out_proj`). DistilBERT-style heads are not handled yet.")
+    roberta = head[0].startswith("classifier.")
     self.D, self.H = cfg.hidden_size, cfg.num_attention_heads
     self.L, self.eps, self.int8 = cfg.num_hidden_layers, cfg.layer_norm_eps, int8
+    self.pad_id = int(cfg.pad_token_id) if roberta else None   # None -> positions count from 0
     self.word = g(f"{pref}.embeddings.word_embeddings.weight")
     self.pos = g(f"{pref}.embeddings.position_embeddings.weight")
-    self.typ = g(f"{pref}.embeddings.token_type_embeddings.weight")
+    typ_key = f"{pref}.embeddings.token_type_embeddings.weight"
+    self.typ = g(typ_key) if typ_key in sd else np.zeros((1, self.D), np.float32)
     self.eln_w, self.eln_b = g(f"{pref}.embeddings.LayerNorm.weight"), g(f"{pref}.embeddings.LayerNorm.bias")
     self.layers = [{k: g(f"{pref}.encoder.layer.{i}." + v) for k, v in _BERT_KEYS.items()}
                    for i in range(self.L)]
-    self.pool_w, self.pool_b = g(f"{pref}.pooler.dense.weight"), g(f"{pref}.pooler.dense.bias")
-    self.cls_w, self.cls_b = g("classifier.weight"), g("classifier.bias")
+    self.pool_w, self.pool_b, self.cls_w, self.cls_b = (g(k) for k in head)
     self._cache: dict[int, Model | SegmentedModel] = {}
 
   def _build(self, S: int) -> Model | SegmentedModel:
@@ -196,7 +236,7 @@ class CrossEncoder:
 
   def _embed(self, ids: np.ndarray, typ_ids: np.ndarray) -> np.ndarray:
     """Host-side token + position + segment embedding lookup, then LayerNorm."""
-    e = self.word[ids] + self.pos[np.arange(len(ids))] + self.typ[typ_ids]
+    e = self.word[ids] + self.pos[_position_ids(ids, self.pad_id)] + self.typ[typ_ids]
     m = e.mean(-1, keepdims=True)
     v = ((e - m) ** 2).mean(-1, keepdims=True)
     return ((e - m) / np.sqrt(v + self.eps) * self.eln_w + self.eln_b).astype(np.float32)
@@ -211,8 +251,8 @@ class CrossEncoder:
       ids = np.asarray(enc["input_ids"], dtype=np.int64)
       typ = np.asarray(enc.get("token_type_ids") or [0] * len(ids), dtype=np.int64)
       net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
-      cls = net(self._embed(ids, typ))[0]                              # [CLS] state, on the ANE
-      pooled = np.tanh(cls @ self.pool_w.T + self.pool_b)              # BERT pooler
+      cls = net(self._embed(ids, typ))[0]                              # [CLS] / <s> state, on the ANE
+      pooled = np.tanh(cls @ self.pool_w.T + self.pool_b)              # BERT pooler / Roberta head dense
       logits = pooled @ self.cls_w.T + self.cls_b                      # [num_labels]
       scores.append(float(logits[0]))
     return np.asarray(scores, dtype=np.float32)
