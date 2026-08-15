@@ -142,9 +142,7 @@ def _perf_headline(report: dict) -> dict:
             # older family's matmul-dim limit. Distinguish that from "not measured".
             if h["decode_tok_s"] is None and b1.get("status") not in (None, "ok"):
                 h["decode_blocked"] = True
-            # decode ran a different (heavier) model than the canonical one -- a --perf-full
-            # submission. Its tok/s is real but not comparable to the canonical-config rows,
-            # so drop it from the shared column rather than rank a heavier model against them.
+            # off-config (a --perf-full submission ran a heavier model): a real but incomparable tok/s
             if h["decode_tok_s"] is not None and dm.get("config") != CANONICAL_DECODE_CONFIG:
                 h["decode_tok_s"] = None
                 h["decode_offconfig"] = True

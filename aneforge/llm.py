@@ -526,9 +526,8 @@ ADAPTERS: list = [
   (lambda c: c.model_type == "mistral", _mistral_adapter),
 ]
 
-# model_types that are Llama-shaped enough to reach the _dense_adapter fallback but need semantics it
-# does not implement (logit softcapping; Gemma-2/3's GeGLU / (1+w)-norm / embed-scale). Loading one
-# through the dense path does not error -- it silently produces wrong logits (measured cosine ~0 vs HF).
+# Gemma-2/3 reach the dense fallback (Llama-shaped) but need softcapping / GeGLU / (1+w)-norm it lacks;
+# a name backstop for the softcapping feature check in _assert_dense_compatible.
 _DENSE_INCOMPATIBLE = {"gemma2", "gemma3", "gemma3_text"}
 
 
@@ -557,9 +556,8 @@ def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
   adapt = next((fn for pred, fn in ADAPTERS if pred(hf.config)), _dense_adapter)
   if adapt is _dense_adapter:            # fail fast, before the state-dict copy, on an unsupported arch
     _assert_dense_compatible(hf.config)
-  # fp16 state dict: the weights are baked to fp16 (or quantized) for the ANE anyway, so an fp32 copy
-  # only wastes memory -- for a 7B that fp32 copy is ~28 GB on top of the loaded model, enough to OOM a
-  # 32 GB Mac. Rounding to fp16 here is the same rounding the bake would do, so outputs are unchanged.
+  # fp16 state dict: the weights bake to fp16 (or quantized) for the ANE anyway, so an fp32 copy only
+  # wastes memory (~28 GB for a 7B, enough to OOM a 32 GB Mac). Same rounding the bake does, so unchanged.
   sd = {k: v.detach().to(torch.float16).numpy() for k, v in hf.state_dict().items()}
   cfg, weights = adapt(hf.config, sd)
   return LlamaPrefill(cfg, weights, compress=compress)
