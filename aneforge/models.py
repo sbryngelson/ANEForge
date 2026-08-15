@@ -2,13 +2,11 @@
 builders (`group_norm_train`, `conv_block`, `cifar_cnn`). See docs/developer/models.md."""
 from __future__ import annotations
 
-from typing import cast
-
 import numpy as np
 
-from .graph import Tensor, concat, conv, input, mha, sdpa, space_to_depth
+from .graph import Tensor, concat, conv, input, mha, space_to_depth
 from .autograd import conv2d, conv_param, parameter
-from ._compile import Model, SegmentedModel, MultiModel, compile, compile_multi
+from ._compile import Model, SegmentedModel, MultiModel, compile
 
 _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
 
@@ -381,86 +379,60 @@ def _logits_from(net: MultiModel | Model, out) -> np.ndarray:
 
 
 class GPT2:
-  """GPT-2 causal LM from Hugging Face, running on the ANE as two fused programs per
-  sequence length: the pre-norm transformer (native causal SDPA; final hidden states out)
-  and the tied lm_head tiled along vocab (tiles as output ports). Activations fp16;
-  `int8=True` streams the weights per-channel int8. `GPT2(name)(ids)` -> logits [S, vocab];
-  `.generate(prompt, K)` greedy-decodes K tokens by re-running the forward on the growing
-  sequence (no KV cache: recompute per length, cached per length)."""
+  """GPT-2 causal LM from Hugging Face, running on the ANE via the unified LLM runner with
+  resident KV-cache decode, LayerNorm, and learned positional embeddings. Activations fp16;
+  `int8=True` quantizes weights per-channel int8. `GPT2(name)(ids)` -> logits [S, vocab];
+  `.generate(prompt, K)` autoregressively generates K tokens using the resident KV cache."""
 
   def __init__(self, name: str, int8: bool = False, max_layers: int | None = None) -> None:
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer  # lazy
-    cfg = AutoConfig.from_pretrained(name)
-    if cfg.model_type != "gpt2":
-      raise ValueError(f"load_gpt2: {name!r} is not a GPT-2 model (model_type={cfg.model_type!r})")
+    from .llm import _gpt2_adapter, LlamaPrefill
+    cfg_hf = AutoConfig.from_pretrained(name)
+    if cfg_hf.model_type != "gpt2":
+      raise ValueError(f"load_gpt2: {name!r} is not a GPT-2 model (model_type={cfg_hf.model_type!r})")
     self.tok = AutoTokenizer.from_pretrained(name)
     sd = {k: v.detach().numpy().astype(np.float32)
           for k, v in AutoModelForCausalLM.from_pretrained(name).state_dict().items()}
-    self.D, self.H, self.L = cfg.n_embd, cfg.n_head, cfg.num_hidden_layers
-    self.dh = self.D // self.H
-    self.Dff = cfg.n_inner or 4 * self.D
-    self.eps = float(getattr(cfg, "layer_norm_epsilon", getattr(cfg, "layer_norm_eps", 1e-5)))
-    self.int8 = int8
-    self.wte = sd["transformer.wte.weight"]          # [V, D]; also the tied lm_head
-    self.wpe = sd["transformer.wpe.weight"]          # [n_positions, D]
-    self.lnf_w, self.lnf_b = sd["transformer.ln_f.weight"], sd["transformer.ln_f.bias"]
-    self.layers = _gpt2_layers(sd, self.L, self.D, self.Dff)
+    cfg, weights = _gpt2_adapter(cfg_hf, sd)
     if max_layers is not None:
-      if not 1 <= max_layers <= self.L:
-        raise ValueError(f"load_gpt2: max_layers must be in [1, {self.L}], got {max_layers}")
-      self.layers = self.layers[:max_layers]
-    self._cache: dict[int, tuple[Model | SegmentedModel, MultiModel | Model]] = {}
-
-  def _build(self, S: int) -> Tensor:
-    """The pre-norm transformer -> ln_f hidden states [S, D]. Causal SDPA is native here
-    only while S < 512 (sdpa's reliable regime); pick short prompts and small K."""
-    h = input((S, self.D))
-    for w in self.layers:
-      xn = h.layer_norm(w["ln1w"], w["ln1b"], self.eps)
-      q = xn.linear(w["Wq"], w["bq"]).reshape(1, S, self.H, self.dh).transpose([0, 2, 1, 3])
-      k = xn.linear(w["Wk"], w["bk"]).reshape(1, S, self.H, self.dh).transpose([0, 2, 1, 3])
-      v = xn.linear(w["Wv"], w["bv"]).reshape(1, S, self.H, self.dh).transpose([0, 2, 1, 3])
-      o = sdpa(q, k, v, is_causal=True).transpose([0, 2, 1, 3]).reshape(S, self.D)
-      h = h + o.linear(w["Wo"], w["bo"])
-      yn = h.layer_norm(w["ln2w"], w["ln2b"], self.eps)
-      h = h + _gelu_new(yn.linear(w["Wi"], w["bi"])).linear(w["Wd"], w["bd"])
-    return h.layer_norm(self.lnf_w, self.lnf_b, self.eps)
-
-  def _compile(self, S: int) -> tuple[Model | SegmentedModel, MultiModel | Model]:
-    """The two fused programs for sequence length S: the transformer (hidden [S, D] out;
-    carries the native-SDPA graph cuts) and the head (pure matmul; one program when the
-    vocab fits a single tile, tiled ports otherwise -- compile_multi rejects SDPA cuts)."""
-    tiles = _lm_head_tiles(input((S, self.D)), self.wte.astype(np.float16))
-    head = cast(MultiModel | Model,
-                compile(tiles[0], int8=self.int8) if len(tiles) == 1 else compile_multi(tiles, int8=self.int8))
-    return cast(Model | SegmentedModel, compile(self._build(S), int8=self.int8)), head
-
-  def _embed(self, ids: np.ndarray) -> np.ndarray:
-    """Host-side token + position embedding lookup (gather is not an ANE op)."""
-    return (self.wte[ids] + self.wpe[:len(ids)]).astype(np.float32)
+      if not 1 <= max_layers <= cfg.n_layers:
+        raise ValueError(f"load_gpt2: max_layers must be in [1, {cfg.n_layers}], got {max_layers}")
+      cfg.n_layers = max_layers
+      cfg.layers = cfg.layers[:max_layers]
+      weights["layers"] = weights["layers"][:max_layers]
+    self.cfg = cfg
+    self.w = weights
+    self.D, self.H, self.L = cfg.dim, cfg.n_heads, cfg.n_layers
+    self.dh = cfg.dh
+    self.Dff = cfg.ffn_dim
+    self.eps = cfg.norm_eps
+    self.int8 = int8
+    self.wte = weights["embed"]
+    self.wpe = weights["wpe"]
+    self.runner = LlamaPrefill(cfg, weights, compress="int8" if int8 else None)
 
   def __call__(self, ids) -> np.ndarray:
-    """1-D token ids -> logits [S, vocab]; the program pair for this S compiles on first use."""
+    """1-D token ids -> logits [S, vocab]."""
     ids = np.asarray(ids, dtype=np.int64)
     if ids.ndim != 1:
       raise ValueError(f"GPT2.__call__ expects 1-D token ids, got shape {ids.shape}")
-    S = ids.shape[0]
-    net, head = self._cache.get(S) or self._cache.setdefault(S, self._compile(S))
-    return _logits_from(head, head(np.asarray(net(self._embed(ids)), np.float32)))
+    hidden = self.runner._hidden(ids)
+    return hidden @ np.asarray(self.w["lm_head"]).T
 
-  def generate(self, prompt: str, max_new_tokens: int = 16) -> list[int]:
-    """Greedy-decode `max_new_tokens` tokens: re-run the forward on the growing sequence
-    (no KV cache -- recompute per length; the per-S program cache keeps each step cheap)."""
+  def generate(self, prompt: str, max_new_tokens: int = 16, **kwargs) -> list[int]:
+    """Autoregressive generation with resident KV-cache."""
     base = np.asarray(self.tok.encode(prompt), dtype=np.int64)
-    ids = base
-    for _ in range(max_new_tokens):
-      ids = np.concatenate([ids, [int(self(ids)[-1].argmax())]])
-    return [int(t) for t in ids[len(base):]]
+    return self.runner.generate(base, max_new_tokens=max_new_tokens, **kwargs)
 
   def release(self) -> None:
-    for net, head in self._cache.values():
-      net.release(); head.release()
-    self._cache.clear()
+    if self.runner._net is not None:
+      self.runner._net.release()
+    if self.runner._dec is not None:
+      for c in self.runner._dec["chunks"]:
+        c["net"].release()
+    if self.runner._pre is not None:
+      for c in self.runner._pre["chunks"]:
+        c["net"].release()
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):

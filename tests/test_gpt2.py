@@ -6,6 +6,8 @@ import numpy as np
 import aneforge as af
 from aneforge._compile import _lower_fused_to_dir
 from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles
+from aneforge.llm import _gpt2_adapter, LlamaPrefill
+from _helpers import requires_ane
 
 
 def _synthetic_sd(D=16, H=4, L=2, V=100):
@@ -80,3 +82,69 @@ def test_gpt2_tiled_head_lowers():
   wte = np.zeros((50257, 1024), np.float32)
   tiles = _lm_head_tiles(h, wte.astype(np.float16))
   _lower_fused_to_dir(tiles[0], None, int8=True)
+
+
+def test_gpt2_adapter_mapping():
+  """The _gpt2_adapter correctly translates a GPT-2 config + state_dict into LlamaConfig and weights."""
+  class FakeConfig:
+    model_type = "gpt2"
+    n_embd = 16
+    n_layer = 2
+    n_head = 4
+    n_inner = 64
+    vocab_size = 100
+    layer_norm_epsilon = 1e-5
+
+  sd = _synthetic_sd(D=16, H=4, L=2, V=100)
+  cfg, w = _gpt2_adapter(FakeConfig(), sd)
+  assert cfg.dim == 16 and cfg.n_layers == 2 and cfg.n_heads == 4 and cfg.ffn_dim == 64
+  assert cfg.norm_type == "layer" and not cfg.rope
+  assert len(cfg.layers) == 2 and all(l.mixer == "attention" and l.mlp == "gelu_new" for l in cfg.layers)
+  assert "wpe" in w and w["wpe"].shape == (10, 16)
+  assert len(w["layers"]) == 2
+  lw = w["layers"][0]
+  assert lw["wq"].shape == (16, 16) and lw["wk"].shape == (16, 16) and lw["wv"].shape == (16, 16)
+  assert lw["wfc"].shape == (64, 16) and lw["wproj"].shape == (16, 64)
+  assert lw["q_bias"].shape == (16,) and lw["fc_bias"].shape == (64,)
+
+
+@requires_ane
+def test_gpt2_matches_huggingface():
+  """On-device test: GPT-2 prefill cosine > 0.99 vs HF fp32 reference and greedy decode matches."""
+  import torch
+  from transformers import GPT2Config, GPT2LMHeadModel
+  torch.manual_seed(0)
+  hf_cfg = GPT2Config(n_embd=64, n_layer=2, n_head=4, n_inner=128, vocab_size=64, n_positions=64)
+  hf = GPT2LMHeadModel(hf_cfg).eval()
+  toks = np.random.default_rng(0).integers(0, 64, 8)
+  with torch.no_grad():
+    ref_logits = hf(torch.tensor(toks)[None]).logits[0, -1].numpy()
+    ref_greedy = hf.generate(torch.tensor(toks)[None], max_new_tokens=4, do_sample=False)[0].numpy()[len(toks):]
+  cfg, weights = _gpt2_adapter(hf.config, {k: v.detach().float().numpy() for k, v in hf.state_dict().items()})
+  model = LlamaPrefill(cfg, weights)
+  ane_logits = model.prefill(toks)[0]
+  cos = float(ane_logits @ ref_logits / (np.linalg.norm(ane_logits) * np.linalg.norm(ref_logits) + 1e-9))
+  assert cos > 0.99 and int(ane_logits.argmax()) == int(ref_logits.argmax())
+  ane_greedy = model.generate(toks, max_new_tokens=4)
+  assert list(ane_greedy) == list(ref_greedy)
+
+
+@requires_ane
+def test_gpt2_long_context_above_512():
+  """On-device test: GPT-2 resident KV-cache decode operates with context length M > 512."""
+  class FakeConfig:
+    model_type = "gpt2"
+    n_embd = 64
+    n_layer = 2
+    n_head = 2
+    n_inner = 128
+    vocab_size = 48
+    layer_norm_epsilon = 1e-5
+
+  sd = _synthetic_sd(D=64, H=2, L=2, V=48)
+  sd["transformer.wpe.weight"] = np.zeros((700, 64), np.float32)
+  cfg, weights = _gpt2_adapter(FakeConfig(), sd)
+  model = LlamaPrefill(cfg, weights)
+  prompt = [1, 2, 3, 4]
+  out = model.generate(prompt, max_new_tokens=4, max_len=600)
+  assert len(out) == 4 and all(0 <= t < cfg.vocab for t in out)
