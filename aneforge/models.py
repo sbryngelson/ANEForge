@@ -23,17 +23,48 @@ def load(name: str, int8: bool = False, pooling: str = "mean") -> "Encoder":
   return Encoder(name, int8=int8, pooling=pooling)
 
 
+# ResNet stage layouts, straight from the torchvision factories: blocks per stage and the residual
+# block shape. Bottleneck expands its output 4x, which is what makes its stage-1 shortcut projected.
+_RESNETS: dict[int, tuple[str, tuple[int, int, int, int]]] = {
+  18: ("basic", (2, 2, 2, 2)),
+  34: ("basic", (3, 4, 6, 3)),
+  50: ("bottleneck", (3, 4, 6, 3)),
+  101: ("bottleneck", (3, 4, 23, 3)),
+}
+
+
+def load_resnet(name_or_depth: int | str = 18, int8: bool = False, compress: str | None = None,
+                compress_atol: float = 0.05, build_dir: str | None = None,
+                weights: str = "IMAGENET1K_V1") -> "Vision":
+  """Load a torchvision ResNet (18/34/50/101, ImageNet) as a fused ANE classifier; BatchNorm folded
+  into the preceding conv at load. `name_or_depth` takes 50, "50" or "resnet50"."""
+  return Vision(name_or_depth, int8=int8, compress=compress, compress_atol=compress_atol,
+                build_dir=build_dir, weights=weights)
+
+
 def load_resnet18(int8: bool = False, compress: str | None = None,
                   compress_atol: float = 0.05, build_dir: str | None = None) -> "Vision":
   """Load torchvision ResNet-18 (ImageNet) as a fused ANE classifier; BatchNorm folded into the preceding conv at load."""
   return Vision(int8=int8, compress=compress, compress_atol=compress_atol, build_dir=build_dir)
 
 
+def _resnet_depth(name_or_depth: int | str) -> int:
+  """Accept 50, "50" or "resnet50"."""
+  s = str(name_or_depth).lower().removeprefix("resnet")
+  if not s.isdigit() or int(s) not in _RESNETS:
+    raise ValueError(f"load_resnet: unsupported ResNet {name_or_depth!r}; "
+                     f"supported depths are {sorted(_RESNETS)}")
+  return int(s)
+
+
 class Vision:
-  def __init__(self, int8: bool = False, compress: str | None = None,
-               compress_atol: float = 0.05, build_dir: str | None = None) -> None:
+  def __init__(self, name_or_depth: int | str = 18, int8: bool = False, compress: str | None = None,
+               compress_atol: float = 0.05, build_dir: str | None = None,
+               weights: str = "IMAGENET1K_V1") -> None:
     import torchvision  # lazy
-    m = torchvision.models.resnet18(weights="IMAGENET1K_V1").eval()
+    self.depth = _resnet_depth(name_or_depth)
+    self.block, self.stages = _RESNETS[self.depth]
+    m = getattr(torchvision.models, f"resnet{self.depth}")(weights=weights).eval()
     self.sd = {k: v.detach().numpy().astype(np.float32) for k, v in m.state_dict().items()}
     self.int8 = int8
     self.compress = compress
@@ -49,26 +80,48 @@ class Vision:
     sc = g / np.sqrt(var + 1e-5)
     return (W * sc[:, None, None, None]).astype(np.float32), (b - mu * sc).astype(np.float32)
 
-  def _block(self, x: Tensor, prefix: str, stride: int, downsample: bool) -> Tensor:
+  def _shortcut(self, x: Tensor, prefix: str, stride: int) -> Tensor:
+    """The residual branch: a projection when the block carries one, otherwise the identity.
+
+    Presence is read from the weights rather than derived from a rule. torchvision projects when
+    `stride != 1 or inplanes != planes * expansion`, so with Bottleneck even stage 1 is projected
+    (64 -> 256 at stride 1) while with BasicBlock it is not. A "stage 1 never downsamples" rule holds
+    for BasicBlock only, and would silently drop layer1's projection on ResNet-50/101."""
+    if prefix + ".downsample.0.weight" not in self.sd:
+      return x
+    wd, bd = self._fold(prefix + ".downsample.0", prefix + ".downsample.1")
+    return conv(x, wd, stride=stride, pad=0, bias=bd)
+
+  def _block(self, x: Tensor, prefix: str, stride: int) -> Tensor:
+    """BasicBlock: 3x3 -> 3x3, stride on the first conv."""
     w1, b1 = self._fold(prefix + ".conv1", prefix + ".bn1")
     w2, b2 = self._fold(prefix + ".conv2", prefix + ".bn2")
     out = conv(x, w1, stride=stride, pad=1, bias=b1).relu()
     out = conv(out, w2, stride=1, pad=1, bias=b2)
-    idn = x
-    if downsample:
-      wd, bd = self._fold(prefix + ".downsample.0", prefix + ".downsample.1")
-      idn = conv(x, wd, stride=stride, pad=0, bias=bd)
-    return (out + idn).relu()
+    return (out + self._shortcut(x, prefix, stride)).relu()
+
+  def _bottleneck(self, x: Tensor, prefix: str, stride: int) -> Tensor:
+    """Bottleneck: 1x1 -> 3x3 -> 1x1 with a 4x expansion. The stride sits on the 3x3, not on the
+    first 1x1: that is torchvision's ResNet V1.5 variant, and putting it on conv1 instead changes
+    which pixels survive."""
+    w1, b1 = self._fold(prefix + ".conv1", prefix + ".bn1")
+    w2, b2 = self._fold(prefix + ".conv2", prefix + ".bn2")
+    w3, b3 = self._fold(prefix + ".conv3", prefix + ".bn3")
+    out = conv(x, w1, stride=1, pad=0, bias=b1).relu()
+    out = conv(out, w2, stride=stride, pad=1, bias=b2).relu()
+    out = conv(out, w3, stride=1, pad=0, bias=b3)
+    return (out + self._shortcut(x, prefix, stride)).relu()
 
   def _build(self) -> Model | SegmentedModel:
     x = input((1, 3, 224, 224))
     w, b = self._fold("conv1", "bn1")
     h = conv(x, w, stride=2, pad=3, bias=b).relu().max_pool(3, stride=2, pad=1)
-    for name, stride in [("layer1", 1), ("layer2", 2), ("layer3", 2), ("layer4", 2)]:
-      for i in range(2):
-        h = self._block(h, f"{name}.{i}", stride if i == 0 else 1,
-                        downsample=(i == 0 and name != "layer1"))
-    h = h.mean((2, 3)).reshape(1, 512)
+    block = self._bottleneck if self.block == "bottleneck" else self._block
+    for name, stride, n in zip(("layer1", "layer2", "layer3", "layer4"), (1, 2, 2, 2), self.stages):
+      for i in range(n):
+        h = block(h, f"{name}.{i}", stride if i == 0 else 1)
+    feat = self.sd["fc.weight"].shape[1]          # 512 for BasicBlock, 2048 once expanded 4x
+    h = h.mean((2, 3)).reshape(1, feat)
     out = h.linear(self.sd["fc.weight"], self.sd["fc.bias"])
     return compile(out, int8=self.int8, compress=self.compress,
                    compress_atol=self.compress_atol, build_dir=self.build_dir)
@@ -153,11 +206,48 @@ class Encoder:
     return np.asarray(vecs, dtype=np.float32)
 
 
+def _position_ids(ids: np.ndarray, pad_id: int | None) -> np.ndarray:
+  """Position ids as the reference implementations build them.
+
+  BERT counts from 0. RoBERTa counts from `padding_idx + 1` and skips pads, i.e. HF's
+  `create_position_ids_from_input_ids`: `cumsum(ids != pad) * mask + pad`. That offset is why a
+  RoBERTa position table has `max_position_embeddings + 2` rows; counting from 0 reads the wrong row
+  for every token and silently shifts the whole sequence."""
+  if pad_id is None:
+    return np.arange(len(ids))
+  mask = (ids != pad_id).astype(np.int64)
+  return np.cumsum(mask) * mask + pad_id
+
+
+def _seqcls_head(sd: dict, pref: str | None) -> tuple[str, str, str, str] | None:
+  """The two-layer tanh classification head, as (dense_w, dense_b, out_w, out_b) state-dict keys.
+
+  BERT is `pooler.dense -> tanh -> classifier`; RoBERTa is `RobertaClassificationHead`, i.e.
+  `classifier.dense -> tanh -> classifier.out_proj`, with no pooler at all. Same arithmetic on token 0,
+  different names. Returns None when neither shape is present.
+
+  RoBERTa is identified by its head, *not* by a missing token-type table: XLM-R does ship
+  `token_type_embeddings` (a single row, always index 0), so absence identifies nothing."""
+  if "classifier.dense.weight" in sd and "classifier.out_proj.weight" in sd:
+    return ("classifier.dense.weight", "classifier.dense.bias",
+            "classifier.out_proj.weight", "classifier.out_proj.bias")
+  if pref is not None and f"{pref}.pooler.dense.weight" in sd and "classifier.weight" in sd:
+    return (f"{pref}.pooler.dense.weight", f"{pref}.pooler.dense.bias",
+            "classifier.weight", "classifier.bias")
+  return None
+
+
 class CrossEncoder:
-  """Reranker: scores (query, passage) pairs with a BERT-family sequence-classification
+  """Reranker: scores (query, passage) pairs with a BERT- or RoBERTa-family sequence-classification
   model, the transformer running on the ANE. Mirrors `sentence_transformers.CrossEncoder`:
   `CrossEncoder(name).predict([(query, passage), ...])` returns one relevance score per pair
-  (raw logits -- order is what a reranker needs). Higher is more relevant."""
+  (raw logits -- order is what a reranker needs). Higher is more relevant.
+
+  Both families share the encoder graph and the `_BERT_KEYS` layer names; they differ only in host-side
+  plumbing, so the two are handled by weight selection rather than by a second code path:
+
+  - **Head.** See `_seqcls_head`: same two-layer tanh head on token 0, different key names.
+  - **Position ids.** See `_position_ids`: RoBERTa counts from `padding_idx + 1`, BERT from 0."""
 
   def __init__(self, name: str, int8: bool = False) -> None:
     from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # lazy
@@ -168,21 +258,24 @@ class CrossEncoder:
     # The base transformer sits under a model-specific prefix (bert / roberta / ...).
     marker = ".embeddings.word_embeddings.weight"
     pref = next((k[: -len(marker)] for k in sd if k.endswith(marker)), None)
-    if pref is None or f"{pref}.pooler.dense.weight" not in sd or "classifier.weight" not in sd:
+    head = _seqcls_head(sd, pref)
+    if pref is None or head is None:
       raise ValueError(
-        f"CrossEncoder: {name!r} is not a supported reranker -- it needs a BERT-family "
-        "sequence-classification head (token-type embeddings, a pooler, and a classifier). "
-        "RoBERTa/DistilBERT-style heads are not handled yet.")
+        f"CrossEncoder: {name!r} is not a supported reranker -- it needs either a BERT-family head "
+        "(a pooler plus `classifier`) or a RoBERTa-family one (`classifier.dense` plus "
+        "`classifier.out_proj`). DistilBERT-style heads are not handled yet.")
+    roberta = head[0].startswith("classifier.")
     self.D, self.H = cfg.hidden_size, cfg.num_attention_heads
     self.L, self.eps, self.int8 = cfg.num_hidden_layers, cfg.layer_norm_eps, int8
+    self.pad_id = int(cfg.pad_token_id) if roberta else None   # None -> positions count from 0
     self.word = g(f"{pref}.embeddings.word_embeddings.weight")
     self.pos = g(f"{pref}.embeddings.position_embeddings.weight")
-    self.typ = g(f"{pref}.embeddings.token_type_embeddings.weight")
+    typ_key = f"{pref}.embeddings.token_type_embeddings.weight"
+    self.typ = g(typ_key) if typ_key in sd else np.zeros((1, self.D), np.float32)
     self.eln_w, self.eln_b = g(f"{pref}.embeddings.LayerNorm.weight"), g(f"{pref}.embeddings.LayerNorm.bias")
     self.layers = [{k: g(f"{pref}.encoder.layer.{i}." + v) for k, v in _BERT_KEYS.items()}
                    for i in range(self.L)]
-    self.pool_w, self.pool_b = g(f"{pref}.pooler.dense.weight"), g(f"{pref}.pooler.dense.bias")
-    self.cls_w, self.cls_b = g("classifier.weight"), g("classifier.bias")
+    self.pool_w, self.pool_b, self.cls_w, self.cls_b = (g(k) for k in head)
     self._cache: dict[int, Model | SegmentedModel] = {}
 
   def _build(self, S: int) -> Model | SegmentedModel:
@@ -196,7 +289,7 @@ class CrossEncoder:
 
   def _embed(self, ids: np.ndarray, typ_ids: np.ndarray) -> np.ndarray:
     """Host-side token + position + segment embedding lookup, then LayerNorm."""
-    e = self.word[ids] + self.pos[np.arange(len(ids))] + self.typ[typ_ids]
+    e = self.word[ids] + self.pos[_position_ids(ids, self.pad_id)] + self.typ[typ_ids]
     m = e.mean(-1, keepdims=True)
     v = ((e - m) ** 2).mean(-1, keepdims=True)
     return ((e - m) / np.sqrt(v + self.eps) * self.eln_w + self.eln_b).astype(np.float32)
@@ -211,8 +304,8 @@ class CrossEncoder:
       ids = np.asarray(enc["input_ids"], dtype=np.int64)
       typ = np.asarray(enc.get("token_type_ids") or [0] * len(ids), dtype=np.int64)
       net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
-      cls = net(self._embed(ids, typ))[0]                              # [CLS] state, on the ANE
-      pooled = np.tanh(cls @ self.pool_w.T + self.pool_b)              # BERT pooler
+      cls = net(self._embed(ids, typ))[0]                              # [CLS] / <s> state, on the ANE
+      pooled = np.tanh(cls @ self.pool_w.T + self.pool_b)              # BERT pooler / Roberta head dense
       logits = pooled @ self.cls_w.T + self.cls_b                      # [num_labels]
       scores.append(float(logits[0]))
     return np.asarray(scores, dtype=np.float32)
