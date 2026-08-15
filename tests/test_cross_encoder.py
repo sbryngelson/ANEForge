@@ -7,7 +7,13 @@ check against `transformers` on real weights needs an ANE and a download; it liv
 import numpy as np
 import pytest
 
-from aneforge.models import _position_ids, _seqcls_head
+from aneforge.models import (
+  _DISTILBERT_KEYS,
+  _encoder_layer_spec,
+  _position_ids,
+  _seqcls_activation,
+  _seqcls_head,
+)
 
 BERT_SD = {
   "bert.embeddings.word_embeddings.weight": None,
@@ -22,6 +28,12 @@ ROBERTA_SD = {
   "classifier.dense.weight": None, "classifier.dense.bias": None,
   "classifier.out_proj.weight": None, "classifier.out_proj.bias": None,
 }
+DISTILBERT_SD = {
+  "distilbert.embeddings.word_embeddings.weight": None,
+  "distilbert.transformer.layer.0.attention.q_lin.weight": None,
+  "pre_classifier.weight": None, "pre_classifier.bias": None,
+  "classifier.weight": None, "classifier.bias": None,
+}
 
 
 def test_bert_head_keys():
@@ -33,6 +45,31 @@ def test_roberta_head_keys():  # RobertaClassificationHead: dense -> tanh -> out
   assert _seqcls_head(ROBERTA_SD, "roberta") == (
     "classifier.dense.weight", "classifier.dense.bias",
     "classifier.out_proj.weight", "classifier.out_proj.bias")
+
+
+def test_distilbert_head_keys():
+  assert _seqcls_head(DISTILBERT_SD, "distilbert", "distilbert") == (
+    "pre_classifier.weight", "pre_classifier.bias", "classifier.weight", "classifier.bias")
+
+
+def test_distilbert_encoder_layer_spec():
+  prefix, keys = _encoder_layer_spec("distilbert")
+  assert prefix == "transformer.layer.{i}."
+  assert keys is _DISTILBERT_KEYS
+  assert keys["Wq"] == "attention.q_lin.weight"
+  assert keys["ln2w"] == "output_layer_norm.weight"
+
+
+def test_bert_encoder_layer_spec_is_unchanged():
+  prefix, keys = _encoder_layer_spec("bert")
+  assert prefix == "encoder.layer.{i}."
+  assert keys["Wq"] == "attention.self.query.weight"
+
+
+def test_distilbert_head_uses_relu_and_bert_head_uses_tanh():
+  values = np.array([-2.0, 0.0, 2.0])
+  np.testing.assert_array_equal(_seqcls_activation(values, "distilbert"), [0.0, 0.0, 2.0])
+  np.testing.assert_allclose(_seqcls_activation(values, "bert"), np.tanh(values))
 
 
 def test_roberta_is_not_detected_by_a_missing_token_type_table():
