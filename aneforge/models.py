@@ -23,17 +23,48 @@ def load(name: str, int8: bool = False, pooling: str = "mean") -> "Encoder":
   return Encoder(name, int8=int8, pooling=pooling)
 
 
+# ResNet stage layouts, straight from the torchvision factories: blocks per stage and the residual
+# block shape. Bottleneck expands its output 4x, which is what makes its stage-1 shortcut projected.
+_RESNETS: dict[int, tuple[str, tuple[int, int, int, int]]] = {
+  18: ("basic", (2, 2, 2, 2)),
+  34: ("basic", (3, 4, 6, 3)),
+  50: ("bottleneck", (3, 4, 6, 3)),
+  101: ("bottleneck", (3, 4, 23, 3)),
+}
+
+
+def load_resnet(name_or_depth: int | str = 18, int8: bool = False, compress: str | None = None,
+                compress_atol: float = 0.05, build_dir: str | None = None,
+                weights: str = "IMAGENET1K_V1") -> "Vision":
+  """Load a torchvision ResNet (18/34/50/101, ImageNet) as a fused ANE classifier; BatchNorm folded
+  into the preceding conv at load. `name_or_depth` takes 50, "50" or "resnet50"."""
+  return Vision(name_or_depth, int8=int8, compress=compress, compress_atol=compress_atol,
+                build_dir=build_dir, weights=weights)
+
+
 def load_resnet18(int8: bool = False, compress: str | None = None,
                   compress_atol: float = 0.05, build_dir: str | None = None) -> "Vision":
   """Load torchvision ResNet-18 (ImageNet) as a fused ANE classifier; BatchNorm folded into the preceding conv at load."""
   return Vision(int8=int8, compress=compress, compress_atol=compress_atol, build_dir=build_dir)
 
 
+def _resnet_depth(name_or_depth: int | str) -> int:
+  """Accept 50, "50" or "resnet50"."""
+  s = str(name_or_depth).lower().removeprefix("resnet")
+  if not s.isdigit() or int(s) not in _RESNETS:
+    raise ValueError(f"load_resnet: unsupported ResNet {name_or_depth!r}; "
+                     f"supported depths are {sorted(_RESNETS)}")
+  return int(s)
+
+
 class Vision:
-  def __init__(self, int8: bool = False, compress: str | None = None,
-               compress_atol: float = 0.05, build_dir: str | None = None) -> None:
+  def __init__(self, name_or_depth: int | str = 18, int8: bool = False, compress: str | None = None,
+               compress_atol: float = 0.05, build_dir: str | None = None,
+               weights: str = "IMAGENET1K_V1") -> None:
     import torchvision  # lazy
-    m = torchvision.models.resnet18(weights="IMAGENET1K_V1").eval()
+    self.depth = _resnet_depth(name_or_depth)
+    self.block, self.stages = _RESNETS[self.depth]
+    m = getattr(torchvision.models, f"resnet{self.depth}")(weights=weights).eval()
     self.sd = {k: v.detach().numpy().astype(np.float32) for k, v in m.state_dict().items()}
     self.int8 = int8
     self.compress = compress
@@ -49,26 +80,48 @@ class Vision:
     sc = g / np.sqrt(var + 1e-5)
     return (W * sc[:, None, None, None]).astype(np.float32), (b - mu * sc).astype(np.float32)
 
-  def _block(self, x: Tensor, prefix: str, stride: int, downsample: bool) -> Tensor:
+  def _shortcut(self, x: Tensor, prefix: str, stride: int) -> Tensor:
+    """The residual branch: a projection when the block carries one, otherwise the identity.
+
+    Presence is read from the weights rather than derived from a rule. torchvision projects when
+    `stride != 1 or inplanes != planes * expansion`, so with Bottleneck even stage 1 is projected
+    (64 -> 256 at stride 1) while with BasicBlock it is not. A "stage 1 never downsamples" rule holds
+    for BasicBlock only, and would silently drop layer1's projection on ResNet-50/101."""
+    if prefix + ".downsample.0.weight" not in self.sd:
+      return x
+    wd, bd = self._fold(prefix + ".downsample.0", prefix + ".downsample.1")
+    return conv(x, wd, stride=stride, pad=0, bias=bd)
+
+  def _block(self, x: Tensor, prefix: str, stride: int) -> Tensor:
+    """BasicBlock: 3x3 -> 3x3, stride on the first conv."""
     w1, b1 = self._fold(prefix + ".conv1", prefix + ".bn1")
     w2, b2 = self._fold(prefix + ".conv2", prefix + ".bn2")
     out = conv(x, w1, stride=stride, pad=1, bias=b1).relu()
     out = conv(out, w2, stride=1, pad=1, bias=b2)
-    idn = x
-    if downsample:
-      wd, bd = self._fold(prefix + ".downsample.0", prefix + ".downsample.1")
-      idn = conv(x, wd, stride=stride, pad=0, bias=bd)
-    return (out + idn).relu()
+    return (out + self._shortcut(x, prefix, stride)).relu()
+
+  def _bottleneck(self, x: Tensor, prefix: str, stride: int) -> Tensor:
+    """Bottleneck: 1x1 -> 3x3 -> 1x1 with a 4x expansion. The stride sits on the 3x3, not on the
+    first 1x1: that is torchvision's ResNet V1.5 variant, and putting it on conv1 instead changes
+    which pixels survive."""
+    w1, b1 = self._fold(prefix + ".conv1", prefix + ".bn1")
+    w2, b2 = self._fold(prefix + ".conv2", prefix + ".bn2")
+    w3, b3 = self._fold(prefix + ".conv3", prefix + ".bn3")
+    out = conv(x, w1, stride=1, pad=0, bias=b1).relu()
+    out = conv(out, w2, stride=stride, pad=1, bias=b2).relu()
+    out = conv(out, w3, stride=1, pad=0, bias=b3)
+    return (out + self._shortcut(x, prefix, stride)).relu()
 
   def _build(self) -> Model | SegmentedModel:
     x = input((1, 3, 224, 224))
     w, b = self._fold("conv1", "bn1")
     h = conv(x, w, stride=2, pad=3, bias=b).relu().max_pool(3, stride=2, pad=1)
-    for name, stride in [("layer1", 1), ("layer2", 2), ("layer3", 2), ("layer4", 2)]:
-      for i in range(2):
-        h = self._block(h, f"{name}.{i}", stride if i == 0 else 1,
-                        downsample=(i == 0 and name != "layer1"))
-    h = h.mean((2, 3)).reshape(1, 512)
+    block = self._bottleneck if self.block == "bottleneck" else self._block
+    for name, stride, n in zip(("layer1", "layer2", "layer3", "layer4"), (1, 2, 2, 2), self.stages):
+      for i in range(n):
+        h = block(h, f"{name}.{i}", stride if i == 0 else 1)
+    feat = self.sd["fc.weight"].shape[1]          # 512 for BasicBlock, 2048 once expanded 4x
+    h = h.mean((2, 3)).reshape(1, feat)
     out = h.linear(self.sd["fc.weight"], self.sd["fc.bias"])
     return compile(out, int8=self.int8, compress=self.compress,
                    compress_atol=self.compress_atol, build_dir=self.build_dir)

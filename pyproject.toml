@@ -54,7 +54,7 @@ bench = [
     "mlx>=0.31",
     "torch",
 ]
-# Pretrained model loaders (aneforge.models.load / load_resnet18), the LLM/MoE GGUF
+# Pretrained model loaders (aneforge.models.load / load_resnet), the LLM/MoE GGUF
 # loader (aneforge.moe.load_gguf needs gguf), and the diffusion examples. Imported
 # lazily; only install if you use them.
 models = [
