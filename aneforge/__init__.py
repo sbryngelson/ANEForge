@@ -31,7 +31,7 @@ from ._rewrite import reduce_sum_to_matmul, paired_subtract
 from .autograd import (Adam, adam_step, backward, backward_from, conv2d, conv_param,
                        mse, parameter, SGD, softmax_cross_entropy, Trainer, UnrolledTrainer)
 from .streaming import CheckpointedStack
-from .models import (Encoder, Vision, ViT, load, load_resnet, load_resnet18, load_vit,
+from .models import (Encoder, Vision, ViT, GPT2, load, load_resnet, load_resnet18, load_vit, load_gpt2,
                     conv_block, cifar_cnn, group_norm_train)
 from .onnx import load_onnx, onnx_to_tensor, onnx_to_features
 from .llm import LlamaConfig, LlamaPrefill, from_pretrained as load_llm, rope, rope_tables, prefill_block
@@ -53,7 +53,7 @@ __all__ = [
     "precision_risk", "project_peak",
     "CompileBackoffError", "reset_compile_breaker",
     "reduce_sum_to_matmul", "paired_subtract",
-    "load", "load_resnet", "load_resnet18", "load_vit", "Encoder", "Vision", "ViT", "conv_block", "cifar_cnn", "group_norm_train",
+    "load", "load_resnet", "load_resnet18", "load_vit", "load_gpt2", "Encoder", "Vision", "ViT", "GPT2", "conv_block", "cifar_cnn", "group_norm_train",
     "Paired", "paired",
     "parameter", "backward", "backward_from", "mse", "SGD", "Adam",
     "softmax_cross_entropy", "Trainer", "UnrolledTrainer", "adam_step",
