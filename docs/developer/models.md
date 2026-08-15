@@ -71,6 +71,20 @@ top    = vit.classify(image)    # top-k (label, logit)
 
 A strided `PxP` patch conv is walled on the ANE, so patch embedding runs as `space_to_depth(P)` followed by a 1x1 conv; the CLS token's row is picked out of the encoder output via a one-hot picker matmul (a bare row slice is also walled). The loader auto-detects two HF layer namings: the modern one (`vit.layers.{i}.attention.q_proj`, `mlp.fc1/fc2`) and the legacy one (`vit.encoder.layer.{i}.attention.attention.query`, `intermediate.dense`).
 
+## load_gpt2() — GPT-2 text generation
+
+`af.load_gpt2()` loads a GPT-2-family checkpoint — the pre-norm, pure-LayerNorm decoder — as a fused ANE program:
+
+```python
+gpt2 = af.load_gpt2("gpt2-medium")
+ids  = gpt2.generate("The future of artificial intelligence is", max_new_tokens=16)  # greedy; returns token ids
+logits = gpt2(token_ids)                     # 1-D ids -> [S, vocab], for custom decoding
+```
+
+GPT-2 is the family that the LayerNorm-at-`D>=1024` fix unlocks (Llama/Qwen use RMSNorm, so `load_llm` never hit that wall). Each sequence length compiles as **two fused programs**: the pre-norm transformer (`ln_1 -> native causal SDPA -> residual; ln_2 -> Linear -> gelu_new -> Linear -> residual`, then `ln_f`) and the **tied lm_head tiled along the 50257 vocab** — a single matmul that wide exceeds the ANE's per-op dimension cap on the A13-A15 families, so it is emitted as vocab-sized output-port tiles (e.g. `[16384, 16384, 16384, 1105]`) and stitched host-side. Token + positional embedding lookup runs on the host (`gather` is not an ANE op).
+
+Two limits worth knowing: decode has **no KV cache yet** — it recomputes the forward on the growing sequence (cached per length), so it validates correctness rather than throughput; and native causal SDPA is reliable only for `S < 512`, so use short prompts and small `max_new_tokens`. `examples/gpt2.py` compiles the full 24-layer `gpt2-medium` as one program and checks the greedy decode is token-identical to Hugging Face.
+
 ## Weight layout: He init is layout-dependent
 
 `_he` (He/Kaiming-normal init) computes `fan_in` from the weight layout, which differs between conv and fc weights:
