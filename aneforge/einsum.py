@@ -12,7 +12,8 @@ from aneforge.graph import Tensor, _const
 
 
 class EinsumUnsupported(NotImplementedError):
-  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal-write, triple repeats, ellipsis)."""
+  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal-write outputs, triple-repeat
+  indices, and ellipsis broadcast between mismatched size-1 dims). Plain ellipsis batch dims are supported."""
 
 
 # equation parsing

@@ -1,4 +1,5 @@
-"""Pretrained-model loaders (`load`, `load_resnet18`) and trainable-graph
+"""Pretrained-model loaders (`load` and `CrossEncoder` for BERT/RoBERTa encoders and rerankers,
+`load_resnet`/`load_vit` image classifiers, `load_gpt2` text generation) and trainable-graph
 builders (`group_norm_train`, `conv_block`, `cifar_cnn`). See docs/developer/models.md."""
 from __future__ import annotations
 

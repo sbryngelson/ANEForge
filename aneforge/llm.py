@@ -1,5 +1,5 @@
 """LLMs on the Apple Neural Engine. A config-driven decoder (RMSNorm + RoPE + grouped-query causal
-attention + SwiGLU) that loads Hugging Face weights and runs prefill and KV-cache decode as fused ANE
+attention + SwiGLU/GeGLU MLP) that loads Hugging Face weights and runs prefill and KV-cache decode as fused ANE
 programs. Matches HF logits; see `docs/llm.md`.
 
 The runner is model-agnostic: a `LlamaConfig` carries a per-layer plan (`LayerSpec`) naming a token-mixer
@@ -548,7 +548,8 @@ def _assert_dense_compatible(c) -> None:
 
 
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
-  """Load a Llama/Qwen-class model from Hugging Face for ANE inference. `compress` ("int8"/"int4"/"blockwise")
+  """Load a decoder LM from Hugging Face for ANE inference: dense Llama/Qwen/Mistral, Gemma, and MoE
+  (an unsupported arch is rejected, not silently mis-loaded). `compress` ("int8"/"int4"/"blockwise")
   quantizes the ANE weights."""
   import torch
   from transformers import AutoModelForCausalLM
