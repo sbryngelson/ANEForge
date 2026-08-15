@@ -1,6 +1,8 @@
 """GPT-2 loader graph-level tests: the Conv1D->linear weight mapping, the tiled lm_head, and
 off-device MIL lowering (no ANE dispatch; CI-safe). Numerics are validated on-device by
 examples/gpt2.py."""
+from unittest.mock import Mock
+
 import numpy as np
 import pytest
 
@@ -77,6 +79,17 @@ def test_gpt2_embed_rejects_sequence_beyond_max_positions():
   g.wpe = np.zeros((10, 16), np.float32)
   with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
     g._embed(np.arange(11, dtype=np.int64))
+
+
+def test_gpt2_generate_text_decodes_generated_tokens():
+  g = GPT2.__new__(GPT2)
+  g.generate = Mock(return_value=[17, 42])
+  g.tok = Mock()
+  g.tok.decode.return_value = " generated text"
+
+  assert g.generate_text("prompt", max_new_tokens=2) == " generated text"
+  g.generate.assert_called_once_with("prompt", 2)
+  g.tok.decode.assert_called_once_with([17, 42])
 
 
 def test_gpt2_gelu_new_lowers():
