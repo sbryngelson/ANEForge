@@ -494,6 +494,22 @@ def _gemma_adapter(c, sd) -> tuple[LlamaConfig, dict]:
   return cfg, w
 
 
+def _mistral_adapter(c, sd) -> tuple[LlamaConfig, dict]:
+  """Adapter for Mistral decoders: Llama-shaped (same state_dict names) with grouped-query attention
+  and a sliding window. With a resident KV cache the window is the cache length, so decode stays
+  exact while `max_len` does not exceed `sliding_window`; the limit is surfaced in `cfg.extra`."""
+  n = int(c.num_hidden_layers)
+  cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
+                    n_kv_heads=int(getattr(c, "num_key_value_heads", c.num_attention_heads)),
+                    ffn_dim=c.intermediate_size, vocab=c.vocab_size,
+                    rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0),
+                    layers=[LayerSpec(mixer="attention", mlp="swiglu") for _ in range(n)])
+  if getattr(c, "sliding_window", None):
+    cfg.extra["sliding_window"] = int(c.sliding_window)
+  return cfg, _weights_from_state_dict(sd, cfg)
+
+
 def _cfg_from_hf(c) -> LlamaConfig:
   """Back-compat: a `LlamaConfig` (no per-layer plan) from a Hugging Face config."""
   return LlamaConfig(dim=c.hidden_size, n_layers=c.num_hidden_layers, n_heads=c.num_attention_heads,
@@ -507,6 +523,7 @@ def _cfg_from_hf(c) -> LlamaConfig:
 # wins, dense Llama/Qwen is the fallback. New archs append here (e.g. aneforge.moe) so the loader stays generic.
 ADAPTERS: list = [
   (lambda c: c.model_type == "gemma", _gemma_adapter),
+  (lambda c: c.model_type == "mistral", _mistral_adapter),
 ]
 
 
