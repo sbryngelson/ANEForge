@@ -183,15 +183,16 @@ def _gelu_mlp(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   return h + act.linear(w["wproj"], w.get("proj_bias"))
 
 def _gelu_tanh(x: Tensor) -> Tensor:
-  """The Exact/Tanh Gelu (same as the MIL op), implemented exactly out of primitive math ops."""
+  """PyTorch 'tanh' GELU (Gemma's `gelu_pytorch_tanh`), built out of primitive math ops rather than the
+  native `gelu`/`scaled_tanh` MIL ops: `0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3)))`."""
   inner = (x + x.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
   return (x * 0.5) * inner.tanh().adds(1.0)
 
 def _geglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   """GeGLU MLP with its residual: `h + down(gelu(gate(norm(h))) * up(norm(h)))`. Used by Gemma."""
   hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
-  # Gemma uses the EXACT gelu, not the approx one. The fast-erf MIL op diverges (it's the true
-  # Erf, not the polynomial approx). See #214
+  # Gemma uses the tanh-approximation gelu, not the native `gelu` MIL op (that's the true Erf/exact
+  # variant and diverges from Gemma's actual activation). See #214
   return h + (_gelu_tanh(hn.linear(w["wgate"])) * hn.linear(w["wup"])).linear(w["wdown"])
 
 
@@ -253,6 +254,24 @@ class LlamaPrefill:
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
 
+  def release(self) -> None:
+    """Release every compiled program (prefill, decode chunks, batched-prefill chunks) and clear the cached
+    state, so a subsequent call transparently recompiles instead of replaying a freed program."""
+    if self._net is not None:
+      self._net.release()
+    if self._dec is not None:
+      for c in self._dec["chunks"]: c["net"].release()
+    if self._pre is not None:
+      for c in self._pre["chunks"]: c["net"].release()
+    self._net, self._seq, self._dec, self._pre = None, 0, None, None
+
+  def _check_positions(self, n: int) -> None:
+    """Raise a clear error instead of an out-of-bounds `wpe` index/broadcast failure when `n` exceeds a
+    learned-position-embedding model's position table (e.g. GPT-2's 1024/2048 `n_positions`)."""
+    wpe = self.w.get("wpe")
+    if wpe is not None and n > wpe.shape[0]:
+      raise ValueError(f"sequence length {n} exceeds this model's {wpe.shape[0]} max positions")
+
   def _spec(self, i: int) -> LayerSpec:
     """The plan for layer `i`: the config's per-layer plan, or an attention fallback with QK-norm sniffed
     from the weights (back-compat for callers that pass no `layers`)."""
@@ -276,6 +295,7 @@ class LlamaPrefill:
 
   def _hidden(self, token_ids):
     """Run the transformer layers on the ANE; return the final hidden states [S, dim]."""
+    self._check_positions(len(token_ids))
     if self._net is None or len(token_ids) != self._seq:
       self.compile(len(token_ids))
     net = self._net; assert net is not None
@@ -400,6 +420,7 @@ class LlamaPrefill:
     logits and the cache seed. Returns (next_logits [1, vocab], kv_by_layer) in the decode cache layout."""
     f16 = np.float16; real = len(token_ids)
     seq = max(int(pad_to), real) if pad_to else real
+    self._check_positions(seq)
     pre = self._prefiller(seq)
     ids = list(token_ids) + [0] * (seq - real)
     emb = self.w["embed"][np.asarray(ids)]
@@ -438,6 +459,7 @@ class LlamaPrefill:
     (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
     cfg = self.cfg; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
+    self._check_positions(M)
     eos = {int(eos_id)} if isinstance(eos_id, int) else {int(e) for e in (eos_id or ())}   # any-of stop set
     d = self._decoder(M); chunks = d["chunks"]
     for c in chunks:                                           # reset every mixer's resident state for this generation
@@ -577,6 +599,10 @@ def _cfg_from_hf(c) -> LlamaConfig:
 
 def _gpt2_adapter(c, sd) -> tuple[LlamaConfig, dict]:
   """Adapter for GPT-2 causal LM: LayerNorm + learned-positional wpe + tied lm_head + gelu_new."""
+  if getattr(c, "scale_attn_by_inverse_layer_idx", False) or getattr(c, "reorder_and_upcast_attn", False):
+    raise ValueError(
+      "load_gpt2: this checkpoint sets scale_attn_by_inverse_layer_idx/reorder_and_upcast_attn, which "
+      "aneforge's GPT-2 adapter does not implement, so it would silently produce wrong logits.")
   n = int(getattr(c, "n_layer", getattr(c, "num_hidden_layers", 12)))
   dim = int(getattr(c, "n_embd", getattr(c, "hidden_size", 768)))
   heads = int(getattr(c, "n_head", getattr(c, "num_attention_heads", 12)))

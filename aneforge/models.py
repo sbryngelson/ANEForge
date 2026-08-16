@@ -520,14 +520,7 @@ class GPT2:
     return self.runner.generate(base, max_new_tokens=max_new_tokens, **kwargs)
 
   def release(self) -> None:
-    if self.runner._net is not None:
-      self.runner._net.release()
-    if self.runner._dec is not None:
-      for c in self.runner._dec["chunks"]:
-        c["net"].release()
-    if self.runner._pre is not None:
-      for c in self.runner._pre["chunks"]:
-        c["net"].release()
+    self.runner.release()
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):
