@@ -553,6 +553,10 @@ class GPT2:
       ids = np.concatenate([ids, [int(self(ids)[-1].argmax())]])
     return [int(t) for t in ids[len(base):]]
 
+  def generate_text(self, prompt: str, max_new_tokens: int = 16) -> str:
+    """Greedy-decode and return the newly generated tokens as text."""
+    return self.tok.decode(self.generate(prompt, max_new_tokens))
+
   def release(self) -> None:
     for net, head in self._cache.values():
       net.release(); head.release()

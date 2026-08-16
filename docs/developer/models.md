@@ -77,7 +77,9 @@ A strided `PxP` patch conv is walled on the ANE, so patch embedding runs as `spa
 
 ```python
 gpt2 = af.load_gpt2("gpt2-medium")
-ids  = gpt2.generate("The future of artificial intelligence is", max_new_tokens=16)  # greedy; returns token ids
+prompt = "The future of artificial intelligence is"
+ids  = gpt2.generate(prompt, max_new_tokens=16)       # greedy; returns newly generated token ids
+text = gpt2.generate_text(prompt, max_new_tokens=16)  # decoded newly generated text
 logits = gpt2(token_ids)                     # 1-D ids -> [S, vocab], for custom decoding
 ```
 
