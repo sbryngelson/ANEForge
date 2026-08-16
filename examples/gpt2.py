@@ -50,8 +50,12 @@ def main():
     print(f" done ({t_warm:.2f}s)")
 
     # Decode on ANE with resident KV cache
+    profile = {}
+    def on_stage(name, elapsed):
+        profile.setdefault(name, []).append(elapsed)
+
     t0 = time.perf_counter()
-    ane_toks = model.generate(ids, max_new_tokens=K, max_len=128, batched_prefill=True)
+    ane_toks = model.generate(ids, max_new_tokens=K, max_len=128, batched_prefill=True, on_stage=on_stage)
     dt = time.perf_counter() - t0
     tok_s = K / dt if dt > 0 else 0
 
@@ -61,7 +65,15 @@ def main():
 
     print(f"\n  ANE greedy: {tok.decode(ane_toks)!r}")
     print(f"  Ref greedy: {tok.decode(ref_toks)!r}")
-    print(f"  Speed:      {dt / K * 1e3:.1f} ms/token ({tok_s:.2f} tok/s, compile excluded)")
+    print(f"  Generation: {dt / K * 1e3:.1f} ms/token ({tok_s:.2f} tok/s, prefill included, compile excluded)")
+    for name in ("embedding", "layers", "step", "lm_head", "sample"):
+        values = profile.get(name, [])
+        if values:
+            print(f"  Profile {name:>9}: {np.mean(values) * 1e3:.1f} ms/token")
+    decode_steps = len(profile.get("step", []))
+    if decode_steps:
+        stage_total = sum(sum(profile.get(name, [])) for name in ("embedding", "layers", "lm_head", "sample")) / decode_steps
+        print(f"  Profile decode stages: {stage_total * 1e3:.1f} ms/token ({decode_steps} steps; host dispatch overhead excluded)")
 
     match_count = sum(int(a) == int(b) for a, b in zip(ane_toks, ref_toks))
     greedy_ok = list(ane_toks) == list(ref_toks) and match_count == K

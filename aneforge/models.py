@@ -9,13 +9,9 @@ import numpy as np
 from .graph import Tensor, concat, conv, input, mha, space_to_depth
 from .autograd import conv2d, conv_param, parameter
 from ._compile import Model, SegmentedModel, MultiModel, compile
+from . import _targets
 
 _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
-
-# Safe matmul output dim cap for all families. Family 3 (A13-A15, M1/M2) caps at 16384;
-# Family 4+ caps at 65536. Tiling at 16384 is conservative and safe everywhere.
-_LMHEAD_TILE = 16384
-
 
 def _l2_normalizer(D: int) -> Model | SegmentedModel:
   """Cached fused-ANE program L2-normalizing a [1, D] vector over its last axis."""
@@ -456,13 +452,14 @@ def _gelu_new(x: Tensor) -> Tensor:
 
 def _lm_head_tiles(h: Tensor, wte: np.ndarray) -> list[Tensor]:
   """Tied lm_head logits = h @ wte.T, tiled along vocab so no matmul output dim exceeds
-  `_LMHEAD_TILE`. Returns a LIST of tiles, never a concatenated [S, vocab] tensor: the
+  the target family's max tensor dimension. Returns a LIST of tiles, never a concatenated [S, vocab] tensor: the
   concat itself exceeds the family-3 cap (the #183 lesson). The tiles are the head's
   output ports; stitching is host-side via `_logits_from`."""
   V = wte.shape[0]
-  if V <= _LMHEAD_TILE:
+  tile = _targets.limit("max_tensor_dim", _targets.detect_family())
+  if V <= tile:
     return [h.linear(wte)]
-  return [h.linear(wte[i:i + _LMHEAD_TILE]) for i in range(0, V, _LMHEAD_TILE)]
+  return [h.linear(wte[i:i + tile]) for i in range(0, V, tile)]
 
 
 def _logits_from(net: MultiModel | Model, out) -> np.ndarray:

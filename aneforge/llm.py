@@ -8,6 +8,7 @@ the plan + canonical weights - not new branches in the hot path."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
+import time
 import numpy as np
 
 from .graph import Tensor, input as _input, concat as _concat, _const
@@ -352,6 +353,10 @@ class LlamaPrefill:
       ctx = {"oh": _input((1, M, 1)), "inv": _input((1, M, 1)), "mask": _input((1, 1, M)),
              "cosp": _input((1, dh)), "sinp": _input((1, dh))}
       h = x; pairs = []
+      wpe_pos = None
+      if gi == 0 and "wpe" in self.w:
+        wpe_pos = _input((1, M))
+        h = h + wpe_pos @ _const(self.w["wpe"][:M].astype(np.float16))
       for li in grp:
         ls = self._spec(li); lw = self.w["layers"][li]
         h, sp = DECODE_MIXERS[ls.mixer](h, lw, cfg, ls, ctx, M)
@@ -365,6 +370,7 @@ class LlamaPrefill:
       for o, i in pairs:                                        # alias each state output -> its input (resident)
         net.prog.share_buffer(0, om[o], 0, inm[id(i)])
       p = {"x": inm[id(x)], "h": om[h], "states": {inm[id(i)]: i.shape for _, i in pairs}}
+      if wpe_pos is not None: p["wpe_pos"] = inm[id(wpe_pos)]
       for k, t in ctx.items():
         if id(t) in inm: p[k] = inm[id(t)]                      # only ports the chunk's mixers actually use
       chunks.append({"net": net, "p": p})
@@ -452,12 +458,15 @@ class LlamaPrefill:
         c["net"].prog.set_input(port, buf)
 
   def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None,
-               temperature=0.0, top_p=1.0, top_k=0, batched_prefill=True, prefill_pad=None):
+               temperature=0.0, top_p=1.0, top_k=0, batched_prefill=True, prefill_pad=None, on_stage=None):
     """Autoregressive generation with a resident KV-cache. The decode program (compiled once and cached) runs
     all layers for one token attending to caches that stay on the ANE across steps, so each step feeds only the
     token embedding + a position one-hot. `on_token(id)` is called per token (streaming). Greedy by default
     (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
     cfg = self.cfg; f16 = np.float16
+    profiling = on_stage is not None
+    def stage(name, elapsed):
+      if on_stage is not None: on_stage(name, elapsed)
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
     self._check_positions(M)
     eos = {int(eos_id)} if isinstance(eos_id, int) else {int(e) for e in (eos_id or ())}   # any-of stop set
@@ -472,16 +481,21 @@ class LlamaPrefill:
       vals = {"oh": ohv, "inv": invv, "mask": mv}
       if d["cos"] is not None:
         vals["cosp"] = d["cos"][pos][None]; vals["sinp"] = d["sin"][pos][None]
+      t0 = time.perf_counter() if profiling else 0.0
       emb = self.w["embed"][tok]
-      if "wpe" in self.w:
-        emb = emb + self.w["wpe"][pos]
       h = np.asarray(emb)[None].astype(f16)
+      wpe_pos = np.zeros((1, M), f16) if "wpe" in self.w else None
+      if wpe_pos is not None: wpe_pos[0, pos] = 1.0
+      if profiling: stage("embedding", time.perf_counter() - t0)
+      t0 = time.perf_counter() if profiling else 0.0
       for c in chunks:                                         # hidden flows chunk -> chunk (cheap [1,dim] round-trip)
         p = c["p"]; pr = c["net"].prog
         pr.set_input(p["x"], h)
         for k in _DECODE_CTX:
           if k in p: pr.set_input(p[k], vals[k])
+        if "wpe_pos" in p: pr.set_input(p["wpe_pos"], wpe_pos)
         pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
+      if profiling: stage("layers", time.perf_counter() - t0)
       return h.reshape(cfg.dim).astype(np.float32)
     use_batched = (batched_prefill and len(prompt) > 1
                    and not hasattr(self.w["layers"], "free")     # streamed weights are freed by _decoder; can't re-bake
@@ -499,7 +513,13 @@ class LlamaPrefill:
       cur, pos = prompt[-1], len(prompt) - 1
     while len(out) < max_new_tokens:                           # decode
       if pos >= M - 1: break                                   # cache full
-      nxt = self._sample(self._logits(step(cur, pos)), temperature, top_p, top_k); out.append(nxt)
+      t0 = time.perf_counter() if profiling else 0.0; hidden = step(cur, pos)
+      if profiling: stage("step", time.perf_counter() - t0)
+      t0 = time.perf_counter() if profiling else 0.0; logits = self._logits(hidden)
+      if profiling: stage("lm_head", time.perf_counter() - t0)
+      t0 = time.perf_counter() if profiling else 0.0; nxt = self._sample(logits, temperature, top_p, top_k)
+      if profiling: stage("sample", time.perf_counter() - t0)
+      out.append(nxt)
       if nxt in eos: break
       if on_token is not None: on_token(nxt)                   # stream the token
       cur, pos = nxt, pos + 1

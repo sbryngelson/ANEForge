@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import aneforge as af
+import aneforge.models as models
 from aneforge._compile import _lower_fused_to_dir
 from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles, GPT2
 from aneforge.llm import _gpt2_adapter, LlamaPrefill, ModelType
@@ -71,6 +72,16 @@ def test_gpt2_lm_head_tiles_shapes():
   assert all(t.op == "matmul" for t in tiles)
   small = _lm_head_tiles(h, np.zeros((1000, 1024), np.float16))
   assert len(small) == 1 and small[0].shape == (1, 1000)
+
+
+def test_gpt2_lm_head_tiles_follow_target_family(monkeypatch):
+  """A16+ can keep GPT-2's vocabulary in one output tile; earlier families retain four."""
+  h = af.input((1, 1024))
+  wte = np.zeros((50257, 1024), np.float16)
+  monkeypatch.setattr(models._targets, "detect_family", lambda: 5)
+  assert [t.shape for t in models._lm_head_tiles(h, wte)] == [(1, 50257)]
+  monkeypatch.setattr(models._targets, "detect_family", lambda: 3)
+  assert [t.shape for t in models._lm_head_tiles(h, wte)] == [(1, 16384), (1, 16384), (1, 16384), (1, 1105)]
 
 
 def test_gpt2_generate_text_decodes_generated_tokens():
