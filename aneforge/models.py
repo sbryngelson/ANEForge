@@ -451,9 +451,9 @@ def _gelu_new(x: Tensor) -> Tensor:
 
 
 def _lm_head_tiles(h: Tensor, wte: np.ndarray) -> list[Tensor]:
-  """Tied lm_head logits = h @ wte.T, tiled along vocab so no matmul output dim exceeds
-  the target family's max tensor dimension. Returns a LIST of tiles, never a concatenated [S, vocab] tensor: the
-  concat itself exceeds the family-3 cap (the #183 lesson). The tiles are the head's
+  """Tied lm_head logits = h @ wte.T, tiled along vocab so no matmul output dim exceeds the
+  target family's max tensor dimension. Returns a LIST of tiles, never a concatenated [S, vocab]
+  tensor: the concat itself exceeds the family-3 cap (the #183 lesson). The tiles are the head's
   output ports; stitching is host-side via `_logits_from`."""
   V = wte.shape[0]
   tile = _targets.limit("max_tensor_dim", _targets.detect_family())

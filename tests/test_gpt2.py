@@ -86,19 +86,19 @@ def test_gpt2_lm_head_tiles_follow_target_family(monkeypatch):
 
 def test_logits_caches_contiguous_fp32():
   """`_logits` builds a contiguous fp32 lm_head transpose once (skipping the per-call fp16->fp32
-  conversion of a strided view); the result matches the naive fp16-weight matmul and the cache
-  is reused across calls."""
+  conversion of a strided view). The result is bit-identical to the previous per-call matmul
+  (`h @ np.asarray(lm_head).T`), and the cache is reused, not rebuilt, across calls."""
   rng = np.random.default_rng(0)
   cfg = LlamaConfig(dim=16, n_layers=2, n_heads=4, n_kv_heads=4, ffn_dim=64, vocab=100)
   w = {"lm_head": rng.standard_normal((100, 16)).astype(np.float16), "layers": []}
   model = LlamaPrefill(cfg, w)
   h = rng.standard_normal(16).astype(np.float32)
-  expected = h @ np.asarray(w["lm_head"]).astype(np.float32).T
-  assert np.allclose(model._logits(h), expected)
-  assert model._lmT is not None and model._lmT.dtype == np.float32
-  assert model._lmT.flags["C_CONTIGUOUS"]
+  expected = h @ np.asarray(w["lm_head"]).T          # the pre-cache matmul, unchanged numerics
+  assert np.array_equal(model._logits(h), expected)
+  first = model._lmT
+  assert first is not None and first.dtype == np.float32 and first.flags["C_CONTIGUOUS"]
   model._logits(h)          # second call reuses the cached transpose
-  assert model._lmT is not None
+  assert model._lmT is first
 
 
 def test_gpt2_generate_text_decodes_generated_tokens():
@@ -153,6 +153,8 @@ def test_llama_prefill_check_positions_rejects_beyond_wpe():
     model._hidden(np.arange(11, dtype=np.int64))
   with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
     model.generate([1, 2, 3], max_new_tokens=4, max_len=20)
+  with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
+    model.warmup(20)   # warmup goes straight to _decoder; must hit the same guard
 
 
 def test_llama_prefill_release_clears_state():
@@ -175,9 +177,11 @@ def test_llama_prefill_release_clears_state():
   model._seq = 5
   model._dec = {"M": 20, "chunks": [{"net": chunk_net}]}
   model._pre = {"seq": 5, "chunks": [{"net": chunk_net}]}
+  model._lmT = object()          # the cached host lm_head transpose must be dropped too
   model.release()
   assert net.released and chunk_net.released
   assert model._net is None and model._seq == 0 and model._dec is None and model._pre is None
+  assert model._lmT is None
 
 
 def test_gpt2_adapter_mapping():
