@@ -498,7 +498,7 @@ class LlamaPrefill:
       h = np.asarray(emb)[None].astype(f16)
       wpe_pos = np.zeros((1, M), f16) if "wpe" in self.w else None
       if wpe_pos is not None: wpe_pos[0, pos] = 1.0
-      if profiling: on_stage("embedding", time.perf_counter() - t0)
+      if on_stage is not None: on_stage("embedding", time.perf_counter() - t0)
       t0 = time.perf_counter() if profiling else 0.0
       for c in chunks:                                         # hidden flows chunk -> chunk (cheap [1,dim] round-trip)
         p = c["p"]; pr = c["net"].prog
@@ -507,7 +507,7 @@ class LlamaPrefill:
           if k in p: pr.set_input(p[k], vals[k])
         if "wpe_pos" in p: pr.set_input(p["wpe_pos"], wpe_pos)
         pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
-      if profiling: on_stage("layers", time.perf_counter() - t0)
+      if on_stage is not None: on_stage("layers", time.perf_counter() - t0)
       return h.reshape(cfg.dim).astype(np.float32)
     use_batched = (batched_prefill and len(prompt) > 1
                    and not hasattr(self.w["layers"], "free")     # streamed weights are freed by _decoder; can't re-bake
@@ -526,11 +526,11 @@ class LlamaPrefill:
     while len(out) < max_new_tokens:                           # decode
       if pos >= M - 1: break                                   # cache full
       t0 = time.perf_counter() if profiling else 0.0; hidden = step(cur, pos)
-      if profiling: on_stage("step", time.perf_counter() - t0)
+      if on_stage is not None: on_stage("step", time.perf_counter() - t0)
       t0 = time.perf_counter() if profiling else 0.0; logits = self._logits(hidden)
-      if profiling: on_stage("lm_head", time.perf_counter() - t0)
+      if on_stage is not None: on_stage("lm_head", time.perf_counter() - t0)
       t0 = time.perf_counter() if profiling else 0.0; nxt = self._sample(logits, temperature, top_p, top_k)
-      if profiling: on_stage("sample", time.perf_counter() - t0)
+      if on_stage is not None: on_stage("sample", time.perf_counter() - t0)
       out.append(nxt)
       if nxt in eos: break
       if on_token is not None: on_token(nxt)                   # stream the token
