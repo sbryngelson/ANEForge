@@ -181,6 +181,7 @@ Pretrained models, each fused into one ANE program:
 | ResNet-18          | ImageNet classification    | cosine 1.0000           |
 | ViT-B/16           | vision transformer encoder | cosine 1.0000           |
 | all-MiniLM-L6-v2   | sentence embedding         | cosine 1.0000           |
+| ms-marco-MiniLM-L-6-v2 | reranker (CrossEncoder) | identical ranking, relerr 5e-4 |
 | ESPCN              | super-resolution           | runs end to end         |
 | Stable Diffusion 1.5 | U-Net + VAE (per component) | U-Net 1.5%, VAE 4.4% rel. |
 
@@ -189,7 +190,7 @@ Operator coverage is tracked op by op across M1 to M5 in the [op catalog](docs/o
 
 ## Language models
 
-Decoder LLMs run on the ANE from Hugging Face weights or GGUF - prefill plus resident-KV-cache decode, auto-segmented past the ~2 GB single-program ceiling:
+Decoder LLMs run on the ANE from Hugging Face weights or GGUF - prefill plus resident-KV-cache decode, auto-segmented past the ~2 GB single-program ceiling (GPT-2 below is the exception: no KV cache yet, recompute per length):
 
 | Model                  | What runs                          | Measured                          |
 | ---------------------- | ---------------------------------- | --------------------------------- |
@@ -197,6 +198,7 @@ Decoder LLMs run on the ANE from Hugging Face weights or GGUF - prefill plus res
 | Qwen3-8B + 0.6B draft  | speculative decoding, exact        | 2.28x (7.4 -> 16.8 tok/s)         |
 | Qwen1.5-MoE-A2.7B      | sparse MoE, full model on pure ANE | coherent text, ~2 tok/s (int8)    |
 | Qwen3.5-27B hybrid     | 48 DeltaNet + 16 attn on pure ANE  | coherent int8 (fp16-bound vs llama.cpp) |
+| GPT-2 medium           | pre-norm LayerNorm decoder, tiled tied lm_head, recompute-per-length | 16/16 greedy match vs HF fp32, 0.28 tok/s |
 
 Speculative verify is near-free on the ANE (`verify(K) ~ verify(1)`, decode is latency-bound); MoE decode at 30B scale is weight-bandwidth-bound. Full writeup in the [LLMs guide](docs/llm.md).
 

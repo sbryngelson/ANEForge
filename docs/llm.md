@@ -152,7 +152,8 @@ before RoPE), and a large vocab - the layers run on the ANE; the lm_head project
 
 ## Scope
 
-Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), sparse **Mixture-of-Experts**
+Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), **Mistral**
+(GQA + sliding window), **Gemma** (scaled embeddings + GeGLU + `(1+w)` RMSNorm), sparse **Mixture-of-Experts**
 (Qwen3-MoE, Qwen2-MoE), and **hybrid** DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
 KV-cache decode, automatic segmentation past the ~2 GB program ceiling, int8/int4 weights, and exact
 speculative decoding. Static prompt length per compiled graph; the lm_head projection runs on host.

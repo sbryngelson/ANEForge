@@ -12,7 +12,8 @@ from aneforge.graph import Tensor, _const
 
 
 class EinsumUnsupported(NotImplementedError):
-  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal-write, triple repeats, ellipsis)."""
+  """Raised for equations not lowerable to ANE matmul/reduce ops (diagonal-write outputs, triple-repeat
+  indices, and ellipsis broadcast between mismatched size-1 dims). Plain ellipsis batch dims are supported."""
 
 
 # equation parsing
@@ -244,6 +245,50 @@ def _expand_to(t: Tensor, present: list, target: list, _sizes) -> Tensor:
   return t.reshape(*shape)
 
 
+# self-test case inventory
+
+_SELFTEST_SUPPORTED = [
+  ("matmul",            "ij,jk->ik",        [(8, 16), (16, 12)]),
+  ("matmul-implied",    "ij,jk",            [(8, 16), (16, 12)]),
+  ("batched-matmul",    "bij,bjk->bik",     [(4, 8, 16), (4, 16, 12)]),
+  ("transpose",         "ij->ji",           [(8, 16)]),
+  ("transpose-3d",      "abc->cab",         [(3, 4, 5)]),
+  ("outer",             "i,j->ij",          [(8,), (16,)]),
+  ("matvec",            "ij,j->i",          [(8, 16), (16,)]),
+  ("vecmat",            "i,ij->j",          [(8,), (8, 16)]),
+  ("elem-reduce",       "ij,ij->i",         [(8, 16), (8, 16)]),
+  ("dot",               "i,i->",            [(32,), (32,)]),
+  ("full-reduce",       "ij->",             [(8, 16)]),
+  ("row-reduce",        "ij->i",            [(8, 16)]),
+  ("col-reduce",        "ij->j",            [(8, 16)]),
+  ("bilinear",          "bi,ij,bj->b",      [(4, 8), (8, 8), (4, 8)]),
+  ("attn-scores",       "bhqd,bhkd->bhqk",  [(2, 3, 5, 7), (2, 3, 6, 7)]),
+  ("attn-context",      "bhqk,bhkd->bhqd",  [(2, 3, 5, 6), (2, 3, 6, 7)]),
+  ("weighted-combo",    "bn,bnd->bd",       [(4, 6), (4, 6, 5)]),
+  ("three-chain",       "ij,jk,kl->il",     [(6, 8), (8, 5), (5, 7)]),
+  ("batch-elem-mul",    "bij,bij->bij",     [(2, 4, 5), (2, 4, 5)]),
+  ("tensordot",         "ijk,kl->ijl",      [(3, 4, 5), (5, 6)]),
+  ("contract-mid",      "ijk,jl->ikl",      [(3, 4, 5), (4, 6)]),
+  ("partial-reduce",    "ijk,ik->i",        [(3, 4, 5), (3, 5)]),
+  ("rand-A",            "abc,cd->abd",      [(2, 3, 4), (4, 5)]),
+  ("rand-B",            "ij,ik->jk",        [(7, 4), (7, 5)]),
+  ("rand-C",            "abcd,abce->abde",  [(2, 2, 3, 4), (2, 2, 3, 5)]),
+  ("diag",              "ii->i",            [(5, 5)]),
+  ("trace",             "ii->",             [(5, 5)]),
+  ("diag-batch",        "bii->bi",          [(3, 5, 5)]),
+  ("diag-then-contract", "ii,ij->j",        [(5, 5), (5, 6)]),
+  ("diag-both-operands", "ii,jj->ij",       [(4, 4), (5, 5)]),
+  ("diag-middle",       "ibi->bi",          [(4, 3, 4)]),
+  ("two-diag-pairs",    "iijj->ij",         [(3, 3, 4, 4)]),
+  ("ellipsis",          "...ij->...ji",     [(2, 3, 4)]),
+]
+
+_SELFTEST_REJECTED = [
+  ("diag-write", "ij->ii", [(5, 5)]),
+  ("triple-repeat", "iii->i", [(4, 4, 4)]),
+]
+
+
 # public API
 
 def einsum(equation: str, *operands: Tensor) -> Tensor:
@@ -304,47 +349,8 @@ def _selftest() -> int:
   def R(*shape):
     return rng.standard_normal(shape).astype(f16)
 
-  # (name, equation, [shapes...], tol)
-  battery = [
-    ("matmul",            "ij,jk->ik",        [(8, 16), (16, 12)]),
-    ("matmul-implied",    "ij,jk",            [(8, 16), (16, 12)]),
-    ("batched-matmul",    "bij,bjk->bik",     [(4, 8, 16), (4, 16, 12)]),
-    ("transpose",         "ij->ji",           [(8, 16)]),
-    ("transpose-3d",      "abc->cab",         [(3, 4, 5)]),
-    ("outer",             "i,j->ij",          [(8,), (16,)]),
-    ("matvec",            "ij,j->i",          [(8, 16), (16,)]),
-    ("vecmat",            "i,ij->j",          [(8,), (8, 16)]),
-    ("elem-reduce",       "ij,ij->i",         [(8, 16), (8, 16)]),
-    ("dot",               "i,i->",            [(32,), (32,)]),
-    ("full-reduce",       "ij->",             [(8, 16)]),
-    ("row-reduce",        "ij->i",            [(8, 16)]),
-    ("col-reduce",        "ij->j",            [(8, 16)]),
-    ("bilinear",          "bi,ij,bj->b",      [(4, 8), (8, 8), (4, 8)]),
-    ("attn-scores",       "bhqd,bhkd->bhqk",  [(2, 3, 5, 7), (2, 3, 6, 7)]),
-    ("attn-context",      "bhqk,bhkd->bhqd",  [(2, 3, 5, 6), (2, 3, 6, 7)]),
-    ("weighted-combo",    "bn,bnd->bd",       [(4, 6), (4, 6, 5)]),
-    ("three-chain",       "ij,jk,kl->il",     [(6, 8), (8, 5), (5, 7)]),
-    ("batch-elem-mul",    "bij,bij->bij",     [(2, 4, 5), (2, 4, 5)]),
-    ("tensordot",         "ijk,kl->ijl",      [(3, 4, 5), (5, 6)]),
-    ("contract-mid",      "ijk,jl->ikl",      [(3, 4, 5), (4, 6)]),
-    ("partial-reduce",    "ijk,ik->i",        [(3, 4, 5), (3, 5)]),
-    ("rand-A",            "abc,cd->abd",      [(2, 3, 4), (4, 5)]),
-    ("rand-B",            "ij,ik->jk",        [(7, 4), (7, 5)]),
-    ("rand-C",            "abcd,abce->abde",  [(2, 2, 3, 4), (2, 2, 3, 5)]),
-    ("diag",              "ii->i",            [(5, 5)]),
-    ("trace",             "ii->",             [(5, 5)]),
-    ("diag-batch",        "bii->bi",          [(3, 5, 5)]),
-    ("diag-then-contract", "ii,ij->j",        [(5, 5), (5, 6)]),
-    ("diag-both-operands", "ii,jj->ij",       [(4, 4), (5, 5)]),
-    ("diag-middle",       "ibi->bi",          [(4, 3, 4)]),
-    ("two-diag-pairs",    "iijj->ij",         [(3, 3, 4, 4)]),
-    ("ellipsis",          "...ij->...ji",     [(2, 3, 4)]),   # supported since _expand_ellipsis landed
-  ]
-
-  rejected = [
-    ("diag-write", "ij->ii", [(5, 5)]),
-    ("triple-repeat", "iii->i", [(4, 4, 4)]),
-  ]
+  battery = _SELFTEST_SUPPORTED
+  rejected = _SELFTEST_REJECTED
 
   print("SUPPORTED battery (relerr vs numpy.einsum on the ANE):")
   passes = 0

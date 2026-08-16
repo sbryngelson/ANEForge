@@ -14,8 +14,10 @@ CoreML dependency. The capability surface is characterized in
 ## Where things stand
 
 The infrastructure is mature. The frontend compiles whole graphs to one
-ANE program; pretrained vision CNNs, transformer encoders, and diffusion
-UNet blocks load and run correctly; weights stream at fp16, int8, int4-LUT,
+ANE program; pretrained vision CNNs (ResNet, ViT), transformer encoders and
+rerankers, decoder LLMs (Llama/Qwen/Mistral/Gemma, MoE, hybrid DeltaNet, GPT-2)
+with prefill and resident-KV-cache decode, and diffusion UNet blocks load and
+run correctly; weights stream at fp16, int8, int4-LUT,
 sparse, or blockwise; a reverse-mode autograd trains real networks
 forward, backward, and optimizer-step on the engine; a per-chip cost model
 estimates latency for any ANE generation without that hardware in hand; and
@@ -133,6 +135,23 @@ warn-and-sleep by default (`ANEFORGE_COMPILE_BREAKER_STRICT` raises,
 `af.CompileBackoffError` and `af.reset_compile_breaker`. `af.image_input` uses
 the uint8 route.
 
+### Decoder-LLM inference and pretrained-model loaders
+
+The `llm.py` runner loads Hugging Face decoder LLMs and runs prefill plus
+resident-KV-cache decode as fused ANE programs, matching HF logits: dense
+Llama/Qwen/Mistral, Gemma (GeGLU + scaled embeddings + `(1+w)` RMSNorm), sparse
+Qwen-MoE, and hybrid DeltaNet+attention (Qwen3.5), with automatic segmentation
+past the ~2 GB program ceiling, int8/int4 weights, and exact speculative decoding
+(~2.3x on Qwen3-8B). A config-driven `LayerSpec` plan keeps the runner
+architecture-agnostic, so a new family is an adapter, not a new code path; an
+unsupported architecture is rejected rather than silently mis-loaded. Alongside
+it, model loaders bring GPT-2 (the first LayerNorm decoder, tiled tied lm_head),
+ViT-B/16, ResNet-18/34/50/101, and BERT/RoBERTa rerankers (`CrossEncoder`) onto
+the engine. Reproducible benchmarking landed too: the roofline suite (per-machine
+`ROOFLINES.md`, contributor-driven) and the MLPerf ResNet-50 harness that clears
+the MLCommons submission checker at reference accuracy. See
+[llm.md](llm.md) and [developer/models.md](developer/models.md).
+
 ## Open frontiers
 
 The honest list of what is not done and is worth doing.
@@ -170,11 +189,16 @@ crop-DMA saturation). The remaining M1-specific item is the behavior under many
 rapid compiles, which the compile backoff in `aneforge/_circuit.py` paces as a
 defensive backstop, best verified on M1 hardware.
 
-Separately, LLM *inference* throughput remains GPU territory: decode is
+Separately, LLM decode *throughput* remains GPU territory: decode is
 dispatch-bound and the fp16-product precision limits force the
 cancellation-sensitive layers onto the CPU, so the GPU wins decode on both
-speed and energy at every batch size. The ANE's genuine niche is
-fp16-tolerant, compute-bound work - vision, encoders, on-device embedding - not autoregressive decode. See the bottlenecks section.
+speed and energy at every batch size. ANEForge runs decoder-LLM inference
+correctly (prefill plus resident-KV decode, HF-matching logits), and prefill --
+compute-bound -- is a genuine ANE win; speculative decoding narrows the decode
+gap (exact, ~2.3x) without closing it. So the engine's niche stays
+fp16-tolerant, compute-bound work - vision, encoders, on-device embedding, and
+prompt prefill - rather than high-throughput autoregressive decode. See the
+bottlenecks section.
 
 ### Stable Diffusion 1.5 end-to-end
 

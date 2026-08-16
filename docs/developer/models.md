@@ -30,17 +30,60 @@ The transformer layers run on the ANE as fused programs (cached per sequence len
 
 A model's correct mode lives in its sentence-transformers config; `aneforge.sentence_transformers` reads it for you (see below).
 
-## load_resnet18() — torchvision ImageNet classifier
+## CrossEncoder() — reranker
 
-`af.load_resnet18()` loads torchvision ResNet-18 as a fused ANE classifier:
+`aneforge.sentence_transformers.CrossEncoder` scores `(query, passage)` pairs, mirroring `sentence_transformers.CrossEncoder`:
 
 ```python
-clf    = af.load_resnet18()
+from aneforge.sentence_transformers import CrossEncoder
+ce = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+scores = ce.predict([(query, passage) for passage in passages])   # higher = more relevant
+```
+
+It reuses the same encoder graph as `load()`, then applies the sequence-classification head host-side. It supports BERT-family and RoBERTa/XLM-R (e.g. bge-reranker) `AutoModelForSequenceClassification` heads, detected by head shape; DistilBERT-style heads aren't wired up yet.
+
+## load_resnet() — torchvision ImageNet classifier
+
+`af.load_resnet()` loads a torchvision ResNet as a fused ANE classifier. Depths 18, 34, 50 and 101 are supported; `af.load_resnet18()` stays as the shorthand for depth 18.
+
+```python
+clf    = af.load_resnet(50)                  # 50, "50" and "resnet50" all work
 logits = clf(image)                          # [1,3,224,224] -> [1,1000]
-clf    = af.load_resnet18(compress="int4")   # 4-bit LUT weights
+clf    = af.load_resnet(18, compress="int4") # 4-bit LUT weights
 ```
 
 **BatchNorm is folded into the preceding conv at load**, so the ANE graph is pure conv/relu/pool/add/fc — conv is the ANE's strongest workload. `compress` picks the weight encoding (see `af.compile`); `build_dir` keeps the packed program on disk (its `weights.bin` is the packed-model size).
+
+18 and 34 are BasicBlock (3x3 -> 3x3); 50 and 101 are Bottleneck (1x1 -> 3x3 -> 1x1, 4x expansion). Two details are worth knowing if you touch this code:
+
+- **The stride sits on the Bottleneck's 3x3, not on its first 1x1.** That is torchvision's ResNet V1.5 variant. Moving it keeps every tensor shape intact and still agrees on top-1, so shape checks will not catch the mistake.
+- **A block's shortcut is projected or not according to its weights**, never according to its stage index. Bottleneck projects stage 1 (64 -> 256 at stride 1) while BasicBlock does not.
+
+## load_vit() — Hugging Face ViT image classifier
+
+`af.load_vit()` loads any HF `ViTForImageClassification` (and compatible DeiT/BEiT-style models with a CLS token) as a fused ANE classifier:
+
+```python
+vit    = af.load_vit("google/vit-base-patch16-224")
+logits = vit(image)             # [1,3,H,W] -> [1,num_labels]
+top    = vit.classify(image)    # top-k (label, logit)
+```
+
+A strided `PxP` patch conv is walled on the ANE, so patch embedding runs as `space_to_depth(P)` followed by a 1x1 conv; the CLS token's row is picked out of the encoder output via a one-hot picker matmul (a bare row slice is also walled). The loader auto-detects two HF layer namings: the modern one (`vit.layers.{i}.attention.q_proj`, `mlp.fc1/fc2`) and the legacy one (`vit.encoder.layer.{i}.attention.attention.query`, `intermediate.dense`).
+
+## load_gpt2() — GPT-2 text generation
+
+`af.load_gpt2()` loads a GPT-2-family checkpoint — the pre-norm, pure-LayerNorm decoder — as a fused ANE program:
+
+```python
+gpt2 = af.load_gpt2("gpt2-medium")
+ids  = gpt2.generate("The future of artificial intelligence is", max_new_tokens=16)  # greedy; returns token ids
+logits = gpt2(token_ids)                     # 1-D ids -> [S, vocab], for custom decoding
+```
+
+GPT-2 is the family that the LayerNorm-at-`D>=1024` fix unlocks (Llama/Qwen use RMSNorm, so `load_llm` never hit that wall). Each sequence length compiles as **two fused programs**: the pre-norm transformer (`ln_1 -> native causal SDPA -> residual; ln_2 -> Linear -> gelu_new -> Linear -> residual`, then `ln_f`) and the **tied lm_head tiled along the 50257 vocab** — a single matmul that wide exceeds the ANE's per-op dimension cap on the A13-A15 families, so it is emitted as vocab-sized output-port tiles (e.g. `[16384, 16384, 16384, 1105]`) and stitched host-side. Token + positional embedding lookup runs on the host (`gather` is not an ANE op).
+
+Two limits worth knowing: decode has **no KV cache yet** — it recomputes the forward on the growing sequence (cached per length), so it validates correctness rather than throughput; and native causal SDPA is reliable only for `S < 512`, so use short prompts and small `max_new_tokens`. `examples/gpt2.py` compiles the full 24-layer `gpt2-medium` as one program and checks the greedy decode is token-identical to Hugging Face.
 
 ## Weight layout: He init is layout-dependent
 

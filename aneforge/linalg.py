@@ -531,7 +531,7 @@ def eigvals(A, iters: int = 60):
 __all__ = [
   "conjugate_gradient", "jacobi", "gauss_seidel", "iterative_refine",
   "least_squares", "lsqr", "gmres",
-  "qr", "cholesky", "lu", "lu_pivoted", "solve", "solve_triangular", "expm",
+  "qr", "cholesky", "lu", "lu_pivoted", "solve", "solve_triangular", "inv", "lstsq", "expm",
   "eigh", "eigvals", "generalized_eigh", "dominant_eig",
   "svd", "dominant_svd", "svdvals_topk", "randomized_svd", "pca",
 ]
@@ -619,6 +619,45 @@ def solve(A, b):
   Pb = np.asarray(P, np.float32) @ np.asarray(b_in, np.float32)          # row permutation of b
   y = solve_triangular(L, Pb.astype(f16), lower=True)
   return solve_triangular(U, np.asarray(y, f16), lower=False)
+
+
+def inv(A):
+  """A^-1 for general square A, as the matrix solve A X = I on the on-ANE pivoted LU.
+
+  One `solve` against the n identity columns, not n separate solves: `solve_triangular` already
+  takes a matrix right-hand side and substitutes all columns in one fused graph, so the factorization
+  and both substitutions are dispatched once. Forming the inverse is worse conditioned than solving
+  against the right-hand side you actually have, so prefer `solve` when you have one."""
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2 or A16.shape[0] != A16.shape[1]:
+    raise ValueError(f"inv: A must be square 2-D; got shape {A16.shape}")
+  return solve(A16, np.eye(A16.shape[0], dtype=f16))
+
+
+def lstsq(A, b):
+  """Least-squares solution of the overdetermined A x = b via the on-ANE thin QR.
+
+  A = Q R, so the normal equations collapse to R x = Q^T b with R triangular: a direct counterpart
+  to the iterative `lsqr`, and better conditioned than squaring A into A^T A the way `least_squares`
+  does. `b` is a vector [m] or a matrix [m, k]. Requires m >= n and full column rank."""
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2:
+    raise ValueError(f"lstsq: A must be 2-D; got shape {A16.shape}")
+  m, n = A16.shape
+  if m < n:
+    raise ValueError(f"lstsq: A must be overdetermined (m >= n); got shape {A16.shape}")
+  b_in = np.asarray(b, f16)
+  if b_in.shape[0] != m:
+    raise ValueError(f"lstsq: b has {b_in.shape[0]} rows but A has {m}")
+
+  Q, R = qr(A16)
+  if np.any(np.diag(R) == 0.0):
+    raise np.linalg.LinAlgError("lstsq: A is rank deficient (zero on the R diagonal)")
+  vec = b_in.ndim == 1
+  B = np.asarray(b_in, np.float32).reshape(m, 1) if vec else np.asarray(b_in, np.float32)
+  Qtb = _ane_gemm(Q.astype(f16), B.astype(f16), transpose_a=True)         # [n, k]
+  x = solve_triangular(R, np.asarray(Qtb, f16), lower=False)
+  return x.ravel() if vec else x
 
 
 def _perm_parity(perm) -> float:

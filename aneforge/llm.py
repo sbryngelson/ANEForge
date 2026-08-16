@@ -1,5 +1,5 @@
 """LLMs on the Apple Neural Engine. A config-driven decoder (RMSNorm + RoPE + grouped-query causal
-attention + SwiGLU) that loads Hugging Face weights and runs prefill and KV-cache decode as fused ANE
+attention + SwiGLU/GeGLU MLP) that loads Hugging Face weights and runs prefill and KV-cache decode as fused ANE
 programs. Matches HF logits; see `docs/llm.md`.
 
 The runner is model-agnostic: a `LlamaConfig` carries a per-layer plan (`LayerSpec`) naming a token-mixer
@@ -165,6 +165,18 @@ def _gelu_mlp(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   act = (g * 0.5) * inner.tanh().adds(1.0)
   return h + act.linear(w["wproj"], w.get("proj_bias"))
 
+def _gelu_tanh(x: Tensor) -> Tensor:
+  """The Exact/Tanh Gelu (same as the MIL op), implemented exactly out of primitive math ops."""
+  inner = (x + x.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
+  return (x * 0.5) * inner.tanh().adds(1.0)
+
+def _geglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
+  """GeGLU MLP with its residual: `h + down(gelu(gate(norm(h))) * up(norm(h)))`. Used by Gemma."""
+  hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
+  # Gemma uses the EXACT gelu, not the approx one. The fast-erf MIL op diverges (it's the true
+  # Erf, not the polynomial approx). See #214
+  return h + (_gelu_tanh(hn.linear(w["wgate"])) * hn.linear(w["wup"])).linear(w["wdown"])
+
 
 def prefill_block(x: Tensor, w: dict, cfg: LlamaConfig, cos, sin, ls: LayerSpec | None = None) -> Tensor:
   """One pre-norm decoder block (mixer + MLP). Back-compatible: with no `ls`, QK-norm is detected from `w`."""
@@ -208,9 +220,9 @@ def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict,
 
 
 PREFILL_MIXERS = {"attention": _attn_prefill}
-PREFILL_MLPS = {"swiglu": _swiglu, "gelu_new": _gelu_mlp}
+PREFILL_MLPS = {"swiglu": _swiglu, "geglu": _geglu, "gelu_new": _gelu_mlp}
 DECODE_MIXERS = {"attention": _attn_decode}
-DECODE_MLPS = {"swiglu": _swiglu, "gelu_new": _gelu_mlp}
+DECODE_MLPS = {"swiglu": _swiglu, "geglu": _geglu, "gelu_new": _gelu_mlp}
 # Per-position decode inputs a mixer may read from `ctx` (created per chunk, shared across its layers).
 _DECODE_CTX = ("oh", "inv", "mask", "cosp", "sinp")
 
@@ -481,9 +493,59 @@ def _dense_adapter(c, sd) -> tuple[LlamaConfig, dict]:
   cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
                     n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                     ffn_dim=c.intermediate_size, vocab=c.vocab_size,
-                    rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
-                    head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None),
+                    rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=_rope_scaling(c),
                     layers=[LayerSpec(mixer="attention", mlp="swiglu", qk_norm=qk) for _ in range(n)])
+  return cfg, _weights_from_state_dict(sd, cfg)
+
+
+def _rope_theta(c) -> float:
+  """HF RoPE base, reading the transformers-5.x `rope_parameters` dict with a legacy fallback."""
+  rp = getattr(c, "rope_parameters", None)
+  if isinstance(rp, dict) and "rope_theta" in rp:
+    return float(rp["rope_theta"])
+  return float(getattr(c, "rope_theta", 10000.0))
+
+
+def _rope_scaling(c):
+  """HF rope_scaling, but only when the runner implements the type (Llama-3.1 "llama3")."""
+  s = getattr(c, "rope_scaling", None)
+  return s if isinstance(s, dict) and s.get("rope_type") == "llama3" else None
+
+
+def _gemma_adapter(c, sd) -> tuple[LlamaConfig, dict]:
+  """Adapter for Gemma decoders. The runner's graph is Llama-shaped, so the differences are baked
+  into the weights: embeddings are scaled by sqrt(dim) at input, the FFN is GeGLU (gelu_pytorch_tanh,
+  via `LayerSpec(mlp="geglu")`), and the RMSNorm weights use the `(1 + weight)` convention."""
+  n = int(c.num_hidden_layers)
+  cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
+                    n_kv_heads=int(getattr(c, "num_key_value_heads", c.num_attention_heads)),
+                    ffn_dim=c.intermediate_size, vocab=c.vocab_size,
+                    rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0),
+                    layers=[LayerSpec(mixer="attention", mlp="geglu") for _ in range(n)])
+  w = _weights_from_state_dict(sd, cfg)
+  w["embed"] = w["embed"] * np.sqrt(c.hidden_size)        # HF: inputs_embeds * hidden_size**0.5
+  for lw in w["layers"]:                                   # HF GemmaRMSNorm: output * (1.0 + weight)
+    lw["attn_norm"] = lw["attn_norm"] + 1.0
+    lw["mlp_norm"] = lw["mlp_norm"] + 1.0
+  w["final_norm"] = w["final_norm"] + 1.0
+  return cfg, w
+
+
+def _mistral_adapter(c, sd) -> tuple[LlamaConfig, dict]:
+  """Adapter for Mistral decoders: Llama-shaped (same state_dict names) with grouped-query attention
+  and a sliding window. With a resident KV cache the window is the cache length, so decode stays
+  exact while `max_len` does not exceed `sliding_window`; the limit is surfaced in `cfg.extra`."""
+  n = int(c.num_hidden_layers)
+  cfg = LlamaConfig(dim=c.hidden_size, n_layers=n, n_heads=c.num_attention_heads,
+                    n_kv_heads=int(getattr(c, "num_key_value_heads", c.num_attention_heads)),
+                    ffn_dim=c.intermediate_size, vocab=c.vocab_size,
+                    rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
+                    head_dim=int(getattr(c, "head_dim", 0) or 0),
+                    layers=[LayerSpec(mixer="attention", mlp="swiglu") for _ in range(n)])
+  if getattr(c, "sliding_window", None):
+    cfg.extra["sliding_window"] = int(c.sliding_window)
   return cfg, _weights_from_state_dict(sd, cfg)
 
 
@@ -492,8 +554,8 @@ def _cfg_from_hf(c) -> LlamaConfig:
   return LlamaConfig(dim=c.hidden_size, n_layers=c.num_hidden_layers, n_heads=c.num_attention_heads,
                      n_kv_heads=getattr(c, "num_key_value_heads", c.num_attention_heads),
                      ffn_dim=c.intermediate_size, vocab=c.vocab_size,
-                     rope_base=float(getattr(c, "rope_theta", 10000.0)), norm_eps=float(c.rms_norm_eps),
-                     head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=getattr(c, "rope_scaling", None))
+                     rope_base=_rope_theta(c), norm_eps=float(c.rms_norm_eps),
+                     head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=_rope_scaling(c))
 
 
 def _gpt2_adapter(c, sd) -> tuple[LlamaConfig, dict]:
@@ -533,15 +595,42 @@ def _gpt2_adapter(c, sd) -> tuple[LlamaConfig, dict]:
 # wins, dense Llama/Qwen is the fallback. New archs append here (e.g. aneforge.moe) so the loader stays generic.
 ADAPTERS: list = [
   (lambda c: getattr(c, "model_type", None) == "gpt2", _gpt2_adapter),
+  (lambda c: getattr(c, "model_type", None) == "gemma", _gemma_adapter),
+  (lambda c: getattr(c, "model_type", None) == "mistral", _mistral_adapter),
 ]
+
+# Gemma-2/3 reach the dense fallback (Llama-shaped) but need softcapping / GeGLU / (1+w)-norm it lacks;
+# a name backstop for the softcapping feature check in _assert_dense_compatible.
+_DENSE_INCOMPATIBLE = {"gemma2", "gemma3", "gemma3_text"}
+
+
+def _assert_dense_compatible(c) -> None:
+  """Raise if a config reaches the dense fallback but carries semantics the dense path silently drops.
+
+  Feature-based first (`*_logit_softcapping`, which real Gemma-2/3 checkpoints set), so genuine
+  Llama-shaped finetunes with an unusual `model_type` are not rejected; the name set is a backstop."""
+  mt = getattr(c, "model_type", "?")
+  cap = getattr(c, "attn_logit_softcapping", None) or getattr(c, "final_logit_softcapping", None)
+  if cap or mt in _DENSE_INCOMPATIBLE:
+    why = "logit softcapping" if cap else "architecture-specific semantics"
+    raise ValueError(
+      f"load_llm: {mt!r} needs {why} that aneforge's dense loader does not implement, so the dense "
+      f"path would silently produce wrong logits. Supported: dense Llama/Qwen/Mistral, Gemma "
+      f"(model_type 'gemma'), and MoE. See docs/llm.md.")
 
 
 def from_pretrained(name: str, compress: str | None = None) -> LlamaPrefill:
-  """Load a Llama/Qwen-class model from Hugging Face for ANE inference. `compress` ("int8"/"int4"/"blockwise")
+  """Load a decoder LM from Hugging Face for ANE inference: dense Llama/Qwen/Mistral, Gemma, and MoE
+  (an unsupported arch is rejected, not silently mis-loaded). `compress` ("int8"/"int4"/"blockwise")
   quantizes the ANE weights."""
+  import torch
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
-  sd = {k: v.detach().float().numpy() for k, v in hf.state_dict().items()}
   adapt = next((fn for pred, fn in ADAPTERS if pred(hf.config)), _dense_adapter)
+  if adapt is _dense_adapter:            # fail fast, before the state-dict copy, on an unsupported arch
+    _assert_dense_compatible(hf.config)
+  # fp16 state dict: the weights bake to fp16 (or quantized) for the ANE anyway, so an fp32 copy only
+  # wastes memory (~28 GB for a 7B, enough to OOM a 32 GB Mac). Same rounding the bake does, so unchanged.
+  sd = {k: v.detach().to(torch.float16).numpy() for k, v in hf.state_dict().items()}
   cfg, weights = adapt(hf.config, sd)
   return LlamaPrefill(cfg, weights, compress=compress)
