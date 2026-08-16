@@ -519,6 +519,10 @@ class GPT2:
     base = np.asarray(self.tok.encode(prompt), dtype=np.int64)
     return self.runner.generate(base, max_new_tokens=max_new_tokens, **kwargs)
 
+  def generate_text(self, prompt: str, max_new_tokens: int = 16) -> str:
+    """Greedy-decode and return the newly generated tokens as text."""
+    return self.tok.decode(self.generate(prompt, max_new_tokens))
+
   def release(self) -> None:
     self.runner.release()
 
