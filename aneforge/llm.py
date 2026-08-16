@@ -7,10 +7,27 @@ and an MLP from the builder registries below, so supporting a new architecture i
 the plan + canonical weights - not new branches in the hot path."""
 from __future__ import annotations
 from dataclasses import dataclass, field
+from enum import Enum
 import numpy as np
 
 from .graph import Tensor, input as _input, concat as _concat, _const
 from . import _compile
+
+
+class ModelType(str, Enum):
+  GPT2 = "gpt2"
+  GEMMA = "gemma"
+  GEMMA2 = "gemma2"
+  GEMMA3 = "gemma3"
+  GEMMA3_TEXT = "gemma3_text"
+  MISTRAL = "mistral"
+  LLAMA = "llama"
+  QWEN = "qwen"
+
+
+# Gemma-2/3 reach the dense fallback (Llama-shaped) but need softcapping / GeGLU / (1+w)-norm it lacks;
+# a name backstop for the softcapping feature check in _assert_dense_compatible.
+_DENSE_INCOMPATIBLE = {ModelType.GEMMA2, ModelType.GEMMA3, ModelType.GEMMA3_TEXT}
 
 
 @dataclass
@@ -594,14 +611,10 @@ def _gpt2_adapter(c, sd) -> tuple[LlamaConfig, dict]:
 # Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, sd) -> (cfg, weights)); first match
 # wins, dense Llama/Qwen is the fallback. New archs append here (e.g. aneforge.moe) so the loader stays generic.
 ADAPTERS: list = [
-  (lambda c: getattr(c, "model_type", None) == "gpt2", _gpt2_adapter),
-  (lambda c: getattr(c, "model_type", None) == "gemma", _gemma_adapter),
-  (lambda c: getattr(c, "model_type", None) == "mistral", _mistral_adapter),
+  (lambda c: getattr(c, "model_type", None) == ModelType.GPT2, _gpt2_adapter),
+  (lambda c: getattr(c, "model_type", None) == ModelType.GEMMA, _gemma_adapter),
+  (lambda c: getattr(c, "model_type", None) == ModelType.MISTRAL, _mistral_adapter),
 ]
-
-# Gemma-2/3 reach the dense fallback (Llama-shaped) but need softcapping / GeGLU / (1+w)-norm it lacks;
-# a name backstop for the softcapping feature check in _assert_dense_compatible.
-_DENSE_INCOMPATIBLE = {"gemma2", "gemma3", "gemma3_text"}
 
 
 def _assert_dense_compatible(c) -> None:

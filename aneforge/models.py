@@ -3,17 +3,17 @@
 builders (`group_norm_train`, `conv_block`, `cifar_cnn`). See docs/developer/models.md."""
 from __future__ import annotations
 
-from typing import cast
 
 import numpy as np
 
-from .graph import Tensor, concat, conv, input, mha, sdpa, space_to_depth
+from .graph import Tensor, concat, conv, input, mha, space_to_depth
 from .autograd import conv2d, conv_param, parameter
-from ._compile import Model, SegmentedModel, MultiModel, compile, compile_multi
+from ._compile import Model, SegmentedModel, MultiModel, compile
 
 _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
 
-# smallest supported matmul output dim on family 3 (A13-A15, M1/M2); see bench/decode_measurement.py:130-135
+# Safe matmul output dim cap for all families. Family 3 (A13-A15, M1/M2) caps at 16384;
+# Family 4+ caps at 65536. Tiling at 16384 is conservative and safe everywhere.
 _LMHEAD_TILE = 16384
 
 
@@ -454,8 +454,6 @@ def _gelu_new(x: Tensor) -> Tensor:
   return (x * 0.5) * inner.tanh().adds(1.0)
 
 
-# smallest supported matmul output dim on family 3 (A13-A15, M1/M2); see bench/decode_measurement.py:130-135
-_LMHEAD_TILE = 16384
 def _lm_head_tiles(h: Tensor, wte: np.ndarray) -> list[Tensor]:
   """Tied lm_head logits = h @ wte.T, tiled along vocab so no matmul output dim exceeds
   `_LMHEAD_TILE`. Returns a LIST of tiles, never a concatenated [S, vocab] tensor: the
@@ -483,9 +481,9 @@ class GPT2:
 
   def __init__(self, name: str, int8: bool = False, max_layers: int | None = None) -> None:
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer  # lazy
-    from .llm import _gpt2_adapter, LlamaPrefill
+    from .llm import _gpt2_adapter, LlamaPrefill, ModelType
     cfg_hf = AutoConfig.from_pretrained(name)
-    if cfg_hf.model_type != "gpt2":
+    if cfg_hf.model_type != ModelType.GPT2:
       raise ValueError(f"load_gpt2: {name!r} is not a GPT-2 model (model_type={cfg_hf.model_type!r})")
     self.tok = AutoTokenizer.from_pretrained(name)
     sd = {k: v.detach().numpy().astype(np.float32)

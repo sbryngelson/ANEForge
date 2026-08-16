@@ -1,9 +1,9 @@
-"""layer_norm's affine layout, asserted off-device so CI runs it (#162).
+"""layer_norm's affine layout, asserted off-device so CI runs it (#162, #215).
 
 A non-uniform affine const on the CHANNEL axis fails ANECCompile from D=1024 up, so the affine must
-be applied after the reshape back, at rank 2 on the last axis. That is a property of the emitted MIL,
-and `_lower_fused_to_dir` produces it without compiling or dispatching, so CI can check it even
-though CI cannot reach an ANE.
+be applied at rank 2 on the last axis. Previously, this meant reshaping to [M, D, 1, 1], reducing,
+and reshaping back. Since #215, we reduce natively in 2D with axes=[1], avoiding the 4D reshape
+and the M<=512 limit altogether. The affine must still be [1, D].
 """
 import re
 
@@ -39,21 +39,12 @@ def test_affine_consts_are_rank2_on_the_last_axis(tmp_path):
         f"{slot} affine const is [{decl.group(1)}], expected [1, {D}]"
 
 
-def test_affine_is_applied_after_the_reshape_back(tmp_path):
-  # Order matters as much as shape: a [1,D] const multiplied while still rank-4 would broadcast
-  # differently and lose the property this guards.
+def test_native_2d_reduction(tmp_path):
+  # Since #215 we use native 2D reductions, so there should be no 4D reshapes in the body.
   mil = _affine(tmp_path)
-  assert mil.index("_rb = reshape(") < mil.index("_gg = mul("), \
-      "gamma is applied before the reshape back to [M,D]"
-  assert mil.index("_gg = mul(") < mil.rindex("= add("), "beta is applied before gamma"
-
-
-def test_normalized_body_stays_rank4(tmp_path):
-  # The reduce still needs the [M,D,1,1] form; only the affine moved. Guards an over-correction
-  # that would also move the reduce and change what is measured.
-  mil = _affine(tmp_path)
-  assert f"tensor<fp16,[{R},{D},1,1]> " in mil, "the normalization body is no longer rank-4"
+  assert f"tensor<fp16, [{R}, 1]> " in mil, "the normalization body is no longer 2D"
   assert "reduce_mean(" in mil
+  assert "reshape(" not in mil, "native 2D layer_norm should not require reshaping"
 
 
 def test_layout_does_not_depend_on_the_affine_values(tmp_path):
