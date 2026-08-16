@@ -254,6 +254,7 @@ class LlamaPrefill:
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None; self._pre = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
+    self._lmT = None               # cached contiguous fp32 lm_head^T (host matmul); built on first use
 
   def release(self) -> None:
     """Release every compiled program (prefill, decode chunks, batched-prefill chunks) and clear the cached
@@ -307,7 +308,13 @@ class LlamaPrefill:
     return np.asarray(net(emb.astype(np.float16))).astype(np.float32)
 
   def _logits(self, hidden_row):
-    return hidden_row @ np.asarray(self.w["lm_head"]).T    # host lm_head (vocab can exceed the ANE per-op dim limit)
+    lm = self._lmT
+    if lm is None:
+      # Build once: NumPy has no fp16 BLAS, and a live `.T` view is strided, so a per-call
+      # `hidden @ lm_head.T` re-converts the (fp16) weight to fp32 every token (~124ms on a
+      # 50k vocab). A contiguous fp32 copy of the transpose is converted once and is ~10x faster.
+      lm = self._lmT = np.ascontiguousarray(np.asarray(self.w["lm_head"]).T, np.float32)
+    return hidden_row @ lm
 
   @staticmethod
   def _sample(logits, temperature, top_p, top_k):

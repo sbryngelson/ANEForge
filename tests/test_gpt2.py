@@ -10,7 +10,7 @@ import aneforge as af
 import aneforge.models as models
 from aneforge._compile import _lower_fused_to_dir
 from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles, GPT2
-from aneforge.llm import _gpt2_adapter, LlamaPrefill, ModelType
+from aneforge.llm import _gpt2_adapter, LlamaConfig, LlamaPrefill, ModelType
 from _helpers import requires_ane
 
 
@@ -82,6 +82,23 @@ def test_gpt2_lm_head_tiles_follow_target_family(monkeypatch):
   assert [t.shape for t in models._lm_head_tiles(h, wte)] == [(1, 50257)]
   monkeypatch.setattr(models._targets, "detect_family", lambda: 3)
   assert [t.shape for t in models._lm_head_tiles(h, wte)] == [(1, 16384), (1, 16384), (1, 16384), (1, 1105)]
+
+
+def test_logits_caches_contiguous_fp32():
+  """`_logits` builds a contiguous fp32 lm_head transpose once (skipping the per-call fp16->fp32
+  conversion of a strided view); the result matches the naive fp16-weight matmul and the cache
+  is reused across calls."""
+  rng = np.random.default_rng(0)
+  cfg = LlamaConfig(dim=16, n_layers=2, n_heads=4, n_kv_heads=4, ffn_dim=64, vocab=100)
+  w = {"lm_head": rng.standard_normal((100, 16)).astype(np.float16), "layers": []}
+  model = LlamaPrefill(cfg, w)
+  h = rng.standard_normal(16).astype(np.float32)
+  expected = h @ np.asarray(w["lm_head"]).astype(np.float32).T
+  assert np.allclose(model._logits(h), expected)
+  assert model._lmT is not None and model._lmT.dtype == np.float32
+  assert model._lmT.flags["C_CONTIGUOUS"]
+  model._logits(h)          # second call reuses the cached transpose
+  assert model._lmT is not None
 
 
 def test_gpt2_generate_text_decodes_generated_tokens():

@@ -75,6 +75,15 @@ def main():
         stage_total = sum(sum(profile.get(name, [])) for name in ("embedding", "layers", "lm_head", "sample")) / decode_steps
         print(f"  Profile decode stages: {stage_total * 1e3:.1f} ms/token ({decode_steps} steps; host dispatch overhead excluded)")
 
+    # Steady-state: a second call with prefill + decoder already compiled isolates decode throughput
+    t0 = time.perf_counter()
+    model.generate(ids, max_new_tokens=K, max_len=128, batched_prefill=True)
+    dt_ss = time.perf_counter() - t0
+    print(f"  Steady-state: {dt_ss / K * 1e3:.1f} ms/token ({K / dt_ss:.2f} tok/s, compile excluded)")
+    if decode_steps:
+        decode_ms = stage_total * 1e3
+        print(f"  Decode-only:  {decode_ms:.1f} ms/token ({1e3 / decode_ms:.2f} tok/s, from stage timing)")
+
     match_count = sum(int(a) == int(b) for a, b in zip(ane_toks, ref_toks))
     greedy_ok = list(ane_toks) == list(ref_toks) and match_count == K
     print(f"  Token match: {match_count}/{K} ({'PERFECT' if greedy_ok else 'MISMATCH'})")
