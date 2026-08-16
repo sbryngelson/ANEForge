@@ -7,10 +7,27 @@ and an MLP from the builder registries below, so supporting a new architecture i
 the plan + canonical weights - not new branches in the hot path."""
 from __future__ import annotations
 from dataclasses import dataclass, field
+from enum import Enum
 import numpy as np
 
 from .graph import Tensor, input as _input, concat as _concat, _const
 from . import _compile
+
+
+class ModelType(str, Enum):
+  GPT2 = "gpt2"
+  GEMMA = "gemma"
+  GEMMA2 = "gemma2"
+  GEMMA3 = "gemma3"
+  GEMMA3_TEXT = "gemma3_text"
+  MISTRAL = "mistral"
+  LLAMA = "llama"
+  QWEN = "qwen"
+
+
+# Gemma-2/3 reach the dense fallback (Llama-shaped) but need softcapping / GeGLU / (1+w)-norm it lacks;
+# a name backstop for the softcapping feature check in _assert_dense_compatible.
+_DENSE_INCOMPATIBLE = {ModelType.GEMMA2, ModelType.GEMMA3, ModelType.GEMMA3_TEXT}
 
 
 @dataclass
@@ -33,6 +50,8 @@ class LlamaConfig:
   rope_scaling: dict | None = None                       # HF rope_scaling, e.g. Llama-3.1 "llama3" freq rescaling
   layers: list[LayerSpec] = field(default_factory=list)
   extra: dict = field(default_factory=dict)   # arch-specific params for non-default mixers (e.g. DeltaNet head dims)
+  norm_type: str = "rms"                        # "rms" (RMSNorm) or "layer" (LayerNorm with affine gamma/beta)
+  rope: bool = True                             # True = RoPE (Llama/Qwen); False = learned wpe / no-RoPE (GPT-2)
 
   @property
   def dh(self) -> int: return self.head_dim or self.dim // self.n_heads
@@ -106,29 +125,32 @@ def _causal_attn(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
 # --- token-mixer + MLP builders (registry values). Each includes its own residual add. ---
 
 def _attn_prefill(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin) -> Tensor:
-  """Pre-norm attention mixer over a prompt `x` [S, dim]: RMSNorm -> QKV (+optional QK-norm) -> RoPE ->
+  """Pre-norm attention mixer over a prompt `x` [S, dim]: RMSNorm/LayerNorm -> QKV (+optional QK-norm) -> RoPE ->
   causal attention -> o_proj, with the residual."""
   H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dh, x.shape[0]
-  xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
-  q = xn.linear(w["wq"], w.get("q_bias")).reshape(S, H, dh)        # QKV biases (Qwen2): None when absent
+  xn = (x.layer_norm(w["attn_norm_w"], w["attn_norm_b"], cfg.norm_eps)
+        if cfg.norm_type == "layer" else x.rms_norm(w["attn_norm"], cfg.norm_eps))
+  q = xn.linear(w["wq"], w.get("q_bias")).reshape(S, H, dh)        # QKV biases (Qwen2/GPT-2): None when absent
   k = xn.linear(w["wk"], w.get("k_bias")).reshape(S, KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(S, KV, dh)
   if ls.qk_norm:                                   # Qwen3 QK-norm: per-head RMSNorm over head_dim before RoPE
     q = q.reshape(S * H, dh).rms_norm(w["q_norm"], cfg.norm_eps).reshape(S, H, dh)
     k = k.reshape(S * KV, dh).rms_norm(w["k_norm"], cfg.norm_eps).reshape(S, KV, dh)
   q = q.transpose([1, 0, 2]).reshape(1, H, S, dh); k = k.transpose([1, 0, 2]).reshape(1, KV, S, dh)
   v = v.transpose([1, 0, 2]).reshape(1, KV, S, dh)
-  q, k = rope(q, cos, sin), rope(k, cos, sin)
+  if cfg.rope:
+    q, k = rope(q, cos, sin), rope(k, cos, sin)
   k, v = _repeat_kv(k, H // KV), _repeat_kv(v, H // KV)
   a = _causal_attn(q, k, v).reshape(H, S, dh).transpose([1, 0, 2]).reshape(S, H * dh)
-  return x + a.linear(w["wo"])
+  return x + a.linear(w["wo"], w.get("o_bias"))
 
 
 def _attn_prefill_kv(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, sin):
-  """Like `_attn_prefill`, but also emits the per-layer cache tensors (roped k, raw v) at `[KV, S, dh]` -- the
+  """Like `_attn_prefill`, but also emits the per-layer cache tensors (roped/raw k, raw v) at `[KV, S, dh]` -- the
   exact layout `_attn_decode`'s resident cache stores -- so a batched prefill can seed the decode KV cache.
   Returns (hidden+residual, (k_cache, v_cache))."""
   H, KV, dh, S = cfg.n_heads, cfg.n_kv_heads, cfg.dh, x.shape[0]
-  xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
+  xn = (x.layer_norm(w["attn_norm_w"], w["attn_norm_b"], cfg.norm_eps)
+        if cfg.norm_type == "layer" else x.rms_norm(w["attn_norm"], cfg.norm_eps))
   q = xn.linear(w["wq"], w.get("q_bias")).reshape(S, H, dh)
   k = xn.linear(w["wk"], w.get("k_bias")).reshape(S, KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(S, KV, dh)
   if ls.qk_norm:
@@ -136,11 +158,12 @@ def _attn_prefill_kv(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, cos, s
     k = k.reshape(S * KV, dh).rms_norm(w["k_norm"], cfg.norm_eps).reshape(S, KV, dh)
   q = q.transpose([1, 0, 2]).reshape(1, H, S, dh); k = k.transpose([1, 0, 2]).reshape(1, KV, S, dh)
   v = v.transpose([1, 0, 2]).reshape(1, KV, S, dh)
-  q, k = rope(q, cos, sin), rope(k, cos, sin)
-  kc, vc = k.reshape(KV, S, dh), v.reshape(KV, S, dh)            # cache layout: pre-repeat, k roped, v raw
+  if cfg.rope:
+    q, k = rope(q, cos, sin), rope(k, cos, sin)
+  kc, vc = k.reshape(KV, S, dh), v.reshape(KV, S, dh)            # cache layout: pre-repeat, k roped/raw, v raw
   kr, vr = _repeat_kv(k, H // KV), _repeat_kv(v, H // KV)
   a = _causal_attn(q, kr, vr).reshape(H, S, dh).transpose([1, 0, 2]).reshape(S, H * dh)
-  return x + a.linear(w["wo"]), (kc, vc)
+  return x + a.linear(w["wo"], w.get("o_bias")), (kc, vc)
 
 
 def _swiglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
@@ -150,17 +173,26 @@ def _swiglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   return h + (hn.linear(w["wgate"]).silu() * hn.linear(w["wup"])).linear(w["wdown"])
 
 
-def _gelu_tanh(x: Tensor) -> Tensor:
-  """PyTorch 'tanh' GELU (Gemma's `gelu_pytorch_tanh`): 0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3)))."""
-  x3 = (x * x) * x
-  inner = (x3 * 0.044715) + x
-  t = inner.scaled_tanh(1.0, 0.7978845608028654)
-  return (x * t.adds(1.0)) * 0.5
+def _gelu_mlp(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
+  """GPT-2 style GELU MLP with residual: `h + proj(gelu_new(fc(norm(h))))`."""
+  hn = (h.layer_norm(w["mlp_norm_w"], w["mlp_norm_b"], cfg.norm_eps)
+        if cfg.norm_type == "layer" else h.rms_norm(w["mlp_norm"], cfg.norm_eps))
+  g = hn.linear(w["wfc"], w.get("fc_bias"))
+  inner = (g + g.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
+  act = (g * 0.5) * inner.tanh().adds(1.0)
+  return h + act.linear(w["wproj"], w.get("proj_bias"))
 
+def _gelu_tanh(x: Tensor) -> Tensor:
+  """PyTorch 'tanh' GELU (Gemma's `gelu_pytorch_tanh`), built out of primitive math ops rather than the
+  native `gelu`/`scaled_tanh` MIL ops: `0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3)))`."""
+  inner = (x + x.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
+  return (x * 0.5) * inner.tanh().adds(1.0)
 
 def _geglu(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
-  """GeGLU MLP with its residual: `h + down(gelu_tanh(gate(norm(h))) * up(norm(h)))`."""
+  """GeGLU MLP with its residual: `h + down(gelu(gate(norm(h))) * up(norm(h)))`. Used by Gemma."""
   hn = h.rms_norm(w["mlp_norm"], cfg.norm_eps)
+  # Gemma uses the tanh-approximation gelu, not the native `gelu` MIL op (that's the true Erf/exact
+  # variant and diverges from Gemma's actual activation). See #214
   return h + (_gelu_tanh(hn.linear(w["wgate"])) * hn.linear(w["wup"])).linear(w["wdown"])
 
 
@@ -186,24 +218,29 @@ def _attn_decode(x: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec, ctx: dict,
   H, KV, dh = cfg.n_heads, cfg.n_kv_heads, cfg.dh
   Kin = _input((KV, M, dh)); Vin = _input((KV, M, dh))
   oh, inv, mask, cosp, sinp = ctx["oh"], ctx["inv"], ctx["mask"], ctx["cosp"], ctx["sinp"]
-  xn = x.rms_norm(w["attn_norm"], cfg.norm_eps)
-  q = xn.linear(w["wq"], w.get("q_bias")).reshape(H, dh)           # QKV biases (Qwen2): None when absent
+  xn = (x.layer_norm(w["attn_norm_w"], w["attn_norm_b"], cfg.norm_eps)
+        if cfg.norm_type == "layer" else x.rms_norm(w["attn_norm"], cfg.norm_eps))
+  q = xn.linear(w["wq"], w.get("q_bias")).reshape(H, dh)           # QKV biases (Qwen2/GPT-2): None when absent
   k = xn.linear(w["wk"], w.get("k_bias")).reshape(KV, dh); v = xn.linear(w["wv"], w.get("v_bias")).reshape(KV, dh)
   if ls.qk_norm:
     q = q.rms_norm(w["q_norm"], cfg.norm_eps); k = k.rms_norm(w["k_norm"], cfg.norm_eps)
-  q = rope(q.reshape(H, 1, dh), cosp, sinp)        # [H, 1, dh]
-  k = rope(k.reshape(KV, 1, dh), cosp, sinp); v = v.reshape(KV, 1, dh)
+  if cfg.rope:
+    q = rope(q.reshape(H, 1, dh), cosp, sinp)        # [H, 1, dh]
+    k = rope(k.reshape(KV, 1, dh), cosp, sinp); v = v.reshape(KV, 1, dh)
+  else:
+    q = q.reshape(H, 1, dh)
+    k = k.reshape(KV, 1, dh); v = v.reshape(KV, 1, dh)
   Kout = Kin * inv + k * oh; Vout = Vin * inv + v * oh        # masked positional write into the cache
   Kr, Vr = _repeat_kv3(Kout, H // KV), _repeat_kv3(Vout, H // KV)
   sc = ((q @ Kr.transpose([0, 2, 1])) * (1.0 / dh ** 0.5) + mask).softmax(-1)   # [H, 1, M]
   a = (sc @ Vr).reshape(H, 1, dh).transpose([1, 0, 2]).reshape(1, H * dh)
-  return x + a.linear(w["wo"]), [(Kout, Kin), (Vout, Vin)]
+  return x + a.linear(w["wo"], w.get("o_bias")), [(Kout, Kin), (Vout, Vin)]
 
 
 PREFILL_MIXERS = {"attention": _attn_prefill}
-PREFILL_MLPS = {"swiglu": _swiglu, "geglu": _geglu}
+PREFILL_MLPS = {"swiglu": _swiglu, "geglu": _geglu, "gelu_new": _gelu_mlp}
 DECODE_MIXERS = {"attention": _attn_decode}
-DECODE_MLPS = {"swiglu": _swiglu, "geglu": _geglu}
+DECODE_MLPS = {"swiglu": _swiglu, "geglu": _geglu, "gelu_new": _gelu_mlp}
 # Per-position decode inputs a mixer may read from `ctx` (created per chunk, shared across its layers).
 _DECODE_CTX = ("oh", "inv", "mask", "cosp", "sinp")
 
@@ -217,6 +254,24 @@ class LlamaPrefill:
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
 
+  def release(self) -> None:
+    """Release every compiled program (prefill, decode chunks, batched-prefill chunks) and clear the cached
+    state, so a subsequent call transparently recompiles instead of replaying a freed program."""
+    if self._net is not None:
+      self._net.release()
+    if self._dec is not None:
+      for c in self._dec["chunks"]: c["net"].release()
+    if self._pre is not None:
+      for c in self._pre["chunks"]: c["net"].release()
+    self._net, self._seq, self._dec, self._pre = None, 0, None, None
+
+  def _check_positions(self, n: int) -> None:
+    """Raise a clear error instead of an out-of-bounds `wpe` index/broadcast failure when `n` exceeds a
+    learned-position-embedding model's position table (e.g. GPT-2's 1024/2048 `n_positions`)."""
+    wpe = self.w.get("wpe")
+    if wpe is not None and n > wpe.shape[0]:
+      raise ValueError(f"sequence length {n} exceeds this model's {wpe.shape[0]} max positions")
+
   def _spec(self, i: int) -> LayerSpec:
     """The plan for layer `i`: the config's per-layer plan, or an attention fallback with QK-norm sniffed
     from the weights (back-compat for callers that pass no `layers`)."""
@@ -225,23 +280,29 @@ class LlamaPrefill:
 
   def compile(self, seq: int):
     cfg = self.cfg
-    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
+    cos, sin = (rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
+                if cfg.rope else (None, None))
     x = _input((seq, cfg.dim))
     for i, lw in enumerate(self.w["layers"]):
       ls = self._spec(i)
       x = PREFILL_MIXERS[ls.mixer](x, lw, cfg, ls, cos, sin)
       x = PREFILL_MLPS[ls.mlp](x, lw, cfg, ls)
-    self._net = _compile.compile(x.rms_norm(self.w["final_norm"], cfg.norm_eps),   # ANE -> all positions' hidden [seq, dim]
-                                 compress=self.compress)
+    fn = (x.layer_norm(self.w["final_norm_w"], self.w["final_norm_b"], cfg.norm_eps)
+          if cfg.norm_type == "layer" else x.rms_norm(self.w["final_norm"], cfg.norm_eps))
+    self._net = _compile.compile(fn, compress=self.compress)
     self._seq = seq
     return self
 
   def _hidden(self, token_ids):
     """Run the transformer layers on the ANE; return the final hidden states [S, dim]."""
+    self._check_positions(len(token_ids))
     if self._net is None or len(token_ids) != self._seq:
       self.compile(len(token_ids))
     net = self._net; assert net is not None
-    emb = self.w["embed"][np.asarray(token_ids)]           # host embedding gather -> [S, dim]
+    ids = np.asarray(token_ids)
+    emb = self.w["embed"][ids]           # host embedding gather -> [S, dim]
+    if "wpe" in self.w:
+      emb = emb + self.w["wpe"][:len(ids)]
     return np.asarray(net(emb.astype(np.float16))).astype(np.float32)
 
   def _logits(self, hidden_row):
@@ -269,7 +330,7 @@ class LlamaPrefill:
   def _layer_chunks(self):
     """Group layers into contiguous chunks whose baked weights stay under the ANE single-program ceiling
     (~2GB; measured ~1.5GB OK, ~3.4GB fails). int8/int4 weights are smaller, so more layers fit per chunk."""
-    per = sum(int(np.asarray(v).size) for v in self.w["layers"][0].values()) * 2   # fp16 bytes / layer
+    per = sum(int(np.asarray(v).size) for v in self.w["layers"][0].values() if isinstance(v, (np.ndarray, list, tuple))) * 2   # fp16 bytes / layer
     if self.compress in ("int8", "blockwise"): per //= 2
     elif self.compress == "int4": per //= 4
     n = max(1, min(self.cfg.n_layers, int(self._chunk_bytes // max(per, 1))))
@@ -296,7 +357,9 @@ class LlamaPrefill:
         h, sp = DECODE_MIXERS[ls.mixer](h, lw, cfg, ls, ctx, M)
         pairs += sp
         h = DECODE_MLPS[ls.mlp](h, lw, cfg, ls)
-      if gi == len(groups) - 1: h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)   # final norm on the last chunk
+      if gi == len(groups) - 1:
+        h = (h.layer_norm(self.w["final_norm_w"], self.w["final_norm_b"], cfg.norm_eps)
+             if cfg.norm_type == "layer" else h.rms_norm(self.w["final_norm"], cfg.norm_eps))
       net = compile_multi([h] + [o for o, _ in pairs], compress=self.compress)
       inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
       for o, i in pairs:                                        # alias each state output -> its input (resident)
@@ -307,7 +370,8 @@ class LlamaPrefill:
       chunks.append({"net": net, "p": p})
       if hasattr(self.w["layers"], "free"):                    # streamed weights: free this chunk's fp16 now it's baked
         for li in grp: self.w["layers"].free(li)
-    cos_t, sin_t = rope_tables(M, dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
+    cos_t, sin_t = (rope_tables(M, dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
+                    if cfg.rope else (None, None))
     self._dec = {"M": M, "chunks": chunks, "cos": cos_t, "sin": sin_t}
     return self._dec
 
@@ -319,14 +383,15 @@ class LlamaPrefill:
   def _prefiller(self, seq):
     """Build (once, cached) the CHUNKED batched-prefill program(s) for prompt length `seq`: layers split under
     the ANE program ceiling (like `_decoder`), each chunk a full-sequence forward emitting its attention layers'
-    (roped k, raw v) at `[KV, seq, dh]`, hidden chained chunk->chunk. Attention layers only. Cached by `seq`, so
+    (roped/raw k, raw v) at `[KV, seq, dh]`, hidden chained chunk->chunk. Attention layers only. Cached by `seq`, so
     padding prompts to a fixed bucket length reuses one compile across calls (amortizing the compile cost)."""
     if self._pre is not None and self._pre["seq"] == seq: return self._pre
     if self._pre is not None:
       for c in self._pre["chunks"]: c["net"].release()
     from ._compile import compile_multi
     cfg = self.cfg
-    cos, sin = rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
+    cos, sin = (rope_tables(seq, cfg.dh, cfg.rope_base, cfg.rotary_dim, cfg.rope_interleaved, cfg.rope_scaling)
+                if cfg.rope else (None, None))
     chunks = []
     for grp in self._layer_chunks():
       x = _input((seq, cfg.dim)); h = x; kvts = []
@@ -337,7 +402,9 @@ class LlamaPrefill:
         h, kv = _attn_prefill_kv(h, self.w["layers"][li], cfg, ls, cos, sin)
         h = PREFILL_MLPS[ls.mlp](h, self.w["layers"][li], cfg, ls)
         kvts.append((li, kv))
-      if grp[-1] == cfg.n_layers - 1: h = h.rms_norm(self.w["final_norm"], cfg.norm_eps)
+      if grp[-1] == cfg.n_layers - 1:
+        h = (h.layer_norm(self.w["final_norm_w"], self.w["final_norm_b"], cfg.norm_eps)
+             if cfg.norm_type == "layer" else h.rms_norm(self.w["final_norm"], cfg.norm_eps))
       net = compile_multi([h] + [t for _, kv in kvts for t in kv], compress=self.compress)
       om = dict(net.output_ports); inm = {id(t): n for t, n in net.input_ports}
       p = {"x": inm[id(x)], "h": om[h], "kv": [(li, om[kv[0]], om[kv[1]]) for li, kv in kvts]}
@@ -353,8 +420,13 @@ class LlamaPrefill:
     logits and the cache seed. Returns (next_logits [1, vocab], kv_by_layer) in the decode cache layout."""
     f16 = np.float16; real = len(token_ids)
     seq = max(int(pad_to), real) if pad_to else real
+    self._check_positions(seq)
     pre = self._prefiller(seq)
-    h = self.w["embed"][np.asarray(list(token_ids) + [0] * (seq - real))].astype(f16)   # [seq, dim], right-padded
+    ids = list(token_ids) + [0] * (seq - real)
+    emb = self.w["embed"][np.asarray(ids)]
+    if "wpe" in self.w:
+      emb = emb + self.w["wpe"][:seq]
+    h = emb.astype(f16)   # [seq, dim], right-padded
     kv_by_layer: list = [None] * self.cfg.n_layers
     for c in pre["chunks"]:
       pr = c["net"].prog; p = c["p"]
@@ -387,6 +459,7 @@ class LlamaPrefill:
     (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
     cfg = self.cfg; f16 = np.float16
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
+    self._check_positions(M)
     eos = {int(eos_id)} if isinstance(eos_id, int) else {int(e) for e in (eos_id or ())}   # any-of stop set
     d = self._decoder(M); chunks = d["chunks"]
     for c in chunks:                                           # reset every mixer's resident state for this generation
@@ -396,8 +469,13 @@ class LlamaPrefill:
       ohv = np.zeros((1, M, 1), f16); ohv[0, pos, 0] = 1.0
       invv = np.ones((1, M, 1), f16); invv[0, pos, 0] = 0.0
       mv = np.full((1, 1, M), -1e4, f16); mv[..., :pos + 1] = 0.0
-      vals = {"oh": ohv, "inv": invv, "mask": mv, "cosp": d["cos"][pos][None], "sinp": d["sin"][pos][None]}
-      h = np.asarray(self.w["embed"][tok])[None].astype(f16)
+      vals = {"oh": ohv, "inv": invv, "mask": mv}
+      if d["cos"] is not None:
+        vals["cosp"] = d["cos"][pos][None]; vals["sinp"] = d["sin"][pos][None]
+      emb = self.w["embed"][tok]
+      if "wpe" in self.w:
+        emb = emb + self.w["wpe"][pos]
+      h = np.asarray(emb)[None].astype(f16)
       for c in chunks:                                         # hidden flows chunk -> chunk (cheap [1,dim] round-trip)
         p = c["p"]; pr = c["net"].prog
         pr.set_input(p["x"], h)
@@ -519,16 +597,50 @@ def _cfg_from_hf(c) -> LlamaConfig:
                      head_dim=int(getattr(c, "head_dim", 0) or 0), rope_scaling=_rope_scaling(c))
 
 
+def _gpt2_adapter(c, sd) -> tuple[LlamaConfig, dict]:
+  """Adapter for GPT-2 causal LM: LayerNorm + learned-positional wpe + tied lm_head + gelu_new."""
+  if getattr(c, "scale_attn_by_inverse_layer_idx", False) or getattr(c, "reorder_and_upcast_attn", False):
+    raise ValueError(
+      "load_gpt2: this checkpoint sets scale_attn_by_inverse_layer_idx/reorder_and_upcast_attn, which "
+      "aneforge's GPT-2 adapter does not implement, so it would silently produce wrong logits.")
+  n = int(getattr(c, "n_layer", getattr(c, "num_hidden_layers", 12)))
+  dim = int(getattr(c, "n_embd", getattr(c, "hidden_size", 768)))
+  heads = int(getattr(c, "n_head", getattr(c, "num_attention_heads", 12)))
+  ffn_dim = int(getattr(c, "n_inner", None) or getattr(c, "intermediate_size", None) or 4 * dim)
+  vocab = int(getattr(c, "vocab_size", 50257))
+  eps = float(getattr(c, "layer_norm_epsilon", getattr(c, "layer_norm_eps", 1e-5)))
+  cfg = LlamaConfig(dim=dim, n_layers=n, n_heads=heads, n_kv_heads=heads, ffn_dim=ffn_dim, vocab=vocab,
+                    norm_eps=eps, norm_type="layer", rope=False,
+                    layers=[LayerSpec(mixer="attention", mlp="gelu_new") for _ in range(n)])
+  w = {
+    "embed": sd["transformer.wte.weight"], "wpe": sd["transformer.wpe.weight"],
+    "final_norm_w": sd["transformer.ln_f.weight"], "final_norm_b": sd["transformer.ln_f.bias"],
+    "lm_head": sd.get("lm_head.weight", sd["transformer.wte.weight"]), "layers": []}
+  for i in range(n):
+    p = f"transformer.h.{i}."
+    Wqkv = sd[p + "attn.c_attn.weight"].T   # Conv1D [in, out] -> transposed [3D, D]
+    bqkv = sd[p + "attn.c_attn.bias"]
+    lw = {
+      "attn_norm_w": sd[p + "ln_1.weight"], "attn_norm_b": sd[p + "ln_1.bias"],
+      "wq": Wqkv[:dim], "q_bias": bqkv[:dim],
+      "wk": Wqkv[dim:2 * dim], "k_bias": bqkv[dim:2 * dim],
+      "wv": Wqkv[2 * dim:3 * dim], "v_bias": bqkv[2 * dim:3 * dim],
+      "wo": sd[p + "attn.c_proj.weight"].T, "o_bias": sd[p + "attn.c_proj.bias"],
+      "mlp_norm_w": sd[p + "ln_2.weight"], "mlp_norm_b": sd[p + "ln_2.bias"],
+      "wfc": sd[p + "mlp.c_fc.weight"].T, "fc_bias": sd[p + "mlp.c_fc.bias"],
+      "wproj": sd[p + "mlp.c_proj.weight"].T, "proj_bias": sd[p + "mlp.c_proj.bias"],
+    }
+    w["layers"].append(lw)
+  return cfg, w
+
+
 # Architecture adapters: (predicate(hf_config) -> bool, adapter(hf_config, sd) -> (cfg, weights)); first match
 # wins, dense Llama/Qwen is the fallback. New archs append here (e.g. aneforge.moe) so the loader stays generic.
 ADAPTERS: list = [
-  (lambda c: c.model_type == "gemma", _gemma_adapter),
-  (lambda c: c.model_type == "mistral", _mistral_adapter),
+  (lambda c: getattr(c, "model_type", None) == ModelType.GPT2, _gpt2_adapter),
+  (lambda c: getattr(c, "model_type", None) == ModelType.GEMMA, _gemma_adapter),
+  (lambda c: getattr(c, "model_type", None) == ModelType.MISTRAL, _mistral_adapter),
 ]
-
-# Gemma-2/3 reach the dense fallback (Llama-shaped) but need softcapping / GeGLU / (1+w)-norm it lacks;
-# a name backstop for the softcapping feature check in _assert_dense_compatible.
-_DENSE_INCOMPATIBLE = {"gemma2", "gemma3", "gemma3_text"}
 
 
 def _assert_dense_compatible(c) -> None:

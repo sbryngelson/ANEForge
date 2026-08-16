@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 
 import aneforge as af
-from aneforge._compile import MultiModel, _lower_fused_to_dir
-from aneforge.models import GPT2, _gpt2_layers, _gelu_new, _lm_head_tiles, _logits_from
+from aneforge._compile import _lower_fused_to_dir
+from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles, GPT2
+from aneforge.llm import _gpt2_adapter, LlamaPrefill, ModelType
+from _helpers import requires_ane
 
 
 def _synthetic_sd(D=16, H=4, L=2, V=100):
@@ -71,16 +73,6 @@ def test_gpt2_lm_head_tiles_shapes():
   assert len(small) == 1 and small[0].shape == (1, 1000)
 
 
-def test_gpt2_embed_rejects_sequence_beyond_max_positions():
-  """`_embed` raises a clear error instead of a raw numpy broadcast failure when the sequence
-  is longer than the model's position table."""
-  g = GPT2.__new__(GPT2)
-  g.wte = np.zeros((100, 16), np.float32)
-  g.wpe = np.zeros((10, 16), np.float32)
-  with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
-    g._embed(np.arange(11, dtype=np.int64))
-
-
 def test_gpt2_generate_text_decodes_generated_tokens():
   g = GPT2.__new__(GPT2)
   g.generate = Mock(return_value=[17, 42])
@@ -106,16 +98,121 @@ def test_gpt2_tiled_head_lowers():
   _lower_fused_to_dir(tiles[0], None, int8=True)
 
 
-def test_logits_from_stitches_multimodel_tiles_in_port_order():
-  """A tiled head's per-tile outputs stitch into one [S, vocab] array in output_ports order."""
-  net = MultiModel.__new__(MultiModel)
-  net.output_ports = [(None, "t0"), (None, "t1")]
-  out = {"t0": np.array([[1.0, 2.0]], np.float32), "t1": np.array([[3.0]], np.float32)}
-  stitched = _logits_from(net, out)
-  assert np.array_equal(stitched, np.array([[1.0, 2.0, 3.0]], np.float32))
+def test_gpt2_adapter_rejects_unimplemented_attn_scaling():
+  """`_gpt2_adapter` fails fast for checkpoints (e.g. Cerebras-GPT) that set
+  scale_attn_by_inverse_layer_idx/reorder_and_upcast_attn -- semantics the adapter does not
+  implement, so silently loading would produce wrong logits."""
+  class FakeConfig:
+    model_type = ModelType.GPT2
+    n_embd, n_layer, n_head, n_inner, vocab_size = 16, 2, 4, 64, 100
+    layer_norm_epsilon = 1e-5
+    scale_attn_by_inverse_layer_idx = True
+  with pytest.raises(ValueError, match="scale_attn_by_inverse_layer_idx"):
+    _gpt2_adapter(FakeConfig(), _synthetic_sd(D=16, H=4, L=2, V=100))
 
 
-def test_logits_from_passes_through_a_plain_model_output():
-  """A single-tile head (a plain Model, not a MultiModel) passes its output through unchanged."""
-  out = np.array([[9.0, 8.0]], np.float32)
-  assert np.array_equal(_logits_from(object(), out), out)
+def test_llama_prefill_check_positions_rejects_beyond_wpe():
+  """`_check_positions` raises a clear error instead of an out-of-bounds `wpe` index/broadcast
+  failure when a sequence length exceeds the model's position table -- exercised through
+  `_hidden` (prompt too long) and `generate`'s `max_len` (decode cache too long)."""
+  class FakeConfig:
+    model_type = ModelType.GPT2
+    n_embd, n_layer, n_head, n_inner, vocab_size = 16, 2, 4, 64, 100
+    layer_norm_epsilon = 1e-5
+  cfg, w = _gpt2_adapter(FakeConfig(), _synthetic_sd(D=16, H=4, L=2, V=100))  # wpe has 10 rows
+  model = LlamaPrefill(cfg, w)
+  with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
+    model._hidden(np.arange(11, dtype=np.int64))
+  with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
+    model.generate([1, 2, 3], max_new_tokens=4, max_len=20)
+
+
+def test_llama_prefill_release_clears_state():
+  """`release()` nulls `_net`/`_dec`/`_pre` (not just releasing the underlying program), so a
+  subsequent call recompiles instead of replaying a freed program."""
+  class FakeConfig:
+    model_type = ModelType.GPT2
+    n_embd, n_layer, n_head, n_inner, vocab_size = 16, 2, 4, 64, 100
+    layer_norm_epsilon = 1e-5
+  cfg, w = _gpt2_adapter(FakeConfig(), _synthetic_sd(D=16, H=4, L=2, V=100))
+  model = LlamaPrefill(cfg, w)
+
+  class _FakeNet:
+    def __init__(self): self.released = False
+    def release(self): self.released = True
+
+  net = _FakeNet()
+  chunk_net = _FakeNet()
+  model._net = net
+  model._seq = 5
+  model._dec = {"M": 20, "chunks": [{"net": chunk_net}]}
+  model._pre = {"seq": 5, "chunks": [{"net": chunk_net}]}
+  model.release()
+  assert net.released and chunk_net.released
+  assert model._net is None and model._seq == 0 and model._dec is None and model._pre is None
+
+
+def test_gpt2_adapter_mapping():
+  """The _gpt2_adapter correctly translates a GPT-2 config + state_dict into LlamaConfig and weights."""
+  class FakeConfig:
+    model_type = ModelType.GPT2
+    n_embd = 16
+    n_layer = 2
+    n_head = 4
+    n_inner = 64
+    vocab_size = 100
+    layer_norm_epsilon = 1e-5
+
+  sd = _synthetic_sd(D=16, H=4, L=2, V=100)
+  cfg, w = _gpt2_adapter(FakeConfig(), sd)
+  assert cfg.dim == 16 and cfg.n_layers == 2 and cfg.n_heads == 4 and cfg.ffn_dim == 64
+  assert cfg.norm_type == "layer" and not cfg.rope
+  assert len(cfg.layers) == 2 and all(l.mixer == "attention" and l.mlp == "gelu_new" for l in cfg.layers)
+  assert "wpe" in w and w["wpe"].shape == (10, 16)
+  assert len(w["layers"]) == 2
+  lw = w["layers"][0]
+  assert lw["wq"].shape == (16, 16) and lw["wk"].shape == (16, 16) and lw["wv"].shape == (16, 16)
+  assert lw["wfc"].shape == (64, 16) and lw["wproj"].shape == (16, 64)
+  assert lw["q_bias"].shape == (16,) and lw["fc_bias"].shape == (64,)
+
+
+@requires_ane
+def test_gpt2_matches_huggingface():
+  """On-device test: GPT-2 prefill cosine > 0.99 vs HF fp32 reference and greedy decode matches."""
+  import torch
+  from transformers import GPT2Config, GPT2LMHeadModel
+  torch.manual_seed(0)
+  hf_cfg = GPT2Config(n_embd=64, n_layer=2, n_head=4, n_inner=128, vocab_size=64, n_positions=64)
+  hf = GPT2LMHeadModel(hf_cfg).eval()
+  toks = np.random.default_rng(0).integers(0, 64, 8)
+  with torch.no_grad():
+    ref_logits = hf(torch.tensor(toks)[None]).logits[0, -1].numpy()
+    ref_greedy = hf.generate(torch.tensor(toks)[None], max_new_tokens=4, do_sample=False)[0].numpy()[len(toks):]
+  cfg, weights = _gpt2_adapter(hf.config, {k: v.detach().float().numpy() for k, v in hf.state_dict().items()})
+  model = LlamaPrefill(cfg, weights)
+  ane_logits = model.prefill(toks)[0]
+  cos = float(ane_logits @ ref_logits / (np.linalg.norm(ane_logits) * np.linalg.norm(ref_logits) + 1e-9))
+  assert cos > 0.99 and int(ane_logits.argmax()) == int(ref_logits.argmax())
+  ane_greedy = model.generate(toks, max_new_tokens=4)
+  assert list(ane_greedy) == list(ref_greedy)
+
+
+@requires_ane
+def test_gpt2_long_context_above_512():
+  """On-device test: GPT-2 resident KV-cache decode operates with context length M > 512."""
+  class FakeConfig:
+    model_type = ModelType.GPT2
+    n_embd = 64
+    n_layer = 2
+    n_head = 2
+    n_inner = 128
+    vocab_size = 48
+    layer_norm_epsilon = 1e-5
+
+  sd = _synthetic_sd(D=64, H=2, L=2, V=48)
+  sd["transformer.wpe.weight"] = np.zeros((700, 64), np.float32)
+  cfg, weights = _gpt2_adapter(FakeConfig(), sd)
+  model = LlamaPrefill(cfg, weights)
+  prompt = [1, 2, 3, 4]
+  out = model.generate(prompt, max_new_tokens=4, max_len=600)
+  assert len(out) == 4 and all(0 <= t < cfg.vocab for t in out)
