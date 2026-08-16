@@ -7,7 +7,7 @@ import pytest
 import aneforge as af
 from aneforge._compile import _lower_fused_to_dir
 from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles
-from aneforge.llm import _gpt2_adapter, LlamaPrefill
+from aneforge.llm import _gpt2_adapter, LlamaPrefill, ModelType
 from _helpers import requires_ane
 
 
@@ -90,7 +90,7 @@ def test_gpt2_adapter_rejects_unimplemented_attn_scaling():
   scale_attn_by_inverse_layer_idx/reorder_and_upcast_attn -- semantics the adapter does not
   implement, so silently loading would produce wrong logits."""
   class FakeConfig:
-    model_type = "gpt2"
+    model_type = ModelType.GPT2
     n_embd, n_layer, n_head, n_inner, vocab_size = 16, 2, 4, 64, 100
     layer_norm_epsilon = 1e-5
     scale_attn_by_inverse_layer_idx = True
@@ -103,7 +103,7 @@ def test_llama_prefill_check_positions_rejects_beyond_wpe():
   failure when a sequence length exceeds the model's position table -- exercised through
   `_hidden` (prompt too long) and `generate`'s `max_len` (decode cache too long)."""
   class FakeConfig:
-    model_type = "gpt2"
+    model_type = ModelType.GPT2
     n_embd, n_layer, n_head, n_inner, vocab_size = 16, 2, 4, 64, 100
     layer_norm_epsilon = 1e-5
   cfg, w = _gpt2_adapter(FakeConfig(), _synthetic_sd(D=16, H=4, L=2, V=100))  # wpe has 10 rows
@@ -118,7 +118,7 @@ def test_llama_prefill_release_clears_state():
   """`release()` nulls `_net`/`_dec`/`_pre` (not just releasing the underlying program), so a
   subsequent call recompiles instead of replaying a freed program."""
   class FakeConfig:
-    model_type = "gpt2"
+    model_type = ModelType.GPT2
     n_embd, n_layer, n_head, n_inner, vocab_size = 16, 2, 4, 64, 100
     layer_norm_epsilon = 1e-5
   cfg, w = _gpt2_adapter(FakeConfig(), _synthetic_sd(D=16, H=4, L=2, V=100))
@@ -142,7 +142,7 @@ def test_llama_prefill_release_clears_state():
 def test_gpt2_adapter_mapping():
   """The _gpt2_adapter correctly translates a GPT-2 config + state_dict into LlamaConfig and weights."""
   class FakeConfig:
-    model_type = "gpt2"
+    model_type = ModelType.GPT2
     n_embd = 16
     n_layer = 2
     n_head = 4
@@ -188,7 +188,7 @@ def test_gpt2_matches_huggingface():
 def test_gpt2_long_context_above_512():
   """On-device test: GPT-2 resident KV-cache decode operates with context length M > 512."""
   class FakeConfig:
-    model_type = "gpt2"
+    model_type = ModelType.GPT2
     n_embd = 64
     n_layer = 2
     n_head = 2
