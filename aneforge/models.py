@@ -271,6 +271,14 @@ def _seqcls_activation(values: np.ndarray, model_type: str) -> np.ndarray:
   return np.maximum(values, 0) if model_type == "distilbert" else np.tanh(values)
 
 
+def _token_type_ids(enc: dict, length: int, has_token_type_embeddings: bool) -> np.ndarray:
+  """Return segment ids, ignoring tokenizer output when the model has no segment table."""
+  if not has_token_type_embeddings:
+    return np.zeros(length, dtype=np.int64)
+  values = enc.get("token_type_ids")
+  return np.asarray(values if values is not None else [0] * length, dtype=np.int64)
+
+
 class CrossEncoder:
   """Reranker: scores (query, passage) pairs with a BERT-, RoBERTa-, or DistilBERT-family sequence-classification
   model, the transformer running on the ANE. Mirrors `sentence_transformers.CrossEncoder`:
@@ -308,7 +316,8 @@ class CrossEncoder:
     self.word = g(f"{pref}.embeddings.word_embeddings.weight")
     self.pos = g(f"{pref}.embeddings.position_embeddings.weight")
     typ_key = f"{pref}.embeddings.token_type_embeddings.weight"
-    self.typ = g(typ_key) if typ_key in sd else np.zeros((1, self.D), np.float32)
+    self._has_typ = typ_key in sd
+    self.typ = g(typ_key) if self._has_typ else np.zeros((1, self.D), np.float32)
     self.eln_w, self.eln_b = g(f"{pref}.embeddings.LayerNorm.weight"), g(f"{pref}.embeddings.LayerNorm.bias")
     self.layers = [{k: g(f"{pref}.{layer_prefix.format(i=i)}" + v) for k, v in layer_keys.items()}
                    for i in range(self.L)]
@@ -340,7 +349,7 @@ class CrossEncoder:
     for query, passage in pairs:
       enc = self.tok(query, passage, truncation=True)
       ids = np.asarray(enc["input_ids"], dtype=np.int64)
-      typ = np.asarray(enc.get("token_type_ids") or [0] * len(ids), dtype=np.int64)
+      typ = _token_type_ids(enc, len(ids), self._has_typ)
       net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
       cls = net(self._embed(ids, typ))[0]                              # [CLS] / <s> state, on the ANE
       pooled = _seqcls_activation(cls @ self.pool_w.T + self.pool_b, self._model_type)

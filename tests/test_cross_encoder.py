@@ -13,6 +13,7 @@ from aneforge.models import (
   _position_ids,
   _seqcls_activation,
   _seqcls_head,
+  _token_type_ids,
 )
 
 BERT_SD = {
@@ -70,6 +71,16 @@ def test_distilbert_head_uses_relu_and_bert_head_uses_tanh():
   values = np.array([-2.0, 0.0, 2.0])
   np.testing.assert_array_equal(_seqcls_activation(values, "distilbert"), [0.0, 0.0, 2.0])
   np.testing.assert_allclose(_seqcls_activation(values, "bert"), np.tanh(values))
+
+
+def test_distilbert_ignores_token_type_ids_without_an_embedding_table():
+  enc = {"input_ids": [101, 10, 102, 20, 102], "token_type_ids": [0, 0, 0, 1, 1]}
+  np.testing.assert_array_equal(_token_type_ids(enc, 5, False), np.zeros(5, dtype=np.int64))
+
+
+def test_models_with_token_type_embeddings_preserve_token_type_ids():
+  enc = {"input_ids": [101, 10, 102], "token_type_ids": [0, 1, 1]}
+  np.testing.assert_array_equal(_token_type_ids(enc, 3, True), [0, 1, 1])
 
 
 def test_roberta_is_not_detected_by_a_missing_token_type_table():
