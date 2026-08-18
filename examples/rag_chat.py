@@ -8,10 +8,18 @@ import os
 import subprocess
 import sys
 import time
+import warnings
+
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")            # quiet the model-load bars
+warnings.filterwarnings("ignore", "aneforge.compile: dispatch-floor")  # per-call dispatch notes are noise in a REPL
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root -> import aneforge / examples._rag; works as a script and when imported under pytest
 
 import numpy as np
+
+# Directories that are not part of a project's documentation -- skip them so the index is not polluted
+# by version control, dependencies, or working notes (e.g. this repo's gitignored docs/superpowers/).
+_SKIP_DIRS = {".git", ".github", "node_modules", "__pycache__", "superpowers"}
 
 EMBED = "sentence-transformers/all-MiniLM-L6-v2"
 RERANK = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -26,7 +34,8 @@ from examples._rag import Chunk, chunk_text, pack_context, top_k   # noqa: E402
 
 def _read_corpus(path: str) -> list[Chunk]:
   chunks: list[Chunk] = []
-  for root, _, files in os.walk(path):
+  for root, dirs, files in os.walk(path):
+    dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIP_DIRS]   # prune noise dirs
     for f in sorted(files):
       if f.endswith((".md", ".txt")):
         fp = os.path.join(root, f)
@@ -63,9 +72,11 @@ class Pipeline:
 
   @classmethod
   def build(cls, path: str, llm_name: str = LLM) -> "Pipeline":
-    from transformers import AutoTokenizer            # lazy
+    import transformers                               # lazy
+    from transformers import AutoTokenizer
     from aneforge import load_llm
     from aneforge.sentence_transformers import CrossEncoder, SentenceTransformer
+    transformers.logging.set_verbosity_error(); transformers.logging.disable_progress_bar()
     tok = AutoTokenizer.from_pretrained(llm_name)
     chunks = _read_corpus(path)
     if not chunks:
