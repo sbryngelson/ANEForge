@@ -501,6 +501,31 @@ def _gpt2_layers(sd: dict, L: int, D: int, Dff: int) -> list[dict]:
   return layers
 
 
+def _whisper_layers(sd: dict, prefix: str, n: int) -> list[dict]:
+  """Per-layer numpy weights for the Whisper encoder/decoder graphs. HF linear weights are [out, in]
+  and used as-is by `.linear()`. Whisper's k_proj carries no bias, so bk/Cbk are omitted. A decoder
+  layer additionally carries the cross-attention set (C*) and its layer norm (cln)."""
+  out = []
+  for i in range(n):
+    p = f"model.{prefix}.layers.{i}."
+    g = lambda k: sd[p + k]
+    w = {"Wq": g("self_attn.q_proj.weight"), "bq": g("self_attn.q_proj.bias"),
+         "Wk": g("self_attn.k_proj.weight"),
+         "Wv": g("self_attn.v_proj.weight"), "bv": g("self_attn.v_proj.bias"),
+         "Wo": g("self_attn.out_proj.weight"), "bo": g("self_attn.out_proj.bias"),
+         "ln1w": g("self_attn_layer_norm.weight"), "ln1b": g("self_attn_layer_norm.bias"),
+         "Wi": g("fc1.weight"), "bi": g("fc1.bias"), "Wd": g("fc2.weight"), "bd": g("fc2.bias"),
+         "ln2w": g("final_layer_norm.weight"), "ln2b": g("final_layer_norm.bias")}
+    if prefix == "decoder":
+      w.update({"CWq": g("encoder_attn.q_proj.weight"), "Cbq": g("encoder_attn.q_proj.bias"),
+                "CWk": g("encoder_attn.k_proj.weight"),
+                "CWv": g("encoder_attn.v_proj.weight"), "Cbv": g("encoder_attn.v_proj.bias"),
+                "CWo": g("encoder_attn.out_proj.weight"), "Cbo": g("encoder_attn.out_proj.bias"),
+                "cln_w": g("encoder_attn_layer_norm.weight"), "cln_b": g("encoder_attn_layer_norm.bias")})
+    out.append(w)
+  return out
+
+
 def _gelu_new(x: Tensor) -> Tensor:
   """GPT-2's tanh-approximated GELU, composed from native ops (mirrors the ONNX
   `approximate="tanh"` handler, aneforge/onnx.py:352-360)."""
