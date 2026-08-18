@@ -150,3 +150,39 @@ def test_prefill_matches_huggingface_mistral():  # the Mistral adapter: GQA + sl
   ane = np.asarray(LlamaPrefill(cfg, w).prefill(toks)).ravel().astype(np.float32)
   cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE Mistral prefill vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
+
+
+@requires_ane
+def test_ane_lm_head_matches_host_logits(monkeypatch):
+  """The tiled ANE head must agree with the host fp32 matmul on the argmax and stay within fp16
+  tolerance elementwise. The tile cap is monkeypatched low so a >1-tile head is exercised on an M2."""
+  import aneforge.llm as llm_mod
+  monkeypatch.setattr(llm_mod, "_lm_head_tile_size", lambda: 96)
+  cfg = LlamaConfig(dim=32, n_layers=2, n_heads=4, n_kv_heads=2, ffn_dim=64, vocab=200)
+  m = _random_model(cfg, seed=3)
+  m.ane_lm_head = True
+  lmh = m._lm_head_program()
+  assert lmh is not None and len(lmh["outs"]) == 3, "expected a 3-tile head (200 vocab / cap 96)"
+  h = (np.random.default_rng(11).standard_normal(cfg.dim) * 0.5).astype(np.float32)
+  ane = m._ane_logits(lmh, h)
+  host = m._logits(h, ane=False)
+  assert ane.shape == host.shape == (cfg.vocab,)
+  assert int(ane.argmax()) == int(host.argmax()), f"argmax {ane.argmax()} vs host {host.argmax()}"
+  rel = np.abs(ane - host).max() / (np.abs(host).max() + 1e-9)
+  assert rel < 5e-3, f"ANE lm_head vs host relerr {rel}"
+
+
+@requires_ane
+def test_generate_ane_lm_head_matches_host():
+  """Greedy decode with the ANE head must produce the same tokens as the host head, same prompt and
+  max_len, and must not build the host `_lmT` transpose on the ANE path."""
+  cfg = LlamaConfig(dim=32, n_layers=2, n_heads=4, n_kv_heads=2, ffn_dim=64, vocab=200)
+  m = _random_model(cfg, seed=3)
+  prompt = [3, 17, 42, 8]
+  host = m.generate(prompt, max_new_tokens=12, max_len=32, eos_id=None)
+  assert m._lmT is not None and m._lmh is None
+  m2 = _random_model(cfg, seed=3)
+  m2.ane_lm_head = True
+  ane = m2.generate(prompt, max_new_tokens=12, max_len=32, eos_id=None)
+  assert m2._lmT is None, "the ANE path must never build the host transpose"
+  assert ane == host, f"ANE head greedy {ane} != host greedy {host}"
