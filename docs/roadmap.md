@@ -14,10 +14,10 @@ CoreML dependency. The capability surface is characterized in
 ## Where things stand
 
 The infrastructure is mature. The frontend compiles whole graphs to one
-ANE program; pretrained vision CNNs (ResNet, ViT), transformer encoders and
+ANE program; pretrained vision CNNs (ResNet, ViT), CLIP, transformer encoders and
 rerankers, decoder LLMs (Llama/Qwen/Mistral/Gemma, MoE, hybrid DeltaNet, GPT-2)
-with prefill and resident-KV-cache decode, and diffusion UNet blocks load and
-run correctly; weights stream at fp16, int8, int4-LUT,
+with prefill and resident-KV-cache decode, Whisper speech-to-text (encoder +
+decoder), and diffusion UNet blocks load and run correctly; weights stream at fp16, int8, int4-LUT,
 sparse, or blockwise; a reverse-mode autograd trains real networks
 forward, backward, and optimizer-step on the engine; a per-chip cost model
 estimates latency for any ANE generation without that hardware in hand; and
@@ -146,8 +146,10 @@ past the ~2 GB program ceiling, int8/int4 weights, and exact speculative decodin
 architecture-agnostic, so a new family is an adapter, not a new code path; an
 unsupported architecture is rejected rather than silently mis-loaded. Alongside
 it, model loaders bring GPT-2 (the first LayerNorm decoder, tiled tied lm_head),
-ViT-B/16, ResNet-18/34/50/101, and BERT/RoBERTa rerankers (`CrossEncoder`) onto
-the engine. Reproducible benchmarking landed too: the roofline suite (per-machine
+ViT-B/16, ResNet-18/34/50/101, CLIP, BERT/RoBERTa/DistilBERT rerankers
+(`CrossEncoder`), and Whisper speech-to-text (audio encoder + autoregressive
+decoder, both on the ANE with resident-KV-cache decode) onto the engine.
+Reproducible benchmarking landed too: the roofline suite (per-machine
 `ROOFLINES.md`, contributor-driven) and the MLPerf ResNet-50 harness that clears
 the MLCommons submission checker at reference accuracy. See
 [llm.md](llm.md) and [developer/models.md](developer/models.md).

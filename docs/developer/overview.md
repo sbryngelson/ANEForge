@@ -61,8 +61,11 @@ Some ops have no ANE hardware layer and are built from primitives, made exact by
 
 ## Pretrained loaders
 
-- `af.load(".../all-MiniLM-L6-v2")` — sentence encoder.
-- `af.load_resnet18()` — ImageNet classifier.
+- `af.load(".../all-MiniLM-L6-v2")` — sentence encoder (`CrossEncoder` for rerankers).
+- `af.load_resnet18()` / `af.load_vit(...)` / `af.load_clip(...)` — vision classifiers and CLIP.
+- `af.load_gpt2(...)` / `af.load_llm(...)` — decoder LLMs (prefill + resident-KV-cache decode).
+- `af.load_whisper(...)` — Whisper speech-to-text, both towers on the ANE.
+- `af.load_onnx(...)` — import an ONNX model.
 
 ## Numerics
 

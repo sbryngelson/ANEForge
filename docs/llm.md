@@ -13,13 +13,13 @@ works, but the energy advantage is in prefill.
 ```python
 import aneforge as af
 
-model = af.load_llm("Qwen/Qwen3-0.6B")            # any Llama/Qwen-class HF model
+model = af.load_llm("Qwen/Qwen3-0.6B")            # Llama/Qwen/Mistral/Gemma/GPT-2/MoE HF decoder
 text_ids = model.generate(prompt_ids, max_new_tokens=24)
 logits = model.prefill(prompt_ids)                # next-token logits [1, vocab]
 ```
 
-- `af.load_llm(name, compress=None)` - load an HF Llama/Qwen model for ANE inference.
-  `compress="int8"`/`"int4"` quantizes the weights (see below).
+- `af.load_llm(name, compress=None)` - load an HF decoder LLM (Llama/Qwen/Mistral/Gemma/GPT-2/MoE)
+  for ANE inference. `compress="int8"`/`"int4"` quantizes the weights (see below).
 - `model.generate(ids, max_new_tokens, eos_id)` - greedy generation on the ANE.
 - `model.prefill(ids)` - prefill only; returns next-token logits.
 - `af.LlamaPrefill(cfg, weights)` / `af.LlamaConfig` - build from numpy weights directly.
@@ -153,7 +153,8 @@ before RoPE), and a large vocab - the layers run on the ANE; the lm_head project
 ## Scope
 
 Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), **Mistral**
-(GQA + sliding window), **Gemma** (scaled embeddings + GeGLU + `(1+w)` RMSNorm), sparse **Mixture-of-Experts**
+(GQA + sliding window), **Gemma** (scaled embeddings + GeGLU + `(1+w)` RMSNorm), **GPT-2** (pre-norm
+LayerNorm decoder, learned positions, tiled tied lm_head), sparse **Mixture-of-Experts**
 (Qwen3-MoE, Qwen2-MoE), and **hybrid** DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
 KV-cache decode, automatic segmentation past the ~2 GB program ceiling, int8/int4 weights, and exact
 speculative decoding. Static prompt length per compiled graph; the lm_head projection runs on host.
