@@ -18,14 +18,13 @@ RERANK = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 LLM = "Qwen/Qwen3-0.6B"
 MAX_LEN = 512
 ANSWER_TOKENS = 160
-TOP_K, TOP_N = 12, 4
-CHUNK_TOK = 192          # token-window chunk size; uniform windows keep the Encoder to a few compiled programs
+TOP_K, TOP_N = 20, 4
 REPO_DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
 
 from examples._rag import Chunk, chunk_text, pack_context, top_k   # noqa: E402
 
 
-def _read_corpus(path: str, tok) -> list[Chunk]:
+def _read_corpus(path: str) -> list[Chunk]:
   chunks: list[Chunk] = []
   for root, _, files in os.walk(path):
     for f in sorted(files):
@@ -33,9 +32,7 @@ def _read_corpus(path: str, tok) -> list[Chunk]:
         fp = os.path.join(root, f)
         with open(fp, encoding="utf-8", errors="ignore") as fh:
           text = fh.read()
-        chunks += chunk_text(text, os.path.relpath(fp, path),
-                             lambda s: tok.encode(s, add_special_tokens=False), tok.decode,
-                             size=CHUNK_TOK, overlap=32)
+        chunks += chunk_text(text, os.path.relpath(fp, path))
   return chunks
 
 
@@ -70,7 +67,7 @@ class Pipeline:
     from aneforge import load_llm
     from aneforge.sentence_transformers import CrossEncoder, SentenceTransformer
     tok = AutoTokenizer.from_pretrained(llm_name)
-    chunks = _read_corpus(path, tok)
+    chunks = _read_corpus(path)
     if not chunks:
       raise SystemExit(f"rag_chat: no .md/.txt files found under {path!r}")
     embed = SentenceTransformer(EMBED)
@@ -86,8 +83,6 @@ class Pipeline:
     t["retrieve"] = (time.perf_counter() - t0) * 1e3
     t0 = time.perf_counter()
     scores = self.rerank.predict([(query, self.chunks[i].text) for i in cand])
-    self.rerank._cache.clear()   # the reranker compiles one ANE program per pair length; release them so
-                                 # they do not accumulate across queries and exhaust the engine (op_create err=13)
     ranked = [self.chunks[cand[i]] for i in np.argsort(scores)[::-1][:TOP_N]]
     t["rerank"] = (time.perf_counter() - t0) * 1e3
     def _wrap(content):   # Qwen chat format so the model answers from context and stops at EOS (no rambling)

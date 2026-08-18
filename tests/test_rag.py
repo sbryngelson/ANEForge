@@ -5,19 +5,13 @@ from _helpers import requires_ane
 
 
 def test_chunk_text_windows_with_overlap():
-  enc = lambda s: s.split()
-  dec = lambda w: " ".join(w)
-  text = " ".join(f"w{i}" for i in range(100))
-  chunks = chunk_text(text, "a.md", enc, dec, size=40, overlap=8)   # step = 32
-  assert all(len(c.text.split()) == 40 for c in chunks)
+  chunks = chunk_text("x" * 2000, "a.md", size=800, overlap=160)   # step = 640
+  assert [len(c.text) for c in chunks] == [800, 800, 720]           # 0:800, 640:1440, 1280:2000
   assert all(c.source == "a.md" for c in chunks)
 
 
 def test_chunk_text_short_doc_is_one_chunk():
-  enc = lambda s: s.split()
-  dec = lambda w: " ".join(w)
-  chunks = chunk_text("hello world", "b.txt", enc, dec, size=40, overlap=8)
-  assert chunks == [Chunk("hello world", "b.txt")]
+  assert chunk_text("hello", "b.txt", size=800, overlap=160) == [Chunk("hello", "b.txt")]
 
 
 def test_top_k_orders_by_similarity_descending():
