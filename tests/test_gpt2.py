@@ -62,14 +62,22 @@ def test_gpt2_conv1d_mapping_orientation():
   assert np.array_equal(w["bv"], c[p + "attn.c_attn.bias"][2 * D:3 * D])
 
 
-def test_gpt2_lm_head_tiles_shapes():
-  """A 50257-vocab tied head tiles into ceil(50257/16384) = 4 output-port matmuls, the last
-  tile short; a small vocab stays a single tile."""
+def test_gpt2_lm_head_tiles_shapes(monkeypatch):
+  """A 50257-vocab tied head tiles to fit the target family's max tensor dim: four output-port
+  matmuls at the A13-A15 cap (16384, last tile short), one tile at the A16+ cap (65536). Mock the
+  cap so the result does not depend on which chip runs the test; a small vocab is always one tile."""
+  from aneforge import _targets
   h = af.input((1, 1024))
-  wte = np.zeros((50257, 1024), np.float32)
-  tiles = _lm_head_tiles(h, wte.astype(np.float16))
+  wte = np.zeros((50257, 1024), np.float16)
+
+  monkeypatch.setattr(_targets, "limit", lambda *_a, **_k: 16384)   # A13-A15
+  tiles = _lm_head_tiles(h, wte)
   assert [t.shape for t in tiles] == [(1, 16384), (1, 16384), (1, 16384), (1, 1105)]
   assert all(t.op == "matmul" for t in tiles)
+
+  monkeypatch.setattr(_targets, "limit", lambda *_a, **_k: 65536)   # A16+: 50257 fits one tile
+  assert [t.shape for t in _lm_head_tiles(h, wte)] == [(1, 50257)]
+
   small = _lm_head_tiles(h, np.zeros((1000, 1024), np.float16))
   assert len(small) == 1 and small[0].shape == (1, 1000)
 
