@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .graph import Tensor, concat, conv, cross_attention, input, mha, space_to_depth, _const
+from .graph import Tensor, concat, conv, input, mha, space_to_depth, _const
 from .autograd import conv2d, conv_param, parameter
 from ._compile import Model, SegmentedModel, MultiModel, compile, compile_multi
 from . import _targets
@@ -784,12 +784,13 @@ def load_whisper(name: str = "openai/whisper-base.en") -> "Whisper":
 
 
 class Whisper:
-  """OpenAI Whisper (encoder-decoder ASR) on the ANE. The audio encoder is one fused program run
-  once per clip; the text decoder is one fused program per greedy step (recompute-per-step, no KV
-  cache yet). Host-side log-mel and tokenization only. Default `whisper-base.en`. English, greedy,
+  """OpenAI Whisper (encoder-decoder ASR) on the ANE. The audio encoder is one fused program run once per
+  clip; the text decoder is one fused single-token program run per greedy step against a resident KV cache
+  (self-attention caches grow on the ANE; each layer's cross-attention K/V over the audio is computed once per
+  clip and held resident). Host-side log-mel and tokenization only. Default `whisper-base.en`. English, greedy,
   no timestamps. `.transcribe(audio)` -> str; `.encode(audio)` -> audio features [1500, 512]."""
 
-  MAX_DEC = 128                                                # padded decoder length for the demo
+  MAX_DEC = 128                                                # resident KV-cache length (max decoded tokens)
 
   def __init__(self, name: str = "openai/whisper-base.en") -> None:
     from transformers import AutoConfig, WhisperForConditionalGeneration, WhisperProcessor  # lazy
@@ -842,50 +843,92 @@ class Whisper:
     mel = self._features(audio).reshape(1, self.n_mels, 1, 3000)
     return np.asarray(self._encoder(mel), np.float32)
 
-  def _build_decoder(self) -> MultiModel:
-    S = self.MAX_DEC
-    emb = input((S, self.D))                                  # token+position embedding (host gather)
-    mask = input((1, S, S))                                   # causal + key-padding additive mask
-    audio = input((1500, self.D))                             # encoder features (cross-attn K/V)
-    h = emb
+  def _build_decode_step(self) -> dict:
+    """One fused single-token decode program with a resident KV cache (built once, cached). Self-attention
+    reads/writes a resident `[H, M, dh]` cache via a one-hot positional write (`Kout = Kin*inv + k*oh`, the
+    `_attn_decode` pattern); cross-attention reads resident audio K/V set once per clip; each cache output is
+    aliased back to its input with `share_buffer` so it stays on the ANE across steps. Returns the port map."""
+    M, D, H, dh = self.MAX_DEC, self.D, self.H, self.D // self.H
+    scale = 1.0 / dh ** 0.5
+    x = input((1, D))                                          # this step's token+position embedding
+    oh = input((1, M, 1)); inv = input((1, M, 1))             # one-hot write to the current position (inv = 1 - oh)
+    mask = input((1, 1, M))                                    # causal: 0 on keys <= pos, -1e4 beyond
+    h = x
+    pairs, cross = [], []
     for w in self._dec_layers:
-      s = mha(h.layer_norm(w["ln1w"], w["ln1b"]), w["Wq"], w["bq"], w["Wk"], None,
-              w["Wv"], w["bv"], w["Wo"], w["bo"], self.H, mask=mask)
-      h = h + s
-      c = cross_attention(h.layer_norm(w["cln_w"], w["cln_b"]), audio,
-                          w["CWq"], w["CWk"], w["CWv"], w["CWo"], self.H,
-                          bq=w["Cbq"], bk=None, bv=w["Cbv"], bo=w["Cbo"])
-      h = h + c
+      Kin = input((H, M, dh)); Vin = input((H, M, dh))         # resident self-attn cache
+      CKin = input((1500, D)); CVin = input((1500, D))         # resident cross-attn K/V (set once per clip)
+      xn = h.layer_norm(w["ln1w"], w["ln1b"])
+      q = xn.linear(w["Wq"], w["bq"]).reshape(H, 1, dh)
+      k = xn.linear(w["Wk"], None).reshape(H, 1, dh)           # k_proj has no bias
+      v = xn.linear(w["Wv"], w["bv"]).reshape(H, 1, dh)
+      Kout = Kin * inv + k * oh; Vout = Vin * inv + v * oh      # positional write into the resident cache
+      sc = ((q @ Kout.transpose([0, 2, 1])) * scale + mask).softmax(-1)   # [H, 1, M]
+      a = (sc @ Vout).transpose([1, 0, 2]).reshape(1, D)                   # [H,1,dh] -> [1, D]
+      h = h + a.linear(w["Wo"], w["bo"])
+      pairs += [(Kout, Kin), (Vout, Vin)]
+      cn = h.layer_norm(w["cln_w"], w["cln_b"])
+      cq = cn.linear(w["CWq"], w["Cbq"]).reshape(H, 1, dh)
+      ck = CKin.reshape(1500, H, dh).transpose([1, 0, 2])       # [H, 1500, dh]
+      cv = CVin.reshape(1500, H, dh).transpose([1, 0, 2])
+      cs = ((cq @ ck.transpose([0, 2, 1])) * scale).softmax(-1)             # [H, 1, 1500]
+      ca = (cs @ cv).transpose([1, 0, 2]).reshape(1, D)
+      h = h + ca.linear(w["CWo"], w["Cbo"])
+      cross.append((CKin, CVin))
       f = h.layer_norm(w["ln2w"], w["ln2b"]).linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
       h = h + f
     h = h.layer_norm(self._dec_lnw, self._dec_lnb)
-    tiles = _lm_head_tiles(h, self._dec_tok)                  # tied head -> logits [S, vocab] (tiled by family)
-    return compile_multi(tiles)
+    tiles = _lm_head_tiles(h, self._dec_tok)                   # tied head -> logits [1, vocab] (tiled by family)
+    net = compile_multi(tiles + [o for o, _ in pairs])
+    inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
+    for o, i in pairs:                                         # alias each cache output back to its input (resident)
+      net.prog.share_buffer(0, om[o], 0, inm[id(i)])
+    return {"net": net, "x": inm[id(x)], "oh": inm[id(oh)], "inv": inm[id(inv)], "mask": inm[id(mask)],
+            "logits": [om[t] for t in tiles], "states": {inm[id(i)]: i.shape for _, i in pairs},
+            "cross": [(inm[id(ck)], inm[id(cv)]) for ck, cv in cross]}
 
   def transcribe(self, audio: np.ndarray) -> str:
-    """Greedy English transcript of a 16 kHz mono clip, both towers on the ANE."""
+    """Greedy English transcript of a 16 kHz mono clip, both towers on the ANE. The decoder runs one token per
+    step against a resident KV cache: self-attention caches grow on the ANE, and each layer's cross-attention
+    K/V over the audio is computed once per clip and held resident."""
     if self._decoder is None:
-      self._decoder = self._build_decoder()
-    feats = self.encode(audio)
-    S = self.MAX_DEC
-    causal = np.triu(np.full((S, S), -1e4, np.float32), 1)    # query i attends to keys <= i
+      self._decoder = self._build_decode_step()
+    d = self._decoder; prog = d["net"].prog
+    M = self.MAX_DEC
+    feats = self.encode(audio)                                # [1500, D] fp32 (fast BLAS for the projection below)
+    for name, shape in d["states"].items():                   # reset the self-attn caches for this clip
+      prog.set_input(name, np.zeros(shape, np.float16))
+    for (ckn, cvn), w in zip(d["cross"], self._dec_layers):   # cross-attn K/V, computed once and held resident
+      ck = feats @ w["CWk"].T.astype(np.float32)              # fp32 matmul (fp16 numpy has no BLAS path); k_proj no bias
+      cv = feats @ w["CWv"].T.astype(np.float32) + w["Cbv"].astype(np.float32)
+      prog.set_input(ckn, ck.astype(np.float16)); prog.set_input(cvn, cv.astype(np.float16))
+
+    def step(tok: int, pos: int) -> np.ndarray:
+      emb = (self._dec_tok[tok] + self._dec_pos[pos]).astype(np.float16)[None]   # [1, D]
+      ohv = np.zeros((1, M, 1), np.float16); ohv[0, pos, 0] = 1.0
+      invv = np.ones((1, M, 1), np.float16); invv[0, pos, 0] = 0.0
+      mv = np.full((1, 1, M), -1e4, np.float16); mv[..., :pos + 1] = 0.0
+      prog.set_input(d["x"], emb); prog.set_input(d["oh"], ohv)
+      prog.set_input(d["inv"], invv); prog.set_input(d["mask"], mv)
+      prog.execute()
+      return np.concatenate([np.asarray(prog.read_output(n), np.float32) for n in d["logits"]], axis=1)[0]
+
     ids = list(self.sot)
-    while len(ids) < S:
-      n = len(ids)
-      emb = np.zeros((S, self.D), np.float32)
-      emb[:n] = self._dec_tok[ids] + self._dec_pos[:n]        # token + learned positional embedding
-      out = self._decoder(emb, causal.reshape(1, S, S), feats)
-      logits = _logits_from(self._decoder, out)               # [S, vocab]
-      nxt = int(np.argmax(logits[n - 1]))
+    for p, tok in enumerate(ids[:-1]):                        # prime the cache with the start tokens
+      step(tok, p)
+    cur, pos = ids[-1], len(ids) - 1
+    while len(ids) < M:
+      nxt = int(np.argmax(step(cur, pos)))
       ids.append(nxt)
       if nxt == self.eot:
         break
+      cur, pos = nxt, pos + 1
     return self.proc.tokenizer.decode(ids[len(self.sot):], skip_special_tokens=True)
 
   def release(self) -> None:
     self._encoder.release()
     if self._decoder is not None:
-      self._decoder.release()
+      self._decoder["net"].release()
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):

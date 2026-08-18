@@ -113,10 +113,10 @@ feats = w.encode(audio)            # audio features [1500, 512] (the encoder alo
 ```
 
 - **Encoder** (one fused program, run once per clip): the two Whisper conv layers (the strided `conv2` runs directly on the ANE), sinusoidal positional embedding, six pre-norm blocks, final layer norm -> audio features `[1500, 512]`.
-- **Decoder** (one fused program per greedy step): token + learned positional embedding (host gather), six pre-norm blocks of causal self-attention (via `mha(mask=)`) + cross-attention to the audio features + a GELU MLP, then the tied `lm_head`. Whisper's `k_proj` carries no bias.
+- **Decoder** (one fused single-token program with a resident KV cache): token + learned positional embedding (host gather), six pre-norm blocks of causal self-attention against a resident `[H, M, dh]` cache (the one-hot positional write the LLM runner uses) + cross-attention to the audio features + a GELU MLP, then the tied `lm_head`. Each layer's cross-attention K/V over the audio is computed once per clip and held resident, so decode never re-projects the 1500 audio frames. Whisper's `k_proj` carries no bias.
 - Host-side only: the log-mel spectrogram (Whisper's `WhisperFeatureExtractor`) and tokenization, the same split as tokenization for the LLM loaders.
 
-Scope: English, greedy, no timestamps. Decode recomputes the padded window each step (no KV cache yet), which is fine for short clips — a resident KV cache is a tracked follow-up, as it was for GPT-2. `examples/whisper.py` transcribes a sample clip and validates the encoder features (cosine) and the greedy transcript against Hugging Face.
+Scope: English, greedy, no timestamps. `examples/whisper.py` transcribes a sample clip and validates the encoder features (cosine) and the greedy transcript against Hugging Face.
 
 ## Weight layout: He init is layout-dependent
 

@@ -93,3 +93,28 @@ def test_whisper_transcribes_like_hf():
   with torch.no_grad():
     ref = proc.batch_decode(hf.generate(feats), skip_special_tokens=True)[0]
   assert text.strip().lower() == ref.strip().lower(), f"\nane: {text!r}\nhf:  {ref!r}"
+
+
+@requires_ane
+def test_whisper_kv_cache_resets_between_clips():
+  """The resident KV cache and per-clip cross-attn K/V must not leak across calls: transcribing clip A after
+  clip B must give the same result as transcribing A alone."""
+  import io
+
+  import soundfile as sf
+  from datasets import Audio, load_dataset
+
+  from aneforge.models import load_whisper
+  ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean",
+                    split="validation").cast_column("audio", Audio(decode=False))
+
+  def clip(i):
+    a = ds[i]["audio"]
+    data, _ = sf.read(io.BytesIO(a["bytes"]) if a.get("bytes") else a["path"])
+    return np.asarray(data, dtype=np.float32)
+
+  w = load_whisper("openai/whisper-base.en")
+  first = w.transcribe(clip(0))
+  w.transcribe(clip(1))                                        # a different-length clip in between
+  again = w.transcribe(clip(0))
+  assert first.strip() and first == again, f"\nfirst: {first!r}\nagain: {again!r}"

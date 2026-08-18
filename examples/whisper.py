@@ -58,8 +58,9 @@ def main(argv) -> int:
   w = af.load_whisper(NAME)
   print(f" done ({time.perf_counter() - t0:.2f}s)")
 
+  text = w.transcribe(audio)                                 # first call also compiles the decode program
   t0 = time.perf_counter()
-  text = w.transcribe(audio)
+  text = w.transcribe(audio)                                 # steady-state: resident KV cache, program already built
   dt = time.perf_counter() - t0
 
   print("\n" + "=" * 60)
@@ -83,7 +84,7 @@ def main(argv) -> int:
   print("\nVALIDATION & BENCHMARKS:")
   print(f"  Encoder features cosine vs HF fp32: {cos:.5f}")
   print(f"  Transcript matches HF greedy:       {match}")
-  print(f"  Transcribe latency on ANE:          {dt * 1e3:.0f} ms")
+  print(f"  Transcribe latency on ANE (warm):   {dt * 1e3:.0f} ms")
   if not match:
     print(f"  HF transcript: {ref_text.strip()!r}")
 
