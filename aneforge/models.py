@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .graph import Tensor, concat, conv, input, mha, space_to_depth, _const
+from .graph import Tensor, concat, conv, cross_attention, input, mha, space_to_depth, _const
 from .autograd import conv2d, conv_param, parameter
 from ._compile import Model, SegmentedModel, MultiModel, compile
 from . import _targets
@@ -775,6 +775,77 @@ class CLIP:
   def release(self) -> None:
     self._v_model.release()
     self._t_model.release()
+
+
+def load_whisper(name: str = "openai/whisper-base.en") -> "Whisper":
+  """Load a Hugging Face Whisper speech-to-text model with both towers (audio encoder + text
+  decoder) running on the ANE. `Whisper(name).transcribe(audio)` -> greedy English transcript."""
+  return Whisper(name)
+
+
+class Whisper:
+  """OpenAI Whisper (encoder-decoder ASR) on the ANE. The audio encoder is one fused program run
+  once per clip; the text decoder is one fused program per greedy step (recompute-per-step, no KV
+  cache yet). Host-side log-mel and tokenization only. Default `whisper-base.en`. English, greedy,
+  no timestamps. `.transcribe(audio)` -> str; `.encode(audio)` -> audio features [1500, 512]."""
+
+  MAX_DEC = 128                                                # padded decoder length for the demo
+
+  def __init__(self, name: str = "openai/whisper-base.en") -> None:
+    from transformers import AutoConfig, WhisperForConditionalGeneration, WhisperProcessor  # lazy
+    cfg = AutoConfig.from_pretrained(name)
+    if getattr(cfg, "model_type", None) != "whisper":
+      raise ValueError(f"load_whisper: {name!r} is not a Whisper model (model_type={cfg.model_type!r})")
+    self.proc = WhisperProcessor.from_pretrained(name)
+    sd = {k: v.detach().numpy().astype(np.float16)
+          for k, v in WhisperForConditionalGeneration.from_pretrained(name).state_dict().items()}
+    self.D, self.H = cfg.d_model, cfg.encoder_attention_heads
+    self.n_mels, self.vocab = cfg.num_mel_bins, cfg.vocab_size
+    self.sot = [cfg.decoder_start_token_id, 50362]            # <|startoftranscript|>, <|notimestamps|>
+    self.eot = cfg.eos_token_id                               # <|endoftext|>
+    g = lambda k: sd[k]
+    self._enc_conv1 = g("model.encoder.conv1.weight").reshape(self.D, self.n_mels, 1, 3)
+    self._enc_conv1_b = g("model.encoder.conv1.bias")
+    self._enc_conv2 = g("model.encoder.conv2.weight").reshape(self.D, self.D, 1, 3)
+    self._enc_conv2_b = g("model.encoder.conv2.bias")
+    self._enc_pos = g("model.encoder.embed_positions.weight")           # [1500, D] sinusoidal
+    self._enc_lnw, self._enc_lnb = g("model.encoder.layer_norm.weight"), g("model.encoder.layer_norm.bias")
+    self._enc_layers = _whisper_layers(sd, "encoder", cfg.encoder_layers)
+    self._dec_tok = g("model.decoder.embed_tokens.weight")              # [vocab, D], tied to proj_out
+    self._dec_pos = g("model.decoder.embed_positions.weight")          # [max_target_positions, D] learned
+    self._dec_lnw, self._dec_lnb = g("model.decoder.layer_norm.weight"), g("model.decoder.layer_norm.bias")
+    self._dec_layers = _whisper_layers(sd, "decoder", cfg.decoder_layers)
+    self._encoder = self._build_encoder()
+    self._decoder = None                                       # built lazily in Task 3
+
+  def _build_encoder(self) -> Model | SegmentedModel:
+    mel = input((1, self.n_mels, 1, 3000))                    # log-mel as a 1xT "image" for the 1D convs
+    h = conv(mel, self._enc_conv1, pad=(0, 0, 1, 1), bias=self._enc_conv1_b).gelu()      # [1, D, 1, 3000]
+    h = conv(h, self._enc_conv2, stride=2, pad=(0, 0, 1, 1), bias=self._enc_conv2_b).gelu()  # [1, D, 1, 1500]
+    h = h.reshape(self.D, 1500).transpose([1, 0]) + self._enc_pos    # [1500, D] + sinusoidal positions
+    for w in self._enc_layers:
+      a = mha(h.layer_norm(w["ln1w"], w["ln1b"]), w["Wq"], w["bq"], w["Wk"], None,
+              w["Wv"], w["bv"], w["Wo"], w["bo"], self.H)
+      h = h + a
+      f = h.layer_norm(w["ln2w"], w["ln2b"]).linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
+      h = h + f
+    return compile(h.layer_norm(self._enc_lnw, self._enc_lnb))
+
+  def _features(self, audio: np.ndarray) -> np.ndarray:
+    """Host log-mel [n_mels, 3000] via the Whisper feature extractor (no ANE)."""
+    audio = np.asarray(audio, dtype=np.float32)
+    mel = self.proc.feature_extractor(audio, sampling_rate=16000, return_tensors="np")["input_features"]
+    return np.asarray(mel, np.float32).reshape(self.n_mels, 3000)
+
+  def encode(self, audio: np.ndarray) -> np.ndarray:
+    """Audio features [1500, D] on the ANE for a 16 kHz mono clip (truncated/padded to 30 s)."""
+    mel = self._features(audio).reshape(1, self.n_mels, 1, 3000)
+    return np.asarray(self._encoder(mel), np.float32)
+
+  def release(self) -> None:
+    self._encoder.release()
+    if self._decoder is not None:
+      self._decoder.release()
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):
