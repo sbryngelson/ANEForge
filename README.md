@@ -36,6 +36,7 @@ private `aned` stack CoreML, MPSGraph, and Espresso use internally. From there:
 - **The engine, never a fallback.** A pretrained ResNet-18 runs end-to-end in 0.33 ms, matching the reference to cosine 1.0000, at a fraction of the GPU's energy (table below).
 - **MLPerf, on the engine.** The MLPerf reference ResNet-50 runs pure-ANE and passes the upstream MLCommons `submission_checker` (v5.1, all three edge scenarios VALID) at the reference accuracy (fp16 76.44%, equal to fp32); [one command reproduces it](bench/mlperf).
 - **LLMs run on the engine.** Prefill and KV-cache decode for Llama/Qwen, exact speculative decoding, Mixture-of-Experts from GGUF, and the hybrid Qwen3.5-27B (DeltaNet + attention), decoding end to end on a pure ANE.
+- **Speech-to-text on the engine.** Whisper's audio encoder and its autoregressive text decoder both run on the ANE with resident-KV-cache decode, matching Hugging Face's greedy transcript.
 - **Cross-compilation for chips you don't own.** Lower and gate a graph for any of 28 ANE targets (M1-M5) from one machine, and estimate its latency without running it.
 
 ```python
@@ -92,7 +93,10 @@ logits). For retrieval,
 [`examples/rag_embeddings.py`](examples/rag_embeddings.py) is a LangChain
 `Embeddings` drop-in backed by the on-ANE encoder (4-5x faster than the GPU,
 cosine 1.0000). Chat with your docs entirely on the Neural Engine -- embeddings,
-reranker, and LLM on one engine: `python3 examples/rag_chat.py`.
+reranker, and LLM on one engine: `python3 examples/rag_chat.py`. For speech,
+[`examples/whisper.py`](examples/whisper.py) transcribes a clip with both Whisper
+towers -- audio encoder and text decoder -- on the ANE, matching Hugging Face's
+greedy transcript.
 
 ## How it compares
 
@@ -192,7 +196,7 @@ Operator coverage is tracked op by op across M1 to M5 in the [op catalog](docs/o
 
 ## Language models
 
-Decoder LLMs run on the ANE from Hugging Face weights or GGUF - prefill plus resident-KV-cache decode, auto-segmented past the ~2 GB single-program ceiling (GPT-2 below is the exception: no KV cache yet, recompute per length):
+Decoder LLMs run on the ANE from Hugging Face weights or GGUF - prefill plus resident-KV-cache decode, auto-segmented past the ~2 GB single-program ceiling:
 
 | Model                  | What runs                          | Measured                          |
 | ---------------------- | ---------------------------------- | --------------------------------- |
@@ -200,7 +204,7 @@ Decoder LLMs run on the ANE from Hugging Face weights or GGUF - prefill plus res
 | Qwen3-8B + 0.6B draft  | speculative decoding, exact        | 2.28x (7.4 -> 16.8 tok/s)         |
 | Qwen1.5-MoE-A2.7B      | sparse MoE, full model on pure ANE | coherent text, ~2 tok/s (int8)    |
 | Qwen3.5-27B hybrid     | 48 DeltaNet + 16 attn on pure ANE  | coherent int8 (fp16-bound vs llama.cpp) |
-| GPT-2 medium           | pre-norm LayerNorm decoder, tiled tied lm_head, recompute-per-length | 16/16 greedy match vs HF fp32, 0.28 tok/s |
+| GPT-2 medium           | pre-norm LayerNorm decoder, tiled tied lm_head, resident-KV-cache decode | 16/16 greedy match vs HF fp32, ~140 tok/s |
 
 Speculative verify is near-free on the ANE (`verify(K) ~ verify(1)`, decode is latency-bound); MoE decode at 30B scale is weight-bandwidth-bound. Full writeup in the [LLMs guide](docs/llm.md).
 
