@@ -1,0 +1,50 @@
+from examples._rag import Chunk, chunk_text, top_k, PROMPT_TEMPLATE, pack_context
+import numpy as np
+
+from _helpers import requires_ane
+
+
+def test_chunk_text_windows_with_overlap():
+  chunks = chunk_text("x" * 2000, "a.md", size=800, overlap=160)   # step = 640
+  assert [len(c.text) for c in chunks] == [800, 800, 720]           # 0:800, 640:1440, 1280:2000
+  assert all(c.source == "a.md" for c in chunks)
+
+
+def test_chunk_text_short_doc_is_one_chunk():
+  assert chunk_text("hello", "b.txt", size=800, overlap=160) == [Chunk("hello", "b.txt")]
+
+
+def test_top_k_orders_by_similarity_descending():
+  corpus = np.array([[1, 0], [0, 1], [0.9, 0.1], [-1, 0], [0.7, 0.7]], dtype=np.float32)
+  corpus /= np.linalg.norm(corpus, axis=1, keepdims=True)
+  q = np.array([1, 0], dtype=np.float32)
+  assert top_k(q, corpus, 3) == [0, 2, 4]        # cos: 1.0, 0.994, 0.707
+  assert top_k(q, corpus, 99) == [0, 2, 4, 1, 3]  # k > N returns all, ordered
+
+
+def test_pack_context_stops_at_budget_and_keeps_query():
+  chunks = [Chunk("AAAA", "a"), Chunk("BBBB", "b"), Chunk("CCCC", "c")]
+  # token_len = len (characters). Budget admits the template + query + ~two chunks.
+  prompt = pack_context(chunks, "Q?", budget=len(PROMPT_TEMPLATE.format(context="", question="Q?")) + 9, token_len=len)
+  assert "Q?" in prompt
+  assert "AAAA" in prompt and "BBBB" in prompt   # two 4-char chunks fit in 9 spare
+  assert "CCCC" not in prompt                     # third overflows, dropped
+  assert len(prompt) <= len(PROMPT_TEMPLATE.format(context="", question="Q?")) + 9 + 1
+
+
+def test_pack_context_truncates_a_single_oversized_chunk():
+  chunks = [Chunk("Z" * 1000, "big")]
+  budget = len(PROMPT_TEMPLATE.format(context="", question="Q?")) + 20
+  prompt = pack_context(chunks, "Q?", budget=budget, token_len=len)
+  assert "Q?" in prompt and "Z" in prompt
+  assert len(prompt) <= budget
+
+
+@requires_ane
+def test_pipeline_answers_end_to_end(tmp_path):
+  import examples.rag_chat as rc
+  (tmp_path / "d.md").write_text("The ANE runs fp16. Espresso e5rt is the runtime aneforge targets.")
+  p = rc.Pipeline.build(str(tmp_path))
+  toks = []
+  timing = p.answer("What runtime does aneforge target?", on_token=toks.append)
+  assert toks and "stage_ms" in timing
