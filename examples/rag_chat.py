@@ -10,7 +10,8 @@ import sys
 import time
 import warnings
 
-os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")            # quiet the model-load bars
+# Keep Hugging Face *download* progress bars (the first run pulls ~1.5 GB); only the per-load bars and
+# aneforge's per-call dispatch note are silenced below -- those are noise, a multi-minute download is not.
 warnings.filterwarnings("ignore", "aneforge.compile: dispatch-floor")  # per-call dispatch notes are noise in a REPL
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root -> import aneforge / examples._rag; works as a script and when imported under pytest
@@ -113,7 +114,8 @@ def main(argv) -> int:
   args = [a for a in argv if not a.startswith("--")]
   path = args[0] if args else REPO_DOCS
   energy = "--energy" in argv
-  print(f"indexing {path} on the Apple Neural Engine ...", flush=True)
+  print(f"loading models and indexing {path} on the Apple Neural Engine ...\n"
+        f"(first run downloads ~1.5 GB of models from Hugging Face; cached for later runs)", flush=True)
   p = Pipeline.build(path)
   print(f"indexed {len(p.chunks)} chunks from {len({c.source for c in p.chunks})} files. "
         f"embeddings + reranker + Qwen3-0.6B all on the ANE.\nask a question (Ctrl-D to quit).\n")
