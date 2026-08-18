@@ -5,28 +5,50 @@ import numpy as np
 from _helpers import requires_ane
 from aneforge.models import _whisper_layers
 
+D, DFF = 512, 2048
 
-def _sd():
-  from transformers import WhisperForConditionalGeneration
-  m = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base.en")
-  return {k: v.detach().numpy().astype(np.float32) for k, v in m.state_dict().items()}
+
+def _synthetic_sd(prefix: str, n: int) -> dict:
+  """A Whisper state dict with the real HF key names and shapes but random weights -- enough to exercise
+  the mapping off-device (no transformers, no download). k_proj has no bias, matching Whisper."""
+  rng = np.random.default_rng(0)
+  w = lambda *s: rng.standard_normal(s).astype(np.float32)
+  sd = {}
+  for i in range(n):
+    p = f"model.{prefix}.layers.{i}."
+    for proj, bias in [("q_proj", True), ("k_proj", False), ("v_proj", True), ("out_proj", True)]:
+      sd[p + f"self_attn.{proj}.weight"] = w(D, D)
+      if bias:
+        sd[p + f"self_attn.{proj}.bias"] = w(D)
+    for ln in ("self_attn_layer_norm", "final_layer_norm"):
+      sd[p + ln + ".weight"], sd[p + ln + ".bias"] = w(D), w(D)
+    sd[p + "fc1.weight"], sd[p + "fc1.bias"] = w(DFF, D), w(DFF)
+    sd[p + "fc2.weight"], sd[p + "fc2.bias"] = w(D, DFF), w(D)
+    if prefix == "decoder":
+      for proj, bias in [("q_proj", True), ("k_proj", False), ("v_proj", True), ("out_proj", True)]:
+        sd[p + f"encoder_attn.{proj}.weight"] = w(D, D)
+        if bias:
+          sd[p + f"encoder_attn.{proj}.bias"] = w(D)
+      sd[p + "encoder_attn_layer_norm.weight"] = w(D)
+      sd[p + "encoder_attn_layer_norm.bias"] = w(D)
+  return sd
 
 
 def test_whisper_layer_mapping():
-  sd = _sd()
-  enc = _whisper_layers(sd, "encoder", 6)
-  dec = _whisper_layers(sd, "decoder", 6)
+  enc_sd, dec_sd = _synthetic_sd("encoder", 6), _synthetic_sd("decoder", 6)
+  enc = _whisper_layers(enc_sd, "encoder", 6)
+  dec = _whisper_layers(dec_sd, "decoder", 6)
   assert len(enc) == 6 and len(dec) == 6
   # self-attn q/o carry bias, k has none (Whisper convention)
-  assert enc[0]["Wq"].shape == (512, 512) and enc[0]["bq"].shape == (512,)
-  assert "bk" not in enc[0] and enc[0]["Wk"].shape == (512, 512)
-  assert enc[0]["Wi"].shape == (2048, 512) and enc[0]["Wd"].shape == (512, 2048)
+  assert enc[0]["Wq"].shape == (D, D) and enc[0]["bq"].shape == (D,)
+  assert "bk" not in enc[0] and enc[0]["Wk"].shape == (D, D)
+  assert enc[0]["Wi"].shape == (DFF, D) and enc[0]["Wd"].shape == (D, DFF)
   # the decoder layer also carries the cross-attn set (k again unbiased)
-  assert dec[0]["CWq"].shape == (512, 512) and dec[0]["CWk"].shape == (512, 512)
-  assert "Cbk" not in dec[0] and dec[0]["cln_w"].shape == (512,)
-  # values come straight from the real weights
-  assert np.array_equal(enc[0]["Wq"], sd["model.encoder.layers.0.self_attn.q_proj.weight"])
-  assert np.array_equal(dec[0]["CWo"], sd["model.decoder.layers.0.encoder_attn.out_proj.weight"])
+  assert dec[0]["CWq"].shape == (D, D) and dec[0]["CWk"].shape == (D, D)
+  assert "Cbk" not in dec[0] and dec[0]["cln_w"].shape == (D,)
+  # values come straight from the state dict, unmodified
+  assert np.array_equal(enc[0]["Wq"], enc_sd["model.encoder.layers.0.self_attn.q_proj.weight"])
+  assert np.array_equal(dec[0]["CWo"], dec_sd["model.decoder.layers.0.encoder_attn.out_proj.weight"])
 
 
 @requires_ane
