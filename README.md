@@ -183,6 +183,7 @@ Pretrained models, each fused into one ANE program:
 | ViT-B/16           | vision transformer encoder | cosine 1.0000           |
 | all-MiniLM-L6-v2   | sentence embedding         | cosine 1.0000           |
 | ms-marco-MiniLM-L-6-v2 | reranker (CrossEncoder) | identical ranking, relerr 5e-4 |
+| whisper-base.en    | speech to text (encoder + decoder) | greedy transcript matches HF, encoder cosine 0.9999 |
 | ESPCN              | super-resolution           | runs end to end         |
 | Stable Diffusion 1.5 | U-Net + VAE (per component) | U-Net 1.5%, VAE 4.4% rel. |
 
