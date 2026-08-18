@@ -66,45 +66,16 @@ def test_whisper_encoder_matches_hf():
   with torch.no_grad():
     ref = hf.model.encoder(mel).last_hidden_state[0].numpy()
   cos = float((feat.ravel() @ ref.ravel()) / (np.linalg.norm(feat) * np.linalg.norm(ref) + 1e-9))
-  assert cos > 0.99, f"encoder cosine {cos}"
+  assert cos > 0.999, f"encoder cosine {cos}"
 
 
-@requires_ane
-def test_whisper_transcribes_like_hf():
-  import io
-
-  import soundfile as sf
-  import torch
-  from datasets import Audio, load_dataset
-  from transformers import WhisperForConditionalGeneration, WhisperProcessor
-
-  from aneforge.models import load_whisper
-  # decode=False keeps the raw FLAC bytes so we read them with soundfile (the dataset's own decoder
-  # needs torchcodec); librispeech-dummy is already 16 kHz mono, matching Whisper's expected rate.
-  ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean",
-                    split="validation").cast_column("audio", Audio(decode=False))
-  a = ds[0]["audio"]
-  data, _ = sf.read(io.BytesIO(a["bytes"]) if a.get("bytes") else a["path"])
-  audio = np.asarray(data, dtype=np.float32)
-  text = load_whisper("openai/whisper-base.en").transcribe(audio)
-  proc = WhisperProcessor.from_pretrained("openai/whisper-base.en")
-  hf = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base.en").eval()
-  feats = proc(audio, sampling_rate=16000, return_tensors="pt").input_features
-  with torch.no_grad():
-    ref = proc.batch_decode(hf.generate(feats), skip_special_tokens=True)[0]
-  assert text.strip().lower() == ref.strip().lower(), f"\nane: {text!r}\nhf:  {ref!r}"
-
-
-@requires_ane
-def test_whisper_kv_cache_resets_between_clips():
-  """The resident KV cache and per-clip cross-attn K/V must not leak across calls: transcribing clip A after
-  clip B must give the same result as transcribing A alone."""
+def _librispeech_clips():
+  """The first few librispeech-dummy clips as 16 kHz mono float32 waveforms. decode=False keeps the raw FLAC
+  bytes so soundfile reads them (the dataset's own decoder needs torchcodec)."""
   import io
 
   import soundfile as sf
   from datasets import Audio, load_dataset
-
-  from aneforge.models import load_whisper
   ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean",
                     split="validation").cast_column("audio", Audio(decode=False))
 
@@ -112,9 +83,37 @@ def test_whisper_kv_cache_resets_between_clips():
     a = ds[i]["audio"]
     data, _ = sf.read(io.BytesIO(a["bytes"]) if a.get("bytes") else a["path"])
     return np.asarray(data, dtype=np.float32)
+  return [clip(i) for i in range(4)]
 
+
+@requires_ane
+def test_whisper_transcribes_like_hf():
+  """Greedy transcript matches HF `generate` on several clips -- a single clip can dodge the logit
+  suppressions HF applies, so this checks a handful to exercise the begin/step suppression paths."""
+  import torch
+  from transformers import WhisperForConditionalGeneration, WhisperProcessor
+
+  from aneforge.models import load_whisper
+  clips = _librispeech_clips()
   w = load_whisper("openai/whisper-base.en")
-  first = w.transcribe(clip(0))
-  w.transcribe(clip(1))                                        # a different-length clip in between
-  again = w.transcribe(clip(0))
+  proc = WhisperProcessor.from_pretrained("openai/whisper-base.en")
+  hf = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base.en").eval()
+  for audio in clips:
+    text = w.transcribe(audio)
+    feats = proc(audio, sampling_rate=16000, return_tensors="pt").input_features
+    with torch.no_grad():
+      ref = proc.batch_decode(hf.generate(feats), skip_special_tokens=True)[0]
+    assert text.strip().lower() == ref.strip().lower(), f"\nane: {text!r}\nhf:  {ref!r}"
+
+
+@requires_ane
+def test_whisper_kv_cache_resets_between_clips():
+  """The per-clip cross-attention K/V (fed into every decode step) must be refreshed each call: transcribing
+  clip A after clip B must equal transcribing A alone -- otherwise A would decode against B's audio."""
+  from aneforge.models import load_whisper
+  clips = _librispeech_clips()
+  w = load_whisper("openai/whisper-base.en")
+  first = w.transcribe(clips[0])
+  w.transcribe(clips[1])                                       # a different-length clip in between
+  again = w.transcribe(clips[0])
   assert first.strip() and first == again, f"\nfirst: {first!r}\nagain: {again!r}"

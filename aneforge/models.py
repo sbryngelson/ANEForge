@@ -787,22 +787,29 @@ class Whisper:
   """OpenAI Whisper (encoder-decoder ASR) on the ANE. The audio encoder is one fused program run once per
   clip; the text decoder is one fused single-token program run per greedy step against a resident KV cache
   (self-attention caches grow on the ANE; each layer's cross-attention K/V over the audio is computed once per
-  clip and held resident). Host-side log-mel and tokenization only. Default `whisper-base.en`. English, greedy,
-  no timestamps. `.transcribe(audio)` -> str; `.encode(audio)` -> audio features [1500, 512]."""
-
-  MAX_DEC = 128                                                # resident KV-cache length (max decoded tokens)
+  clip and held resident). Greedy decoding replicates Hugging Face's forced-prompt and logit-suppression rules,
+  so it matches `generate`. Host-side log-mel and tokenization only. Default `whisper-base.en`.
+  `.transcribe(audio)` -> str; `.encode(audio)` -> audio features [1500, 512]."""
 
   def __init__(self, name: str = "openai/whisper-base.en") -> None:
-    from transformers import AutoConfig, WhisperForConditionalGeneration, WhisperProcessor  # lazy
+    from transformers import AutoConfig, GenerationConfig, WhisperForConditionalGeneration, WhisperProcessor  # lazy
     cfg = AutoConfig.from_pretrained(name)
     if getattr(cfg, "model_type", None) != "whisper":
       raise ValueError(f"load_whisper: {name!r} is not a Whisper model (model_type={cfg.model_type!r})")
     self.proc = WhisperProcessor.from_pretrained(name)
+    gen = GenerationConfig.from_pretrained(name)
     sd = {k: v.detach().numpy().astype(np.float16)
           for k, v in WhisperForConditionalGeneration.from_pretrained(name).state_dict().items()}
     self.D, self.H = cfg.d_model, cfg.encoder_attention_heads
+    self.dec_heads = cfg.decoder_attention_heads
     self.n_mels, self.vocab = cfg.num_mel_bins, cfg.vocab_size
-    self.sot = [cfg.decoder_start_token_id, 50362]            # <|startoftranscript|>, <|notimestamps|>
+    self.max_dec = cfg.max_target_positions                   # resident KV-cache length (== HF's max decode length)
+    # The decode prompt and logit rules come from the checkpoint's generation config, so a non-.en Whisper gets
+    # the right start tokens and suppressions rather than hardcoded English ids.
+    forced = getattr(gen, "forced_decoder_ids", None) or []
+    self.sot = [cfg.decoder_start_token_id] + [int(t) for _, t in sorted(forced)]      # e.g. [sot, notimestamps]
+    self.suppress = np.asarray(gen.suppress_tokens or [], dtype=np.int64)              # forced to -inf every step
+    self.begin_suppress = np.asarray(gen.begin_suppress_tokens or [], dtype=np.int64)  # ... only the first token
     self.eot = cfg.eos_token_id                               # <|endoftext|>
     g = lambda k: sd[k]
     self._enc_conv1 = g("model.encoder.conv1.weight").reshape(self.D, self.n_mels, 1, 3)
@@ -817,7 +824,7 @@ class Whisper:
     self._dec_lnw, self._dec_lnb = g("model.decoder.layer_norm.weight"), g("model.decoder.layer_norm.bias")
     self._dec_layers = _whisper_layers(sd, "decoder", cfg.decoder_layers)
     self._encoder = self._build_encoder()
-    self._decoder = None                                       # built lazily in Task 3
+    self._decoder = None                                       # decode program built on first transcribe
 
   def _build_encoder(self) -> Model | SegmentedModel:
     mel = input((1, self.n_mels, 1, 3000))                    # log-mel as a 1xT "image" for the 1D convs
@@ -848,7 +855,7 @@ class Whisper:
     reads/writes a resident `[H, M, dh]` cache via a one-hot positional write (`Kout = Kin*inv + k*oh`, the
     `_attn_decode` pattern); cross-attention reads resident audio K/V set once per clip; each cache output is
     aliased back to its input with `share_buffer` so it stays on the ANE across steps. Returns the port map."""
-    M, D, H, dh = self.MAX_DEC, self.D, self.H, self.D // self.H
+    M, D, H, dh = self.max_dec, self.D, self.dec_heads, self.D // self.dec_heads
     scale = 1.0 / dh ** 0.5
     x = input((1, D))                                          # this step's token+position embedding
     oh = input((1, M, 1)); inv = input((1, M, 1))             # one-hot write to the current position (inv = 1 - oh)
@@ -888,13 +895,14 @@ class Whisper:
             "cross": [(inm[id(ck)], inm[id(cv)]) for ck, cv in cross]}
 
   def transcribe(self, audio: np.ndarray) -> str:
-    """Greedy English transcript of a 16 kHz mono clip, both towers on the ANE. The decoder runs one token per
-    step against a resident KV cache: self-attention caches grow on the ANE, and each layer's cross-attention
-    K/V over the audio is computed once per clip and held resident."""
+    """Greedy transcript of a 16 kHz mono clip, both towers on the ANE. The decoder runs one token per step
+    against a resident KV cache: self-attention caches grow on the ANE, and each layer's cross-attention K/V
+    over the audio is computed once per clip and held resident. Greedy selection applies Hugging Face's forced
+    prompt and logit suppressions, so the transcript matches `generate` (up to `max_dec` tokens)."""
     if self._decoder is None:
       self._decoder = self._build_decode_step()
     d = self._decoder; prog = d["net"].prog
-    M = self.MAX_DEC
+    M = self.max_dec
     feats = self.encode(audio)                                # [1500, D] fp32 (fast BLAS for the projection below)
     for name, shape in d["states"].items():                   # reset the self-attn caches for this clip
       prog.set_input(name, np.zeros(shape, np.float16))
@@ -911,14 +919,20 @@ class Whisper:
       prog.set_input(d["x"], emb); prog.set_input(d["oh"], ohv)
       prog.set_input(d["inv"], invv); prog.set_input(d["mask"], mv)
       prog.execute()
-      return np.concatenate([np.asarray(prog.read_output(n), np.float32) for n in d["logits"]], axis=1)[0]
+      logits = np.concatenate([np.asarray(prog.read_output(n), np.float32) for n in d["logits"]], axis=1)[0]
+      logits[self.suppress] = -np.inf                          # HF SuppressTokensLogitsProcessor (every step)
+      return logits
 
     ids = list(self.sot)
     for p, tok in enumerate(ids[:-1]):                        # prime the cache with the start tokens
       step(tok, p)
     cur, pos = ids[-1], len(ids) - 1
+    first = True
     while len(ids) < M:
-      nxt = int(np.argmax(step(cur, pos)))
+      logits = step(cur, pos)
+      if first:                                                # HF begin-suppress: no leading space / immediate EOT
+        logits[self.begin_suppress] = -np.inf; first = False
+      nxt = int(np.argmax(logits))
       ids.append(nxt)
       if nxt == self.eot:
         break

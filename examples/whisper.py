@@ -88,7 +88,8 @@ def main(argv) -> int:
   if not match:
     print(f"  HF transcript: {ref_text.strip()!r}")
 
-  ok = cos > 0.99 and match
+  w.release()
+  ok = cos > 0.999 and match
   print("\nRESULT:", "PASS" if ok else "FAIL")
   return 0 if ok else 1
 
