@@ -58,7 +58,7 @@ def pack_context(chunks: list[Chunk], query: str, budget: int, token_len) -> str
       kept.append(c.text)
   if not kept and chunks:                       # first chunk alone overflows: truncate it
     text = chunks[0].text
-    while text and token_len(PROMPT_TEMPLATE.format(context=text, question=query)) > budget:
+    while len(text) > 1 and token_len(PROMPT_TEMPLATE.format(context=text, question=query)) > budget:
       text = text[: max(1, len(text) * 3 // 4)]
     kept = [text]
   return PROMPT_TEMPLATE.format(context="\n".join(kept), question=query)

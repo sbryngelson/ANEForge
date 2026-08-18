@@ -31,7 +31,8 @@ def _read_corpus(path: str, tok) -> list[Chunk]:
     for f in sorted(files):
       if f.endswith((".md", ".txt")):
         fp = os.path.join(root, f)
-        text = open(fp, encoding="utf-8", errors="ignore").read()
+        with open(fp, encoding="utf-8", errors="ignore") as fh:
+          text = fh.read()
         chunks += chunk_text(text, os.path.relpath(fp, path),
                              lambda s: tok.encode(s, add_special_tokens=False), tok.decode,
                              size=CHUNK_TOK, overlap=32)
@@ -50,6 +51,7 @@ def _sample_energy(fn):
   result = fn()
   dt = time.perf_counter() - t0
   proc.terminate()
+  proc.wait()
   out = proc.stdout.read() if proc.stdout else ""
   mw = [float(l.split(":")[1].strip().split()[0]) for l in out.splitlines() if "Package Power" in l]
   if not mw:

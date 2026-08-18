@@ -1,6 +1,5 @@
 from examples._rag import Chunk, chunk_text, top_k, PROMPT_TEMPLATE, pack_context
 import numpy as np
-import pytest
 
 from _helpers import requires_ane
 
