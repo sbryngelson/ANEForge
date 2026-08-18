@@ -7,7 +7,7 @@ ANEForge ships pretrained-model loaders that build an ANEForge graph from real w
 Not every operation belongs on the Neural Engine. The loaders split work deliberately:
 
 - **Host:** tokenisation and the embedding lookup (`gather` is not an ANE op), plus pooling/normalise in some configurations.
-- **ANE:** the transformer layers, compiled as fused programs and cached per sequence length. Conv-heavy classifiers run entirely on the ANE.
+- **ANE:** the transformer layers, compiled as fused programs (a batch is padded to one length and shares a single program). Conv-heavy classifiers run entirely on the ANE.
 
 ## load() — BERT-family sentence encoders
 
@@ -18,7 +18,7 @@ embed = af.load("sentence-transformers/all-MiniLM-L6-v2")
 vecs  = embed(["hello world", "the cat sat"])   # [2, D], L2-normalised
 ```
 
-The transformer layers run on the ANE as fused programs (cached per sequence length); tokenisation + embedding lookup run on the host.
+The transformer layers run on the ANE: a batch is padded to its longest sequence and compiled as one fused program (padded keys are masked out); tokenisation + embedding lookup run on the host.
 
 `pooling` selects how per-token states reduce to one vector:
 
@@ -140,7 +140,7 @@ emb   = model.encode(["a query", "a passage"])   # [2, D] on the ANE
 
 Design notes:
 
-- The transformer layers run on the ANE as one fused e5rt program (cached per sequence length).
+- The transformer layers run on the ANE as one fused e5rt program (a batch is padded to one length and shares it).
 - **Only numpy + aneforge are needed** — the `sentence-transformers` package is *not* imported. This mirrors its `.encode` surface; it does not wrap it.
 - Pooling mode and L2-normalise are read from the model's own config (below), so a mean-pooled model (MiniLM, E5) and a cls-pooled model (BGE, GTE) both come out correct.
 - The `device` argument is accepted for signature parity and ignored — the encoder always runs on the Neural Engine.
