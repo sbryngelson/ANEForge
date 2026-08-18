@@ -25,6 +25,11 @@ logits = model.prefill(prompt_ids)                # next-token logits [1, vocab]
 - `af.LlamaPrefill(cfg, weights)` / `af.LlamaConfig` - build from numpy weights directly.
   `af.rope` / `af.prefill_block` are the building blocks.
 
+`LlamaPrefill` accepts `ane_lm_head=False` (default). When `True`, the lm_head runs on the ANE as
+a tiled `compile_multi` instead of a host fp32 matmul. This saves host memory (GPT-2: ~206 MB)
+but changes numerics (fp16 vs fp32 matmul), so greedy argmax may differ on close ties. Pass
+`ane_lm_head=True` to `__init__` or as a per-call override in `generate(..., ane_lm_head=True)`.
+
 ## Prefill and decode
 
 `generate()` prefills the prompt, then runs a greedy decode loop with a resident KV-cache: each
