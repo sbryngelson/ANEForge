@@ -30,3 +30,10 @@ def chunk_text(text: str, source: str, size: int = 800, overlap: int = 160) -> l
       break
     i += step
   return chunks
+
+
+def top_k(query_vec: np.ndarray, corpus: np.ndarray, k: int) -> list[int]:
+  """Indices of the top `k` corpus rows by cosine similarity to `query_vec`
+  (dot product, since both sides are L2-normalized), highest first."""
+  scores = corpus @ query_vec
+  return np.argsort(scores)[::-1][:k].tolist()
