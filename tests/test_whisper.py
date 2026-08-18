@@ -45,3 +45,29 @@ def test_whisper_encoder_matches_hf():
     ref = hf.model.encoder(mel).last_hidden_state[0].numpy()
   cos = float((feat.ravel() @ ref.ravel()) / (np.linalg.norm(feat) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99, f"encoder cosine {cos}"
+
+
+@requires_ane
+def test_whisper_transcribes_like_hf():
+  import io
+
+  import soundfile as sf
+  import torch
+  from datasets import Audio, load_dataset
+  from transformers import WhisperForConditionalGeneration, WhisperProcessor
+
+  from aneforge.models import load_whisper
+  # decode=False keeps the raw FLAC bytes so we read them with soundfile (the dataset's own decoder
+  # needs torchcodec); librispeech-dummy is already 16 kHz mono, matching Whisper's expected rate.
+  ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean",
+                    split="validation").cast_column("audio", Audio(decode=False))
+  a = ds[0]["audio"]
+  data, _ = sf.read(io.BytesIO(a["bytes"]) if a.get("bytes") else a["path"])
+  audio = np.asarray(data, dtype=np.float32)
+  text = load_whisper("openai/whisper-base.en").transcribe(audio)
+  proc = WhisperProcessor.from_pretrained("openai/whisper-base.en")
+  hf = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base.en").eval()
+  feats = proc(audio, sampling_rate=16000, return_tensors="pt").input_features
+  with torch.no_grad():
+    ref = proc.batch_decode(hf.generate(feats), skip_special_tokens=True)[0]
+  assert text.strip().lower() == ref.strip().lower(), f"\nane: {text!r}\nhf:  {ref!r}"

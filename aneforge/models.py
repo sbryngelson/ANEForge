@@ -8,7 +8,7 @@ import numpy as np
 
 from .graph import Tensor, concat, conv, cross_attention, input, mha, space_to_depth, _const
 from .autograd import conv2d, conv_param, parameter
-from ._compile import Model, SegmentedModel, MultiModel, compile
+from ._compile import Model, SegmentedModel, MultiModel, compile, compile_multi
 from . import _targets
 
 _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
@@ -841,6 +841,46 @@ class Whisper:
     """Audio features [1500, D] on the ANE for a 16 kHz mono clip (truncated/padded to 30 s)."""
     mel = self._features(audio).reshape(1, self.n_mels, 1, 3000)
     return np.asarray(self._encoder(mel), np.float32)
+
+  def _build_decoder(self) -> MultiModel:
+    S = self.MAX_DEC
+    emb = input((S, self.D))                                  # token+position embedding (host gather)
+    mask = input((1, S, S))                                   # causal + key-padding additive mask
+    audio = input((1500, self.D))                             # encoder features (cross-attn K/V)
+    h = emb
+    for w in self._dec_layers:
+      s = mha(h.layer_norm(w["ln1w"], w["ln1b"]), w["Wq"], w["bq"], w["Wk"], None,
+              w["Wv"], w["bv"], w["Wo"], w["bo"], self.H, mask=mask)
+      h = h + s
+      c = cross_attention(h.layer_norm(w["cln_w"], w["cln_b"]), audio,
+                          w["CWq"], w["CWk"], w["CWv"], w["CWo"], self.H,
+                          bq=w["Cbq"], bk=None, bv=w["Cbv"], bo=w["Cbo"])
+      h = h + c
+      f = h.layer_norm(w["ln2w"], w["ln2b"]).linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
+      h = h + f
+    h = h.layer_norm(self._dec_lnw, self._dec_lnb)
+    tiles = _lm_head_tiles(h, self._dec_tok)                  # tied head -> logits [S, vocab] (tiled by family)
+    return compile_multi(tiles)
+
+  def transcribe(self, audio: np.ndarray) -> str:
+    """Greedy English transcript of a 16 kHz mono clip, both towers on the ANE."""
+    if self._decoder is None:
+      self._decoder = self._build_decoder()
+    feats = self.encode(audio)
+    S = self.MAX_DEC
+    causal = np.triu(np.full((S, S), -1e4, np.float32), 1)    # query i attends to keys <= i
+    ids = list(self.sot)
+    while len(ids) < S:
+      n = len(ids)
+      emb = np.zeros((S, self.D), np.float32)
+      emb[:n] = self._dec_tok[ids] + self._dec_pos[:n]        # token + learned positional embedding
+      out = self._decoder(emb, causal.reshape(1, S, S), feats)
+      logits = _logits_from(self._decoder, out)               # [S, vocab]
+      nxt = int(np.argmax(logits[n - 1]))
+      ids.append(nxt)
+      if nxt == self.eot:
+        break
+    return self.proc.tokenizer.decode(ids[len(self.sot):], skip_special_tokens=True)
 
   def release(self) -> None:
     self._encoder.release()
