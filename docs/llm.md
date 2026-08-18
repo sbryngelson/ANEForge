@@ -25,10 +25,22 @@ logits = model.prefill(prompt_ids)                # next-token logits [1, vocab]
 - `af.LlamaPrefill(cfg, weights)` / `af.LlamaConfig` - build from numpy weights directly.
   `af.rope` / `af.prefill_block` are the building blocks.
 
-`LlamaPrefill` accepts `ane_lm_head=False` (default). When `True`, the lm_head runs on the ANE as
-a tiled `compile_multi` instead of a host fp32 matmul. This saves host memory (GPT-2: ~206 MB)
-but changes numerics (fp16 vs fp32 matmul), so greedy argmax may differ on close ties. Pass
-`ane_lm_head=True` to `__init__` or as a per-call override in `generate(..., ane_lm_head=True)`.
+### lm_head on the ANE
+
+`ane_lm_head=True` (default `False`) runs the lm_head on the ANE as a `compile_multi` tiled along
+vocab, instead of the host fp32 matmul. Pass it to `af.load_llm` or `af.LlamaPrefill`, or per call
+as `generate(..., ane_lm_head=True)`. Measured on an M2 Pro (macOS 26.5.2, fp16), median of 3 runs:
+
+| model | lm_head host | lm_head ANE | decode host | decode ANE |
+|---|---|---|---|---|
+| gpt2-medium (vocab 50257, 4 tiles) | 10.8 ms/tok | 3.4 ms/tok | 39.6 tok/s | 59.4 tok/s |
+| Qwen3-0.6B (vocab 151936, 10 tiles) | 30.1 ms/tok | 8.2 ms/tok | 17.8 tok/s | 29.3 tok/s |
+
+It also drops the `_lmT` host allocation (GPT-2: 206 MB, Qwen3-0.6B: 622 MB). The trade-off is fp16
+matmul numerics instead of fp32, so greedy argmax can differ on close ties (it did not on either
+model above, 64/64 tokens); and when the head is tied to `embed`, the ANE program bakes a second
+copy of those weights. The default stays `False` for that reason. `warmup(max_len)` compiles the
+head too when the flag is set on the model, keeping the compile out of the first token.
 
 ## Prefill and decode
 
