@@ -8,7 +8,7 @@ import numpy as np
 
 from .graph import Tensor, concat, conv, input, mha, space_to_depth, _const
 from .autograd import conv2d, conv_param, parameter
-from ._compile import Model, SegmentedModel, MultiModel, compile
+from ._compile import Model, SegmentedModel, MultiModel, compile, compile_multi
 from . import _targets
 
 _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
@@ -501,6 +501,31 @@ def _gpt2_layers(sd: dict, L: int, D: int, Dff: int) -> list[dict]:
   return layers
 
 
+def _whisper_layers(sd: dict, prefix: str, n: int) -> list[dict]:
+  """Per-layer numpy weights for the Whisper encoder/decoder graphs. HF linear weights are [out, in]
+  and used as-is by `.linear()`. Whisper's k_proj carries no bias, so bk/Cbk are omitted. A decoder
+  layer additionally carries the cross-attention set (C*) and its layer norm (cln)."""
+  out = []
+  for i in range(n):
+    p = f"model.{prefix}.layers.{i}."
+    g = lambda k: sd[p + k]
+    w = {"Wq": g("self_attn.q_proj.weight"), "bq": g("self_attn.q_proj.bias"),
+         "Wk": g("self_attn.k_proj.weight"),
+         "Wv": g("self_attn.v_proj.weight"), "bv": g("self_attn.v_proj.bias"),
+         "Wo": g("self_attn.out_proj.weight"), "bo": g("self_attn.out_proj.bias"),
+         "ln1w": g("self_attn_layer_norm.weight"), "ln1b": g("self_attn_layer_norm.bias"),
+         "Wi": g("fc1.weight"), "bi": g("fc1.bias"), "Wd": g("fc2.weight"), "bd": g("fc2.bias"),
+         "ln2w": g("final_layer_norm.weight"), "ln2b": g("final_layer_norm.bias")}
+    if prefix == "decoder":
+      w.update({"CWq": g("encoder_attn.q_proj.weight"), "Cbq": g("encoder_attn.q_proj.bias"),
+                "CWk": g("encoder_attn.k_proj.weight"),
+                "CWv": g("encoder_attn.v_proj.weight"), "Cbv": g("encoder_attn.v_proj.bias"),
+                "CWo": g("encoder_attn.out_proj.weight"), "Cbo": g("encoder_attn.out_proj.bias"),
+                "cln_w": g("encoder_attn_layer_norm.weight"), "cln_b": g("encoder_attn_layer_norm.bias")})
+    out.append(w)
+  return out
+
+
 def _gelu_new(x: Tensor) -> Tensor:
   """GPT-2's tanh-approximated GELU, composed from native ops (mirrors the ONNX
   `approximate="tanh"` handler, aneforge/onnx.py:352-360)."""
@@ -750,6 +775,174 @@ class CLIP:
   def release(self) -> None:
     self._v_model.release()
     self._t_model.release()
+
+
+def load_whisper(name: str = "openai/whisper-base.en") -> "Whisper":
+  """Load a Hugging Face Whisper speech-to-text model with both towers (audio encoder + text
+  decoder) running on the ANE. `Whisper(name).transcribe(audio)` -> greedy English transcript."""
+  return Whisper(name)
+
+
+class Whisper:
+  """OpenAI Whisper (encoder-decoder ASR) on the ANE. The audio encoder is one fused program run once per
+  clip; the text decoder is one fused single-token program run per greedy step against a resident KV cache
+  (self-attention caches grow on the ANE; each layer's cross-attention K/V over the audio is computed once per
+  clip and held resident). Greedy decoding replicates Hugging Face's forced-prompt and logit-suppression rules,
+  so it matches `generate`. Host-side log-mel and tokenization only. Default `whisper-base.en`.
+  `.transcribe(audio)` -> str; `.encode(audio)` -> audio features [1500, 512]."""
+
+  def __init__(self, name: str = "openai/whisper-base.en") -> None:
+    from transformers import AutoConfig, GenerationConfig, WhisperForConditionalGeneration, WhisperProcessor  # lazy
+    cfg = AutoConfig.from_pretrained(name)
+    if getattr(cfg, "model_type", None) != "whisper":
+      raise ValueError(f"load_whisper: {name!r} is not a Whisper model (model_type={cfg.model_type!r})")
+    self.proc = WhisperProcessor.from_pretrained(name)
+    gen = GenerationConfig.from_pretrained(name)
+    sd = {k: v.detach().numpy().astype(np.float16)
+          for k, v in WhisperForConditionalGeneration.from_pretrained(name).state_dict().items()}
+    self.D, self.H = cfg.d_model, cfg.encoder_attention_heads
+    self.dec_heads = cfg.decoder_attention_heads
+    self.n_mels, self.vocab = cfg.num_mel_bins, cfg.vocab_size
+    self.max_dec = cfg.max_target_positions                   # resident KV-cache length (== HF's max decode length)
+    # The decode prompt and logit rules come from the checkpoint's generation config, so a non-.en Whisper gets
+    # the right start tokens and suppressions rather than hardcoded English ids.
+    forced = getattr(gen, "forced_decoder_ids", None) or []
+    self.sot = [cfg.decoder_start_token_id] + [int(t) for _, t in sorted(forced)]      # e.g. [sot, notimestamps]
+    self.suppress = np.asarray(gen.suppress_tokens or [], dtype=np.int64)              # forced to -inf every step
+    self.begin_suppress = np.asarray(gen.begin_suppress_tokens or [], dtype=np.int64)  # ... only the first token
+    self.eot = cfg.eos_token_id                               # <|endoftext|>
+    g = lambda k: sd[k]
+    self._enc_conv1 = g("model.encoder.conv1.weight").reshape(self.D, self.n_mels, 1, 3)
+    self._enc_conv1_b = g("model.encoder.conv1.bias")
+    self._enc_conv2 = g("model.encoder.conv2.weight").reshape(self.D, self.D, 1, 3)
+    self._enc_conv2_b = g("model.encoder.conv2.bias")
+    self._enc_pos = g("model.encoder.embed_positions.weight")           # [1500, D] sinusoidal
+    self._enc_lnw, self._enc_lnb = g("model.encoder.layer_norm.weight"), g("model.encoder.layer_norm.bias")
+    self._enc_layers = _whisper_layers(sd, "encoder", cfg.encoder_layers)
+    self._dec_tok = g("model.decoder.embed_tokens.weight")              # [vocab, D], tied to proj_out
+    self._dec_pos = g("model.decoder.embed_positions.weight")          # [max_target_positions, D] learned
+    self._dec_lnw, self._dec_lnb = g("model.decoder.layer_norm.weight"), g("model.decoder.layer_norm.bias")
+    self._dec_layers = _whisper_layers(sd, "decoder", cfg.decoder_layers)
+    self._encoder = self._build_encoder()
+    self._decoder = None                                       # decode program built on first transcribe
+
+  def _build_encoder(self) -> Model | SegmentedModel:
+    mel = input((1, self.n_mels, 1, 3000))                    # log-mel as a 1xT "image" for the 1D convs
+    h = conv(mel, self._enc_conv1, pad=(0, 0, 1, 1), bias=self._enc_conv1_b).gelu()      # [1, D, 1, 3000]
+    h = conv(h, self._enc_conv2, stride=2, pad=(0, 0, 1, 1), bias=self._enc_conv2_b).gelu()  # [1, D, 1, 1500]
+    h = h.reshape(self.D, 1500).transpose([1, 0]) + self._enc_pos    # [1500, D] + sinusoidal positions
+    for w in self._enc_layers:
+      a = mha(h.layer_norm(w["ln1w"], w["ln1b"]), w["Wq"], w["bq"], w["Wk"], None,
+              w["Wv"], w["bv"], w["Wo"], w["bo"], self.H)
+      h = h + a
+      f = h.layer_norm(w["ln2w"], w["ln2b"]).linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
+      h = h + f
+    return compile(h.layer_norm(self._enc_lnw, self._enc_lnb))
+
+  def _features(self, audio: np.ndarray) -> np.ndarray:
+    """Host log-mel [n_mels, 3000] via the Whisper feature extractor (no ANE)."""
+    audio = np.asarray(audio, dtype=np.float32)
+    mel = self.proc.feature_extractor(audio, sampling_rate=16000, return_tensors="np")["input_features"]
+    return np.asarray(mel, np.float32).reshape(self.n_mels, 3000)
+
+  def encode(self, audio: np.ndarray) -> np.ndarray:
+    """Audio features [1500, D] on the ANE for a 16 kHz mono clip (truncated/padded to 30 s)."""
+    mel = self._features(audio).reshape(1, self.n_mels, 1, 3000)
+    return np.asarray(self._encoder(mel), np.float32)
+
+  def _build_decode_step(self) -> dict:
+    """One fused single-token decode program with a resident KV cache (built once, cached). Self-attention
+    reads/writes a resident `[H, M, dh]` cache via a one-hot positional write (`Kout = Kin*inv + k*oh`, the
+    `_attn_decode` pattern); cross-attention reads resident audio K/V set once per clip; each cache output is
+    aliased back to its input with `share_buffer` so it stays on the ANE across steps. Returns the port map."""
+    M, D, H, dh = self.max_dec, self.D, self.dec_heads, self.D // self.dec_heads
+    scale = 1.0 / dh ** 0.5
+    x = input((1, D))                                          # this step's token+position embedding
+    oh = input((1, M, 1)); inv = input((1, M, 1))             # one-hot write to the current position (inv = 1 - oh)
+    mask = input((1, 1, M))                                    # causal: 0 on keys <= pos, -1e4 beyond
+    h = x
+    pairs, cross = [], []
+    for w in self._dec_layers:
+      Kin = input((H, M, dh)); Vin = input((H, M, dh))         # resident self-attn cache
+      CKin = input((1500, D)); CVin = input((1500, D))         # resident cross-attn K/V (set once per clip)
+      xn = h.layer_norm(w["ln1w"], w["ln1b"])
+      q = xn.linear(w["Wq"], w["bq"]).reshape(H, 1, dh)
+      k = xn.linear(w["Wk"], None).reshape(H, 1, dh)           # k_proj has no bias
+      v = xn.linear(w["Wv"], w["bv"]).reshape(H, 1, dh)
+      Kout = Kin * inv + k * oh; Vout = Vin * inv + v * oh      # positional write into the resident cache
+      sc = ((q @ Kout.transpose([0, 2, 1])) * scale + mask).softmax(-1)   # [H, 1, M]
+      a = (sc @ Vout).transpose([1, 0, 2]).reshape(1, D)                   # [H,1,dh] -> [1, D]
+      h = h + a.linear(w["Wo"], w["bo"])
+      pairs += [(Kout, Kin), (Vout, Vin)]
+      cn = h.layer_norm(w["cln_w"], w["cln_b"])
+      cq = cn.linear(w["CWq"], w["Cbq"]).reshape(H, 1, dh)
+      ck = CKin.reshape(1500, H, dh).transpose([1, 0, 2])       # [H, 1500, dh]
+      cv = CVin.reshape(1500, H, dh).transpose([1, 0, 2])
+      cs = ((cq @ ck.transpose([0, 2, 1])) * scale).softmax(-1)             # [H, 1, 1500]
+      ca = (cs @ cv).transpose([1, 0, 2]).reshape(1, D)
+      h = h + ca.linear(w["CWo"], w["Cbo"])
+      cross.append((CKin, CVin))
+      f = h.layer_norm(w["ln2w"], w["ln2b"]).linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
+      h = h + f
+    h = h.layer_norm(self._dec_lnw, self._dec_lnb)
+    tiles = _lm_head_tiles(h, self._dec_tok)                   # tied head -> logits [1, vocab] (tiled by family)
+    net = compile_multi(tiles + [o for o, _ in pairs])
+    inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
+    for o, i in pairs:                                         # alias each cache output back to its input (resident)
+      net.prog.share_buffer(0, om[o], 0, inm[id(i)])
+    return {"net": net, "x": inm[id(x)], "oh": inm[id(oh)], "inv": inm[id(inv)], "mask": inm[id(mask)],
+            "logits": [om[t] for t in tiles], "states": {inm[id(i)]: i.shape for _, i in pairs},
+            "cross": [(inm[id(ck)], inm[id(cv)]) for ck, cv in cross]}
+
+  def transcribe(self, audio: np.ndarray) -> str:
+    """Greedy transcript of a 16 kHz mono clip, both towers on the ANE. The decoder runs one token per step
+    against a resident KV cache: self-attention caches grow on the ANE, and each layer's cross-attention K/V
+    over the audio is computed once per clip and held resident. Greedy selection applies Hugging Face's forced
+    prompt and logit suppressions, so the transcript matches `generate` (up to `max_dec` tokens)."""
+    if self._decoder is None:
+      self._decoder = self._build_decode_step()
+    d = self._decoder; prog = d["net"].prog
+    M = self.max_dec
+    feats = self.encode(audio)                                # [1500, D] fp32 (fast BLAS for the projection below)
+    for name, shape in d["states"].items():                   # reset the self-attn caches for this clip
+      prog.set_input(name, np.zeros(shape, np.float16))
+    for (ckn, cvn), w in zip(d["cross"], self._dec_layers):   # cross-attn K/V, computed once and held resident
+      ck = feats @ w["CWk"].T.astype(np.float32)              # fp32 matmul (fp16 numpy has no BLAS path); k_proj no bias
+      cv = feats @ w["CWv"].T.astype(np.float32) + w["Cbv"].astype(np.float32)
+      prog.set_input(ckn, ck.astype(np.float16)); prog.set_input(cvn, cv.astype(np.float16))
+
+    def step(tok: int, pos: int) -> np.ndarray:
+      emb = (self._dec_tok[tok] + self._dec_pos[pos]).astype(np.float16)[None]   # [1, D]
+      ohv = np.zeros((1, M, 1), np.float16); ohv[0, pos, 0] = 1.0
+      invv = np.ones((1, M, 1), np.float16); invv[0, pos, 0] = 0.0
+      mv = np.full((1, 1, M), -1e4, np.float16); mv[..., :pos + 1] = 0.0
+      prog.set_input(d["x"], emb); prog.set_input(d["oh"], ohv)
+      prog.set_input(d["inv"], invv); prog.set_input(d["mask"], mv)
+      prog.execute()
+      logits = np.concatenate([np.asarray(prog.read_output(n), np.float32) for n in d["logits"]], axis=1)[0]
+      logits[self.suppress] = -np.inf                          # HF SuppressTokensLogitsProcessor (every step)
+      return logits
+
+    ids = list(self.sot)
+    for p, tok in enumerate(ids[:-1]):                        # prime the cache with the start tokens
+      step(tok, p)
+    cur, pos = ids[-1], len(ids) - 1
+    first = True
+    while len(ids) < M:
+      logits = step(cur, pos)
+      if first:                                                # HF begin-suppress: no leading space / immediate EOT
+        logits[self.begin_suppress] = -np.inf; first = False
+      nxt = int(np.argmax(logits))
+      ids.append(nxt)
+      if nxt == self.eot:
+        break
+      cur, pos = nxt, pos + 1
+    return self.proc.tokenizer.decode(ids[len(self.sot):], skip_special_tokens=True)
+
+  def release(self) -> None:
+    self._encoder.release()
+    if self._decoder is not None:
+      self._decoder["net"].release()
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):

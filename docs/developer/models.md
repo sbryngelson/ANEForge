@@ -102,6 +102,23 @@ Both towers compile as fused ANE programs:
 
 `examples/clip_zero_shot.py` demonstrates zero-shot image classification end-to-end on the ANE with ranking and probability comparison against Hugging Face PyTorch.
 
+## load_whisper() — speech to text
+
+`af.load_whisper()` loads a Hugging Face Whisper checkpoint (default `openai/whisper-base.en`) and runs both towers — the audio encoder and the autoregressive text decoder — on the ANE:
+
+```python
+w = af.load_whisper("openai/whisper-base.en")
+text = w.transcribe(audio)         # 16 kHz mono float32 waveform -> greedy English transcript
+feats = w.encode(audio)            # audio features [1500, 512] (the encoder alone)
+```
+
+- **Encoder** (one fused program, run once per clip): the two Whisper conv layers (the strided `conv2` runs directly on the ANE), sinusoidal positional embedding, six pre-norm blocks, final layer norm -> audio features `[1500, 512]`.
+- **Decoder** (one fused single-token program with a resident KV cache): token + learned positional embedding (host gather), six pre-norm blocks of causal self-attention against a resident `[H, M, dh]` cache (the one-hot positional write the LLM runner uses) + cross-attention to the audio features + a GELU MLP, then the tied `lm_head`. Each layer's cross-attention K/V over the audio is computed once per clip and held resident, so decode never re-projects the 1500 audio frames. Whisper's `k_proj` carries no bias.
+- Host-side only: the log-mel spectrogram (Whisper's `WhisperFeatureExtractor`) and tokenization, the same split as tokenization for the LLM loaders.
+- Greedy decoding reads the start prompt and the logit suppressions (`suppress_tokens`, `begin_suppress_tokens`) from the checkpoint's generation config, so `transcribe` reproduces `generate` rather than assuming English ids. The resident cache holds up to `max_target_positions` (448) tokens, Whisper's own decode ceiling.
+
+Scope: greedy, no timestamps; the `.en` default is English. `examples/whisper.py` transcribes a sample clip and validates the encoder features (cosine) and the greedy transcript against Hugging Face.
+
 ## Weight layout: He init is layout-dependent
 
 `_he` (He/Kaiming-normal init) computes `fan_in` from the weight layout, which differs between conv and fc weights:
