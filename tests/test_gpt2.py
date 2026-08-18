@@ -7,9 +7,10 @@ import numpy as np
 import pytest
 
 import aneforge as af
+import aneforge.models as models
 from aneforge._compile import _lower_fused_to_dir
 from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles, GPT2
-from aneforge.llm import _gpt2_adapter, LlamaPrefill, ModelType
+from aneforge.llm import _gpt2_adapter, LlamaConfig, LlamaPrefill, ModelType
 from _helpers import requires_ane
 
 
@@ -61,16 +62,51 @@ def test_gpt2_conv1d_mapping_orientation():
   assert np.array_equal(w["bv"], c[p + "attn.c_attn.bias"][2 * D:3 * D])
 
 
-def test_gpt2_lm_head_tiles_shapes():
-  """A 50257-vocab tied head tiles into ceil(50257/16384) = 4 output-port matmuls, the last
-  tile short; a small vocab stays a single tile."""
+def test_gpt2_lm_head_tiles_shapes(monkeypatch):
+  """A 50257-vocab tied head tiles to fit the target family's max tensor dim: four output-port
+  matmuls at the A13-A15 cap (16384, last tile short), one tile at the A16+ cap (65536). Mock the
+  cap so the result does not depend on which chip runs the test; a small vocab is always one tile."""
+  from aneforge import _targets
   h = af.input((1, 1024))
-  wte = np.zeros((50257, 1024), np.float32)
-  tiles = _lm_head_tiles(h, wte.astype(np.float16))
+  wte = np.zeros((50257, 1024), np.float16)
+
+  monkeypatch.setattr(_targets, "limit", lambda *_a, **_k: 16384)   # A13-A15
+  tiles = _lm_head_tiles(h, wte)
   assert [t.shape for t in tiles] == [(1, 16384), (1, 16384), (1, 16384), (1, 1105)]
   assert all(t.op == "matmul" for t in tiles)
+
+  monkeypatch.setattr(_targets, "limit", lambda *_a, **_k: 65536)   # A16+: 50257 fits one tile
+  assert [t.shape for t in _lm_head_tiles(h, wte)] == [(1, 50257)]
+
   small = _lm_head_tiles(h, np.zeros((1000, 1024), np.float16))
   assert len(small) == 1 and small[0].shape == (1, 1000)
+
+
+def test_gpt2_lm_head_tiles_follow_target_family(monkeypatch):
+  """A16+ can keep GPT-2's vocabulary in one output tile; earlier families retain four."""
+  h = af.input((1, 1024))
+  wte = np.zeros((50257, 1024), np.float16)
+  monkeypatch.setattr(models._targets, "detect_family", lambda: 5)
+  assert [t.shape for t in models._lm_head_tiles(h, wte)] == [(1, 50257)]
+  monkeypatch.setattr(models._targets, "detect_family", lambda: 3)
+  assert [t.shape for t in models._lm_head_tiles(h, wte)] == [(1, 16384), (1, 16384), (1, 16384), (1, 1105)]
+
+
+def test_logits_caches_contiguous_fp32():
+  """`_logits` builds a contiguous fp32 lm_head transpose once (skipping the per-call fp16->fp32
+  conversion of a strided view). The result is bit-identical to the previous per-call matmul
+  (`h @ np.asarray(lm_head).T`), and the cache is reused, not rebuilt, across calls."""
+  rng = np.random.default_rng(0)
+  cfg = LlamaConfig(dim=16, n_layers=2, n_heads=4, n_kv_heads=4, ffn_dim=64, vocab=100)
+  w = {"lm_head": rng.standard_normal((100, 16)).astype(np.float16), "layers": []}
+  model = LlamaPrefill(cfg, w)
+  h = rng.standard_normal(16).astype(np.float32)
+  expected = h @ np.asarray(w["lm_head"]).T          # the pre-cache matmul, unchanged numerics
+  assert np.array_equal(model._logits(h), expected)
+  first = model._lmT
+  assert first is not None and first.dtype == np.float32 and first.flags["C_CONTIGUOUS"]
+  model._logits(h)          # second call reuses the cached transpose
+  assert model._lmT is first
 
 
 def test_gpt2_generate_text_decodes_generated_tokens():
@@ -125,6 +161,8 @@ def test_llama_prefill_check_positions_rejects_beyond_wpe():
     model._hidden(np.arange(11, dtype=np.int64))
   with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
     model.generate([1, 2, 3], max_new_tokens=4, max_len=20)
+  with pytest.raises(ValueError, match="exceeds this model's 10 max positions"):
+    model.warmup(20)   # warmup goes straight to _decoder; must hit the same guard
 
 
 def test_llama_prefill_release_clears_state():
@@ -147,9 +185,11 @@ def test_llama_prefill_release_clears_state():
   model._seq = 5
   model._dec = {"M": 20, "chunks": [{"net": chunk_net}]}
   model._pre = {"seq": 5, "chunks": [{"net": chunk_net}]}
+  model._lmT = object()          # the cached host lm_head transpose must be dropped too
   model.release()
   assert net.released and chunk_net.released
   assert model._net is None and model._seq == 0 and model._dec is None and model._pre is None
+  assert model._lmT is None
 
 
 def test_gpt2_adapter_mapping():

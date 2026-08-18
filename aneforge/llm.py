@@ -8,6 +8,7 @@ the plan + canonical weights - not new branches in the hot path."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
+import time
 import numpy as np
 
 from .graph import Tensor, input as _input, concat as _concat, _const
@@ -248,22 +249,26 @@ _DECODE_CTX = ("oh", "inv", "mask", "cosp", "sinp")
 class LlamaPrefill:
   """A decoder compiled for the ANE. `compile(seq)` builds the prefill graph for a fixed prompt length;
   `prefill(token_ids)` returns next-token logits; `generate(...)` does resident-KV-cache decode. Weights are
-  a dict of numpy arrays (see `from_pretrained`)."""
+  a dict of numpy arrays (see `from_pretrained`). The host `lm_head` keeps a cached fp32 transpose
+  (`_lmT`): for large vocabularies this is the runner's biggest host allocation (GPT-2 ~206 MB, a
+  151936x4096 head ~2.5 GB), freed by `release()`."""
   def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None; self._pre = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
+    self._lmT = None               # cached contiguous fp32 lm_head^T (host matmul); built on first use
 
   def release(self) -> None:
-    """Release every compiled program (prefill, decode chunks, batched-prefill chunks) and clear the cached
-    state, so a subsequent call transparently recompiles instead of replaying a freed program."""
+    """Release every compiled program (prefill, decode chunks, batched-prefill chunks), the cached host
+    `_lmT` transpose, and the cached state, so a subsequent call transparently recompiles instead of
+    replaying a freed program or stale buffers."""
     if self._net is not None:
       self._net.release()
     if self._dec is not None:
       for c in self._dec["chunks"]: c["net"].release()
     if self._pre is not None:
       for c in self._pre["chunks"]: c["net"].release()
-    self._net, self._seq, self._dec, self._pre = None, 0, None, None
+    self._net, self._seq, self._dec, self._pre, self._lmT = None, 0, None, None, None
 
   def _check_positions(self, n: int) -> None:
     """Raise a clear error instead of an out-of-bounds `wpe` index/broadcast failure when `n` exceeds a
@@ -306,7 +311,13 @@ class LlamaPrefill:
     return np.asarray(net(emb.astype(np.float16))).astype(np.float32)
 
   def _logits(self, hidden_row):
-    return hidden_row @ np.asarray(self.w["lm_head"]).T    # host lm_head (vocab can exceed the ANE per-op dim limit)
+    lm = self._lmT
+    if lm is None:
+      # Build once: NumPy has no fp16 BLAS, and a live `.T` view is strided, so a per-call
+      # `hidden @ lm_head.T` re-converts the (fp16) weight to fp32 every token (~124ms on a
+      # 50k vocab). A contiguous fp32 copy of the transpose is converted once and is ~10x faster.
+      lm = self._lmT = np.ascontiguousarray(np.asarray(self.w["lm_head"]).T, np.float32)
+    return hidden_row @ lm
 
   @staticmethod
   def _sample(logits, temperature, top_p, top_k):
@@ -341,6 +352,7 @@ class LlamaPrefill:
     are split into chunks under the ANE single-program weight ceiling (`_layer_chunks`); each mixer keeps its
     resident state (KV cache, ...) on the ANE across `execute` via `share_buffer`, and the hidden state chains
     chunk->chunk. Mixers own their state, so the runner is agnostic to the mixer type."""
+    self._check_positions(int(M))
     if self._dec is not None and self._dec["M"] == M: return self._dec
     if self._dec is not None:
       for c in self._dec["chunks"]: c["net"].release()
@@ -352,6 +364,10 @@ class LlamaPrefill:
       ctx = {"oh": _input((1, M, 1)), "inv": _input((1, M, 1)), "mask": _input((1, 1, M)),
              "cosp": _input((1, dh)), "sinp": _input((1, dh))}
       h = x; pairs = []
+      wpe_pos = None
+      if gi == 0 and "wpe" in self.w:
+        wpe_pos = _input((1, M))
+        h = h + wpe_pos @ _const(self.w["wpe"][:M].astype(np.float16))
       for li in grp:
         ls = self._spec(li); lw = self.w["layers"][li]
         h, sp = DECODE_MIXERS[ls.mixer](h, lw, cfg, ls, ctx, M)
@@ -365,6 +381,7 @@ class LlamaPrefill:
       for o, i in pairs:                                        # alias each state output -> its input (resident)
         net.prog.share_buffer(0, om[o], 0, inm[id(i)])
       p = {"x": inm[id(x)], "h": om[h], "states": {inm[id(i)]: i.shape for _, i in pairs}}
+      if wpe_pos is not None: p["wpe_pos"] = inm[id(wpe_pos)]
       for k, t in ctx.items():
         if id(t) in inm: p[k] = inm[id(t)]                      # only ports the chunk's mixers actually use
       chunks.append({"net": net, "p": p})
@@ -452,14 +469,18 @@ class LlamaPrefill:
         c["net"].prog.set_input(port, buf)
 
   def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None,
-               temperature=0.0, top_p=1.0, top_k=0, batched_prefill=True, prefill_pad=None):
+               temperature=0.0, top_p=1.0, top_k=0, batched_prefill=True, prefill_pad=None, on_stage=None):
     """Autoregressive generation with a resident KV-cache. The decode program (compiled once and cached) runs
     all layers for one token attending to caches that stay on the ANE across steps, so each step feeds only the
     token embedding + a position one-hot. `on_token(id)` is called per token (streaming). Greedy by default
-    (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids."""
+    (`temperature=0`); pass temperature/top_p/top_k to sample. Returns the generated token ids.
+
+    `on_stage(name, elapsed)` receives per-token timing (seconds) when profiling: `embedding` and `layers`
+    are the two halves of one decode step (the `step` stage times the whole call, so summing all stages
+    double-counts `step`), then `lm_head` and `sample`. Only emitted while profiling is on."""
     cfg = self.cfg; f16 = np.float16
+    profiling = on_stage is not None
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
-    self._check_positions(M)
     eos = {int(eos_id)} if isinstance(eos_id, int) else {int(e) for e in (eos_id or ())}   # any-of stop set
     d = self._decoder(M); chunks = d["chunks"]
     for c in chunks:                                           # reset every mixer's resident state for this generation
@@ -472,16 +493,21 @@ class LlamaPrefill:
       vals = {"oh": ohv, "inv": invv, "mask": mv}
       if d["cos"] is not None:
         vals["cosp"] = d["cos"][pos][None]; vals["sinp"] = d["sin"][pos][None]
+      t0 = time.perf_counter() if profiling else 0.0
       emb = self.w["embed"][tok]
-      if "wpe" in self.w:
-        emb = emb + self.w["wpe"][pos]
       h = np.asarray(emb)[None].astype(f16)
+      wpe_pos = np.zeros((1, M), f16) if "wpe" in self.w else None
+      if wpe_pos is not None: wpe_pos[0, pos] = 1.0
+      if on_stage is not None: on_stage("embedding", time.perf_counter() - t0)
+      t0 = time.perf_counter() if profiling else 0.0
       for c in chunks:                                         # hidden flows chunk -> chunk (cheap [1,dim] round-trip)
         p = c["p"]; pr = c["net"].prog
         pr.set_input(p["x"], h)
         for k in _DECODE_CTX:
           if k in p: pr.set_input(p[k], vals[k])
+        if "wpe_pos" in p: pr.set_input(p["wpe_pos"], wpe_pos)
         pr.execute(); h = np.asarray(pr.read_output(p["h"])).astype(f16)
+      if on_stage is not None: on_stage("layers", time.perf_counter() - t0)
       return h.reshape(cfg.dim).astype(np.float32)
     use_batched = (batched_prefill and len(prompt) > 1
                    and not hasattr(self.w["layers"], "free")     # streamed weights are freed by _decoder; can't re-bake
@@ -499,7 +525,13 @@ class LlamaPrefill:
       cur, pos = prompt[-1], len(prompt) - 1
     while len(out) < max_new_tokens:                           # decode
       if pos >= M - 1: break                                   # cache full
-      nxt = self._sample(self._logits(step(cur, pos)), temperature, top_p, top_k); out.append(nxt)
+      t0 = time.perf_counter() if profiling else 0.0; hidden = step(cur, pos)
+      if on_stage is not None: on_stage("step", time.perf_counter() - t0)
+      t0 = time.perf_counter() if profiling else 0.0; logits = self._logits(hidden)
+      if on_stage is not None: on_stage("lm_head", time.perf_counter() - t0)
+      t0 = time.perf_counter() if profiling else 0.0; nxt = self._sample(logits, temperature, top_p, top_k)
+      if on_stage is not None: on_stage("sample", time.perf_counter() - t0)
+      out.append(nxt)
       if nxt in eos: break
       if on_token is not None: on_token(nxt)                   # stream the token
       cur, pos = nxt, pos + 1
