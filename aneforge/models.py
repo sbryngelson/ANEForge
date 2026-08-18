@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .graph import Tensor, concat, conv, input, mha, space_to_depth
+from .graph import Tensor, concat, conv, input, mha, space_to_depth, _const
 from .autograd import conv2d, conv_param, parameter
 from ._compile import Model, SegmentedModel, MultiModel, compile
 from . import _targets
@@ -563,6 +563,176 @@ class GPT2:
 
   def release(self) -> None:
     self.runner.release()
+
+
+def _quick_gelu(x: Tensor) -> Tensor:
+  """CLIP's QuickGELU activation: x * sigmoid(1.702 * x)."""
+  return x * (x * 1.702).sigmoid()
+
+
+def _causal_attn(q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+  """Causal self-attention on q,k,v [1,H,S,dh] as decomposed softmax(q@k^T*scale + mask)@v.
+  Stays in ONE fused ANE program without graph cuts."""
+  S, dh = q.shape[2], q.shape[3]
+  mask = np.triu(np.full((S, S), -1e4, np.float32), 1)
+  return ((q @ k.transpose([0, 1, 3, 2])) * (1.0 / np.sqrt(dh)) + _const(mask.astype(np.float16))).softmax(-1) @ v
+
+
+def load_clip(name: str = "openai/clip-vit-base-patch32", int8: bool = False) -> "CLIP":
+  """Load a Hugging Face CLIP dual-encoder model (CLIPModel) for zero-shot image/text classification on the ANE."""
+  return CLIP(name, int8=int8)
+
+
+class CLIP:
+  """CLIP dual-encoder model from Hugging Face (CLIPModel), running both vision and text encoders on the ANE.
+  `.encode_image(image)` -> [1, proj_dim] normalized image embedding.
+  `.encode_text(texts)` -> [N, proj_dim] normalized text embeddings.
+  `.classify(image, candidate_labels)` -> sorted list of (label, probability)."""
+
+  def __init__(self, name: str = "openai/clip-vit-base-patch32", int8: bool = False) -> None:
+    from transformers import AutoConfig, AutoImageProcessor, AutoTokenizer, CLIPModel  # lazy
+    cfg = AutoConfig.from_pretrained(name)
+    if getattr(cfg, "model_type", None) != "clip":
+      raise ValueError(f"load_clip: {name!r} is not a CLIP model (model_type={getattr(cfg, 'model_type', None)!r})")
+    self.tok = AutoTokenizer.from_pretrained(name)
+    try:
+      self.proc = AutoImageProcessor.from_pretrained(name)
+    except Exception:
+      self.proc = None
+    sd = {k: v.detach().numpy().astype(np.float32)
+          for k, v in CLIPModel.from_pretrained(name).state_dict().items()}
+    self.int8 = int8
+    v_cfg, t_cfg = cfg.vision_config, cfg.text_config
+    self.Dv, self.Hv, self.Lv = v_cfg.hidden_size, v_cfg.num_attention_heads, v_cfg.num_hidden_layers
+    self.Pv, self.img, self.v_eps = v_cfg.patch_size, v_cfg.image_size, v_cfg.layer_norm_eps
+    self.Dt, self.Ht, self.Lt = t_cfg.hidden_size, t_cfg.num_attention_heads, t_cfg.num_hidden_layers
+    self.t_eps = t_cfg.layer_norm_eps
+    self.St = int(getattr(t_cfg, "max_position_embeddings", 77))
+    self.proj_dim = getattr(cfg, "projection_dim", 512)
+    self.logit_scale = float(np.exp(sd.get("logit_scale", np.log(100.0))))
+
+    # Vision weights & embeddings
+    self.nv = (self.img // self.Pv) ** 2
+    self._cls_v = sd["vision_model.embeddings.class_embedding"].reshape(1, self.Dv)
+    self._pos_v = sd["vision_model.embeddings.position_embedding.weight"].reshape(self.nv + 1, self.Dv)
+    self._w_pe_v = np.ascontiguousarray(
+      sd["vision_model.embeddings.patch_embedding.weight"].transpose(0, 2, 3, 1)).reshape(self.Dv, -1, 1, 1)
+
+    # Text weights & embeddings needed at runtime
+    self.token_embed = sd["text_model.embeddings.token_embedding.weight"]
+    self.pos_embed = sd["text_model.embeddings.position_embedding.weight"]
+    self.text_proj = sd["text_projection.weight"]
+
+    self._v_model = self._build_vision(sd)
+    self._t_model = self._build_text(sd, self.St)
+
+  def _build_vision(self, sd: dict) -> Model | SegmentedModel:
+    Dv, Hv, Lv, Pv, img, eps = self.Dv, self.Hv, self.Lv, self.Pv, self.img, self.v_eps
+    nv = self.nv
+    x_img = input((1, 3, img, img)); cls_in = input((1, Dv)); pos_in = input((nv + 1, Dv))
+    h = conv(space_to_depth(x_img, Pv), self._w_pe_v, bias=None)
+    patches = h.reshape(1, Dv, nv).transpose([0, 2, 1]).reshape(nv, Dv)
+    seq = concat([cls_in, patches], axis=0) + pos_in
+    seq = seq.layer_norm(sd["vision_model.pre_layrnorm.weight"], sd["vision_model.pre_layrnorm.bias"], eps)
+    for i in range(Lv):
+      p = f"vision_model.encoder.layers.{i}."
+      xn = seq.layer_norm(sd[p + "layer_norm1.weight"], sd[p + "layer_norm1.bias"], eps)
+      attn = mha(xn,
+                 sd[p + "self_attn.q_proj.weight"], sd[p + "self_attn.q_proj.bias"],
+                 sd[p + "self_attn.k_proj.weight"], sd[p + "self_attn.k_proj.bias"],
+                 sd[p + "self_attn.v_proj.weight"], sd[p + "self_attn.v_proj.bias"],
+                 sd[p + "self_attn.out_proj.weight"], sd[p + "self_attn.out_proj.bias"], Hv)
+      seq = seq + attn
+      yn = seq.layer_norm(sd[p + "layer_norm2.weight"], sd[p + "layer_norm2.bias"], eps)
+      mlp = _quick_gelu(yn.linear(sd[p + "mlp.fc1.weight"], sd[p + "mlp.fc1.bias"])).linear(
+        sd[p + "mlp.fc2.weight"], sd[p + "mlp.fc2.bias"])
+      seq = seq + mlp
+    cls_out = _row0(seq).layer_norm(sd["vision_model.post_layernorm.weight"], sd["vision_model.post_layernorm.bias"], eps)
+    v_proj = cls_out.linear(sd["visual_projection.weight"])
+    return compile(v_proj.l2_norm(axis=-1), int8=self.int8)
+
+  def _build_text(self, sd: dict, S: int) -> Model | SegmentedModel:
+    Dt, Ht, Lt, eps = self.Dt, self.Ht, self.Lt, self.t_eps
+    dht = Dt // Ht
+    x_txt = input((S, Dt))
+    seq = x_txt
+    for i in range(Lt):
+      p = f"text_model.encoder.layers.{i}."
+      xn = seq.layer_norm(sd[p + "layer_norm1.weight"], sd[p + "layer_norm1.bias"], eps)
+      q = xn.linear(sd[p + "self_attn.q_proj.weight"], sd[p + "self_attn.q_proj.bias"]).reshape(1, S, Ht, dht).transpose([0, 2, 1, 3])
+      k = xn.linear(sd[p + "self_attn.k_proj.weight"], sd[p + "self_attn.k_proj.bias"]).reshape(1, S, Ht, dht).transpose([0, 2, 1, 3])
+      v = xn.linear(sd[p + "self_attn.v_proj.weight"], sd[p + "self_attn.v_proj.bias"]).reshape(1, S, Ht, dht).transpose([0, 2, 1, 3])
+      attn = _causal_attn(q, k, v).transpose([0, 2, 1, 3]).reshape(S, Dt)
+      seq = seq + attn.linear(sd[p + "self_attn.out_proj.weight"], sd[p + "self_attn.out_proj.bias"])
+      yn = seq.layer_norm(sd[p + "layer_norm2.weight"], sd[p + "layer_norm2.bias"], eps)
+      mlp = _quick_gelu(yn.linear(sd[p + "mlp.fc1.weight"], sd[p + "mlp.fc1.bias"])).linear(
+        sd[p + "mlp.fc2.weight"], sd[p + "mlp.fc2.bias"])
+      seq = seq + mlp
+    seq = seq.layer_norm(sd["text_model.final_layer_norm.weight"], sd["text_model.final_layer_norm.bias"], eps)
+    return compile(seq, int8=self.int8)
+
+  def _pixels(self, image) -> np.ndarray:
+    if isinstance(image, np.ndarray) and image.ndim == 4 and image.shape[1:] == (3, self.img, self.img):
+      return image.astype(np.float32)
+    if self.proc is not None:
+      return np.asarray(self.proc(images=image, return_tensors="np")["pixel_values"], np.float32)
+    # Fallback normalization: PIL if present, else pure-numpy resampling
+    try:
+      import PIL.Image
+      if not isinstance(image, PIL.Image.Image):
+        arr = np.asarray(image)
+        if arr.ndim == 3 and arr.shape[0] == 3: arr = arr.transpose(1, 2, 0)
+        u8 = np.asarray(arr if arr.max() > 1.0 else arr * 255.0, dtype=np.uint8)
+        image = PIL.Image.fromarray(u8)
+      image = image.resize((self.img, self.img), PIL.Image.Resampling.BICUBIC)
+      arr = np.asarray(image, dtype=np.float32).transpose(2, 0, 1) / 255.0
+    except Exception:
+      arr = np.asarray(image, dtype=np.float32)
+      if arr.ndim == 3 and arr.shape[-1] == 3: arr = arr.transpose(2, 0, 1)
+      if arr.ndim == 2: arr = np.repeat(arr[None], 3, axis=0)
+      if arr.shape[1:] != (self.img, self.img):
+        H, W = arr.shape[1], arr.shape[2]
+        r = np.linspace(0, H - 1, self.img).astype(int)
+        c = np.linspace(0, W - 1, self.img).astype(int)
+        arr = arr[:, r[:, None], c[None, :]]
+      if arr.max() > 1.0: arr /= 255.0
+    mean = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32).reshape(3, 1, 1)
+    std = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32).reshape(3, 1, 1)
+    return ((arr - mean) / std)[None].astype(np.float32)
+
+  def encode_image(self, image) -> np.ndarray:
+    """Encode an image -> L2-normalized embedding vector [1, proj_dim]."""
+    px = self._pixels(image)
+    return np.asarray(self._v_model(px, self._cls_v, self._pos_v), np.float32)
+
+  def encode_text(self, texts: str | list[str]) -> np.ndarray:
+    """Encode text string(s) -> L2-normalized embedding vectors [N, proj_dim]."""
+    if isinstance(texts, str): texts = [texts]
+    ids = np.asarray(self.tok(texts, padding="max_length", max_length=self.St, truncation=True, return_tensors="np")["input_ids"], dtype=np.int64)
+    vecs = []
+    for row in ids:
+      eot_pos = int(row.argmax())
+      emb = self.token_embed[row] + self.pos_embed[:self.St]
+      hidden = np.asarray(self._t_model(emb), np.float32)
+      eot = hidden[eot_pos:eot_pos + 1]
+      proj = eot @ self.text_proj.T
+      norm_proj = proj / np.linalg.norm(proj, axis=-1, keepdims=True)
+      vecs.append(norm_proj[0])
+    return np.asarray(vecs, dtype=np.float32)
+
+  def classify(self, image, candidate_labels: list[str]) -> list[tuple[str, float]]:
+    """Zero-shot image classification: score image against candidate labels, returning sorted (label, prob) pairs."""
+    img_feat = self.encode_image(image)
+    txt_feat = self.encode_text(candidate_labels)
+    logits = (img_feat @ txt_feat.T * self.logit_scale)[0]
+    exp = np.exp(logits - np.max(logits))
+    probs = exp / np.sum(exp)
+    ranked = sorted(zip(probs, candidate_labels), key=lambda p: p[0], reverse=True)
+    return [(label, float(prob)) for prob, label in ranked]
+
+  def release(self) -> None:
+    self._v_model.release()
+    self._t_model.release()
 
 
 def group_norm_train(x, gamma, beta, groups: int, eps: float = 1e-5):

@@ -77,15 +77,30 @@ A strided `PxP` patch conv is walled on the ANE, so patch embedding runs as `spa
 
 ```python
 gpt2 = af.load_gpt2("gpt2-medium")
-prompt = "The future of artificial intelligence is"
-ids  = gpt2.generate(prompt, max_new_tokens=16)       # greedy; returns newly generated token ids
-text = gpt2.generate_text(prompt, max_new_tokens=16)  # decoded newly generated text
+ids  = gpt2.generate("The future of artificial intelligence is", max_new_tokens=16)  # greedy; returns token ids
 logits = gpt2(token_ids)                     # 1-D ids -> [S, vocab], for custom decoding
 ```
 
 GPT-2 is the family that the LayerNorm-at-`D>=1024` fix unlocks (Llama/Qwen use RMSNorm, so `load_llm` never hit that wall). Each sequence length compiles as **two fused programs**: the pre-norm transformer (`ln_1 -> native causal SDPA -> residual; ln_2 -> Linear -> gelu_new -> Linear -> residual`, then `ln_f`) and the **tied lm_head tiled along the 50257 vocab** — a single matmul that wide exceeds the ANE's per-op dimension cap on the A13-A15 families, so it is emitted as vocab-sized output-port tiles (e.g. `[16384, 16384, 16384, 1105]`) and stitched host-side. Token + positional embedding lookup runs on the host (`gather` is not an ANE op).
 
 Two limits worth knowing: decode has **no KV cache yet** — it recomputes the forward on the growing sequence (cached per length), so it validates correctness rather than throughput; and native causal SDPA is reliable only for `S < 512`, so use short prompts and small `max_new_tokens`. `examples/gpt2.py` compiles the full 24-layer `gpt2-medium` as one program and checks the greedy decode is token-identical to Hugging Face.
+
+## load_clip() — CLIP zero-shot image/text classification
+
+`af.load_clip()` loads any Hugging Face CLIP dual-encoder checkpoint (`CLIPModel`) to run both the Vision Transformer and the causal Text Transformer on the ANE:
+
+```python
+clip = af.load_clip("openai/clip-vit-base-patch32")
+img_feat = clip.encode_image(image)             # [1, 3, 224, 224] -> [1, 512] L2-normalised
+txt_feat = clip.encode_text(["a photo of a cat", "a photo of a dog"])  # [2, 512] L2-normalised
+ranked   = clip.classify(image, ["a photo of a cat", "a photo of a dog"]) # [(label, prob), ...]
+```
+
+Both towers compile as fused ANE programs:
+- **Vision:** Patch embedding via `space_to_depth(P)` + 1x1 conv, CLS token + positional embedding, pre-norm Transformer stack with `QuickGELU` (`x * sigmoid(1.702 * x)`), CLS pooling, visual projection, and in-graph L2 normalisation.
+- **Text:** Causal self-attention with precomputed triangular mask, QuickGELU MLP, EOT token extraction, text projection, and in-graph L2 normalisation.
+
+`examples/clip_zero_shot.py` demonstrates zero-shot image classification end-to-end on the ANE with ranking and probability comparison against Hugging Face PyTorch.
 
 ## Weight layout: He init is layout-dependent
 
