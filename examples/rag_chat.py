@@ -5,6 +5,7 @@ embeddings, a CrossEncoder reranker, and Qwen3-0.6B generation all run on the en
   sudo python3 examples/rag_chat.py --energy # add per-query joules (needs powermetrics)
 """
 import os
+import subprocess
 import sys
 import time
 
@@ -31,6 +32,25 @@ def _read_corpus(path: str) -> list[Chunk]:
         fp = os.path.join(root, f)
         chunks += chunk_text(open(fp, encoding="utf-8", errors="ignore").read(), os.path.relpath(fp, path))
   return chunks
+
+
+def _sample_energy(fn):
+  """Run fn() while sampling package power with powermetrics; return (result, millijoules).
+  Returns (result, None) if powermetrics is unavailable or not run as root."""
+  try:
+    proc = subprocess.Popen(["powermetrics", "-i", "50", "--samplers", "cpu_power"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+  except (FileNotFoundError, PermissionError):
+    return fn(), None
+  t0 = time.perf_counter()
+  result = fn()
+  dt = time.perf_counter() - t0
+  proc.terminate()
+  out = proc.stdout.read() if proc.stdout else ""
+  mw = [float(l.split(":")[1].strip().split()[0]) for l in out.splitlines() if "Package Power" in l]
+  if not mw:
+    return result, None
+  return result, (sum(mw) / len(mw)) * dt      # avg mW * seconds = millijoules
 
 
 class Pipeline:
@@ -75,6 +95,7 @@ class Pipeline:
 def main(argv) -> int:
   args = [a for a in argv if not a.startswith("--")]
   path = args[0] if args else REPO_DOCS
+  energy = "--energy" in argv
   print(f"indexing {path} on the Apple Neural Engine ...", flush=True)
   p = Pipeline.build(path)
   print(f"indexed {len(p.chunks)} chunks from {len({c.source for c in p.chunks})} files. "
@@ -87,10 +108,15 @@ def main(argv) -> int:
     if not q:
       continue
     print("ane> ", end="", flush=True)
-    timing = p.answer(q, on_token=lambda i: print(p.tok.decode([i]), end="", flush=True))
+    stream = lambda i: print(p.tok.decode([i]), end="", flush=True)
+    if energy:
+      timing, mj = _sample_energy(lambda: p.answer(q, on_token=stream))
+      tail = f" | ~{mj:.0f} mJ this query, 0 GPU" if mj is not None else " | (energy: run with sudo)"
+    else:
+      timing, tail = p.answer(q, on_token=stream), ""
     ms = timing["stage_ms"]
     print(f"\n[retrieve {ms['retrieve']:.0f}ms | rerank {ms['rerank']:.0f}ms | "
-          f"generate {ms['generate']:.0f}ms | all ANE | sources: {', '.join(timing['sources'])}]\n")
+          f"generate {ms['generate']:.0f}ms | all ANE | sources: {', '.join(timing['sources'])}{tail}]\n")
 
 
 if __name__ == "__main__":
