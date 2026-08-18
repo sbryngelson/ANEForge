@@ -52,6 +52,28 @@ def test_whisper_layer_mapping():
 
 
 @requires_ane
+def test_whisper_layer_mapping_against_real_hf_keys():
+  """Ground the synthetic-key mapping test above against the real checkpoint: `_whisper_layers` must map the
+  actual HF key names, and every mapped array must be the exact real weight (values, not just shapes). This
+  is the independent oracle -- a systematic key-name misunderstanding would be caught here, not off-device."""
+  from transformers import WhisperForConditionalGeneration
+
+  sd = {k: v.detach().numpy() for k, v in
+        WhisperForConditionalGeneration.from_pretrained("openai/whisper-base.en").state_dict().items()}
+  enc = _whisper_layers(sd, "encoder", 6)
+  dec = _whisper_layers(sd, "decoder", 6)
+  assert len(enc) == 6 and len(dec) == 6
+  # every value came straight from the real state dict
+  assert np.array_equal(enc[0]["Wq"], sd["model.encoder.layers.0.self_attn.q_proj.weight"])
+  assert np.array_equal(enc[0]["Wd"], sd["model.encoder.layers.0.fc2.weight"])
+  assert np.array_equal(dec[0]["CWk"], sd["model.decoder.layers.0.encoder_attn.k_proj.weight"])
+  assert np.array_equal(dec[0]["cln_w"], sd["model.decoder.layers.0.encoder_attn_layer_norm.weight"])
+  # k_proj / encoder_attn.k_proj genuinely have no bias in the real checkpoint
+  assert "model.encoder.layers.0.self_attn.k_proj.bias" not in sd and "bk" not in enc[0]
+  assert "model.decoder.layers.0.encoder_attn.k_proj.bias" not in sd and "Cbk" not in dec[0]
+
+
+@requires_ane
 def test_whisper_encoder_matches_hf():
   import torch
   from transformers import WhisperFeatureExtractor, WhisperForConditionalGeneration
