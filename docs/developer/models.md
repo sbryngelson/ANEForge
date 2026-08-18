@@ -205,8 +205,6 @@ whole pipeline, including generation, never leaves the Neural Engine. Without `s
 without `powermetrics` on the machine), the flag falls back to running the query with no
 energy figure rather than failing.
 
-The demo works best on prose documents. Chunking windows to a fixed token count, but a
-file shorter than that window still embeds as a single chunk sized to its own length, so
-a folder of very many tiny files (each a different length) can still push the ANE
-embedder toward compiling one program per distinct sequence length -- the same per-length
-program budget noted for `SentenceTransformer` above.
+The demo works best on prose documents, but the corpus can be any mix of lengths: the ANE
+encoder pads each batch to one length and masks the padding, so a whole corpus -- long
+files or many tiny ones -- embeds through a single compiled program.
