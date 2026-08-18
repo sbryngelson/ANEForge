@@ -18,7 +18,7 @@ RERANK = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 LLM = "Qwen/Qwen3-0.6B"
 MAX_LEN = 512
 ANSWER_TOKENS = 160
-TOP_K, TOP_N = 20, 4
+TOP_K, TOP_N = 12, 4
 CHUNK_TOK = 192          # token-window chunk size; uniform windows keep the Encoder to a few compiled programs
 REPO_DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
 
@@ -84,6 +84,8 @@ class Pipeline:
     t["retrieve"] = (time.perf_counter() - t0) * 1e3
     t0 = time.perf_counter()
     scores = self.rerank.predict([(query, self.chunks[i].text) for i in cand])
+    self.rerank._cache.clear()   # the reranker compiles one ANE program per pair length; release them so
+                                 # they do not accumulate across queries and exhaust the engine (op_create err=13)
     ranked = [self.chunks[cand[i]] for i in np.argsort(scores)[::-1][:TOP_N]]
     t["rerank"] = (time.perf_counter() - t0) * 1e3
     budget = MAX_LEN - ANSWER_TOKENS
