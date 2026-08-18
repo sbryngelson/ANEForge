@@ -37,3 +37,24 @@ def top_k(query_vec: np.ndarray, corpus: np.ndarray, k: int) -> list[int]:
   (dot product, since both sides are L2-normalized), highest first."""
   scores = corpus @ query_vec
   return np.argsort(scores)[::-1][:k].tolist()
+
+
+PROMPT_TEMPLATE = (
+  "Answer the question using only the context below. If the context does not contain the "
+  "answer, say you don't know.\n\nContext:\n{context}\n\nQuestion: {question}\nAnswer:")
+
+
+def pack_context(chunks: list[Chunk], query: str, budget: int, token_len) -> str:
+  """Build the prompt from as many reranked chunks (best first) as fit in `budget` tokens.
+  Always includes the query; if the first chunk alone overflows, truncate it to fit."""
+  kept: list[str] = []
+  for c in chunks:
+    trial = "\n".join(kept + [c.text])
+    if token_len(PROMPT_TEMPLATE.format(context=trial, question=query)) <= budget:
+      kept.append(c.text)
+  if not kept and chunks:                       # first chunk alone overflows: truncate it
+    text = chunks[0].text
+    while text and token_len(PROMPT_TEMPLATE.format(context=text, question=query)) > budget:
+      text = text[: max(1, len(text) * 3 // 4)]
+    kept = [text]
+  return PROMPT_TEMPLATE.format(context="\n".join(kept), question=query)
