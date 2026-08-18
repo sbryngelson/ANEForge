@@ -170,9 +170,24 @@ logits = clf(image)                                        # [1,3,224,224] -> [1
   the preceding conv at load, so the ANE graph is pure conv/relu/pool/add/fc.
 - `af.load_resnet18(int8=False) -> Vision` - ResNet-18, kept as the original
   shorthand for `af.load_resnet(18)`.
+- `af.load_vit(name, int8=False) -> ViT` - HF ViT-family image classifier (CLS
+  token, pre-norm encoder); `.classify(image)` returns top-k labels.
+- `af.load_clip(name) -> CLIP` - CLIP dual-encoder; both the vision and text
+  towers run on the ANE for zero-shot classification.
+- `af.load_gpt2(name) -> GPT2` / `af.load_llm(name) -> ...` - decoder LLMs on the
+  ANE with prefill + resident-KV-cache decode. `load_llm` covers
+  Llama/Qwen/Mistral/Gemma/GPT-2/MoE (see the [LLM guide](llm.md)); `load_gpt2`
+  is the GPT-2 shorthand.
+- `af.load_whisper(name="openai/whisper-base.en") -> Whisper` - speech-to-text;
+  the audio encoder and the autoregressive text decoder both run on the ANE.
+  `.transcribe(audio) -> str`, `.encode(audio) -> [1500, 512]`.
+- `CrossEncoder(name) -> CrossEncoder` - BERT/RoBERTa/DistilBERT reranker;
+  `.predict([(query, passage), ...])` returns relevance scores.
+- `af.load_onnx(path, ...)` - import an ONNX model as an ANE program (see
+  [ONNX import](onnx.md)).
 
-`transformers` / `torchvision` are imported lazily, only when these loaders are
-used.
+`transformers` / `torchvision` (and `soundfile` for Whisper) are imported lazily,
+only when these loaders are used.
 
 ---
 
@@ -184,7 +199,12 @@ used.
 | `Model` | a compiled single fused ANE program. Call with input array(s); `.n_ops` = fused graph ops; `.release()`. |
 | `SegmentedModel` | a compiled plan of e5rt regions interleaved with native bridge sub-programs. `.n_ops`, `.n_netplist`, `.release()`. |
 | `Encoder` | sentence-embedding model from `af.load`. |
+| `CrossEncoder` | reranker (BERT/RoBERTa/DistilBERT) from `CrossEncoder(name)`. |
 | `Vision` | ResNet classifier from `af.load_resnet` (18/34/50/101). |
+| `ViT` | ViT image classifier from `af.load_vit`. |
+| `CLIP` | CLIP dual-encoder from `af.load_clip`. |
+| `GPT2` | GPT-2 text generation from `af.load_gpt2`. |
+| `Whisper` | speech-to-text (encoder + decoder) from `af.load_whisper`. |
 
 `compile(out, int8=False, build_dir=None)` returns a `Model`, or a
 `SegmentedModel` if the graph contains any netplist-bridge op.

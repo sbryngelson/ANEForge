@@ -40,7 +40,7 @@ ce = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 scores = ce.predict([(query, passage) for passage in passages])   # higher = more relevant
 ```
 
-It reuses the same encoder graph as `load()`, then applies the sequence-classification head host-side. It supports BERT-family and RoBERTa/XLM-R (e.g. bge-reranker) `AutoModelForSequenceClassification` heads, detected by head shape; DistilBERT-style heads aren't wired up yet.
+It reuses the same encoder graph as `load()`, then applies the sequence-classification head host-side. It supports BERT-family, RoBERTa/XLM-R (e.g. bge-reranker), and DistilBERT (`pre_classifier -> ReLU -> classifier`) `AutoModelForSequenceClassification` heads, detected by head shape.
 
 ## load_resnet() — torchvision ImageNet classifier
 
@@ -81,9 +81,9 @@ ids  = gpt2.generate("The future of artificial intelligence is", max_new_tokens=
 logits = gpt2(token_ids)                     # 1-D ids -> [S, vocab], for custom decoding
 ```
 
-GPT-2 is the family that the LayerNorm-at-`D>=1024` fix unlocks (Llama/Qwen use RMSNorm, so `load_llm` never hit that wall). Each sequence length compiles as **two fused programs**: the pre-norm transformer (`ln_1 -> native causal SDPA -> residual; ln_2 -> Linear -> gelu_new -> Linear -> residual`, then `ln_f`) and the **tied lm_head tiled along the 50257 vocab** — a single matmul that wide exceeds the ANE's per-op dimension cap on the A13-A15 families, so it is emitted as vocab-sized output-port tiles (e.g. `[16384, 16384, 16384, 1105]`) and stitched host-side. Token + positional embedding lookup runs on the host (`gather` is not an ANE op).
+GPT-2 loads through the unified LLM runner (`LlamaPrefill`): the same prefill + resident-KV-cache decode path as Llama/Qwen, adapted for GPT-2's pre-norm LayerNorm blocks and `gelu_new` MLP. It is the family that the LayerNorm-at-`D>=1024` fix unlocks (Llama/Qwen use RMSNorm, so `load_llm` never hit that wall). The **tied lm_head is tiled along the 50257 vocab** — a matmul that wide exceeds the ANE's per-op dimension cap on the A13-A15 families, so it is emitted as vocab-sized output-port tiles and stitched host-side (a single tile fits on A16/M-series). Token + positional embedding lookup runs on the host (`gather` is not an ANE op).
 
-Two limits worth knowing: decode has **no KV cache yet** — it recomputes the forward on the growing sequence (cached per length), so it validates correctness rather than throughput; and native causal SDPA is reliable only for `S < 512`, so use short prompts and small `max_new_tokens`. `examples/gpt2.py` compiles the full 24-layer `gpt2-medium` as one program and checks the greedy decode is token-identical to Hugging Face.
+Decode keeps a **resident KV cache** on the engine (via the shared runner), streaming tokens instead of recomputing the growing sequence — ~140 tok/s on `gpt2-medium` on an M5 Pro. `examples/gpt2.py` loads via `af.load_llm`, checks the prefill logits against Hugging Face fp32, runs resident-KV-cache greedy decode that is token-identical to HF, and includes a >512-token long-context test.
 
 ## load_clip() — CLIP zero-shot image/text classification
 

@@ -16,6 +16,14 @@ train, target, and extend the frontend.
 - **[FAQ](faq.md)** - common questions, gotchas, what to expect.
 - **[MIL primer](mil-primer.md)** - writing MIL programs by hand.
 
+### Run pretrained models
+
+- **[LLMs on the ANE](llm.md)** - `af.load_llm` prefill + resident-KV-cache decode for
+  Llama/Qwen/Mistral/Gemma/GPT-2/MoE, speculative decoding, and MoE from GGUF.
+- **[Model loaders](developer/models.md)** - vision (ResNet / ViT / CLIP), sentence
+  encoders and rerankers, GPT-2, and Whisper speech-to-text (both towers on the ANE).
+- **[ONNX import](onnx.md)** - run an existing `.onnx` model on the engine via `af.load_onnx`.
+
 ### Use the engine well
 
 - **[Cross-chip deployment](cross-chip.md)** - compiling and gating for other ANE
@@ -43,6 +51,7 @@ train, target, and extend the frontend.
 | How do I install + run? | [getting-started](getting-started.md) |
 | How do I use the Python frontend? | [aneforge-api](aneforge-api.md) |
 | How do I train a model on the ANE? | [training](training.md) |
+| How do I run an LLM, Whisper, or ONNX model? | [llm](llm.md), [model loaders](developer/models.md), [onnx](onnx.md) |
 | Can I target / deploy to another chip (M1-M5)? | [cross-chip](cross-chip.md) |
 | How do I estimate latency without the hardware? | [aneforge-api: cost estimation](aneforge-api.md#cost-estimation-measurement-free), [cross-chip](cross-chip.md) |
 | How do I shrink weights (int4 / sparse)? | [aneforge-api: weight compression](aneforge-api.md#weight-compression) |

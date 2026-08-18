@@ -5,7 +5,7 @@ table see [op-catalog.md](op-catalog.md).
 
 ## Coverage summary
 
-ANEForge classifies the full **187-op MIL vocabulary** against a machine-checkable
+ANEForge classifies the full **166-op MIL vocabulary** against a machine-checkable
 registry (`aneforge/_capabilities.py`, serialized to `capabilities.json` and
 CI-gated). Each op falls into one of a few practical buckets:
 

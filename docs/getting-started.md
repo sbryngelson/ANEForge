@@ -11,9 +11,10 @@ minutes.
 - Python 3.10+ with `numpy`.
 
 The `aneforge` package imports only `numpy`. `torch` / `torchvision` /
-`transformers` are lazy imports used only by the pretrained loaders
-(`af.load`, `af.load_resnet`) and the diffusion examples; install them with
-the `models` extra when you need them.
+`transformers` (and `soundfile` for Whisper) are lazy imports used only by the
+pretrained loaders (`af.load`, `af.load_resnet`, `af.load_vit`, `af.load_clip`,
+`af.load_gpt2`, `af.load_llm`, `af.load_whisper`, `af.load_onnx`) and the
+diffusion examples; install them with the `models` extra when you need them.
 
 ## Install
 
@@ -78,7 +79,14 @@ Pretrained loaders ship too:
 ```python
 embed = af.load("sentence-transformers/all-MiniLM-L6-v2")  # sentence encoder
 clf   = af.load_resnet18()                                 # ImageNet classifier
+vit   = af.load_vit("google/vit-base-patch16-224")         # vision transformer
+llm   = af.load_llm("Qwen/Qwen3-0.6B")                     # decoder LLM (prefill + KV-cache decode)
+asr   = af.load_whisper("openai/whisper-base.en")          # speech-to-text, both towers on the ANE
 ```
+
+Vision (`load_resnet`/`load_vit`/`load_clip`), encoders and rerankers (`load`/`CrossEncoder`),
+decoder LLMs (`load_llm`/`load_gpt2`), Whisper (`load_whisper`), and ONNX (`load_onnx`) all load
+the same way.
 
 A few more things reachable from the same API:
 
@@ -100,7 +108,8 @@ pk  = af.project_peak("h17s")                # M5 fp16 peak {tflops, ...}
 Worked demos live in [`examples/`](https://github.com/sbryngelson/ANEForge/tree/main/examples) - start with
 `examples/quickstart.py` (a CNN and a transformer encoder block), then
 `resnet18.py`, `sentence_embeddings.py`, `sdpa.py`, `native_ranking.py`, and
-`pointcloud.py`. The chapter-aligned mechanism demos are in `examples/demos/`.
+`pointcloud.py`. For pretrained models see `vit.py`, `clip_zero_shot.py`, `gpt2.py`,
+`llm_chat.py`, `whisper.py`, and `rag_chat.py`. The chapter-aligned mechanism demos are in `examples/demos/`.
 
 ## MIL input format
 
