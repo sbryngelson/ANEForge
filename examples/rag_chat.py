@@ -34,6 +34,36 @@ def _read_corpus(path: str) -> list[Chunk]:
   return chunks
 
 
+FIXED_EMBED_TOK = 256   # embed at one fixed length so the Encoder compiles a single program (it caches per length)
+
+
+def _embed_fixed(st, texts):
+  """Embed texts at one fixed padded token length so aneforge's Encoder compiles a single ANE program
+  instead of one per distinct token length. A real corpus spans hundreds of distinct chunk lengths, and
+  the Encoder caches one resident program per length (`Encoder._cache[len(ids)]`), which exhausts the
+  ANE (`op_create err=13`) well before the whole corpus is embedded; a fixed padded length compiles once
+  and is reused for every chunk and the query. Pools exactly as `Encoder.__call__` would for the model's
+  configured pooling mode (mean/cls/max), masking out padding for mean/max so pad tokens don't dilute the
+  pooled vector, and L2-normalizes -- matching `SentenceTransformer.encode(..., normalize_embeddings=True)`."""
+  enc = st._enc                                    # the underlying aneforge Encoder
+  vecs = []
+  for t in texts:
+    batch = enc.tok(t, padding="max_length", truncation=True, max_length=FIXED_EMBED_TOK)
+    ids = np.asarray(batch["input_ids"], dtype=np.int64)
+    mask = np.asarray(batch["attention_mask"], dtype=bool)
+    net = enc._cache.get(len(ids)) or enc._cache.setdefault(len(ids), enc._build(len(ids)))
+    states = net(enc._embed(ids))                 # [S, D] per-token states, real tokens + padding
+    real = states[mask]
+    if enc.pooling == "cls":
+      v = states[0]
+    elif enc.pooling == "max":
+      v = real.max(0)
+    else:
+      v = real.mean(0)
+    vecs.append(v / (np.linalg.norm(v) + 1e-9))
+  return np.asarray(vecs, np.float32)
+
+
 def _sample_energy(fn):
   """Run fn() while sampling package power with powermetrics; return (result, millijoules).
   Returns (result, None) if powermetrics is unavailable or not run as root."""
@@ -67,7 +97,7 @@ class Pipeline:
     if not chunks:
       raise SystemExit(f"rag_chat: no .md/.txt files found under {path!r}")
     embed = SentenceTransformer(EMBED)
-    vecs = embed.encode([c.text for c in chunks], normalize_embeddings=True).astype(np.float32)
+    vecs = _embed_fixed(embed, [c.text for c in chunks])
     llm = load_llm(llm_name); llm.warmup(MAX_LEN)
     tok = AutoTokenizer.from_pretrained(llm_name)
     return cls(embed, CrossEncoder(RERANK), llm, tok, chunks, vecs)
@@ -75,7 +105,7 @@ class Pipeline:
   def answer(self, query: str, on_token) -> dict:
     t = {}
     t0 = time.perf_counter()
-    qv = self.embed.encode([query], normalize_embeddings=True)[0].astype(np.float32)
+    qv = _embed_fixed(self.embed, [query])[0]
     cand = top_k(qv, self.vecs, TOP_K)
     t["retrieve"] = (time.perf_counter() - t0) * 1e3
     t0 = time.perf_counter()
