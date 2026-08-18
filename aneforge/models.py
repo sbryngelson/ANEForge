@@ -154,6 +154,24 @@ _BERT_KEYS = {
   "ln2w": "output.LayerNorm.weight", "ln2b": "output.LayerNorm.bias",
 }
 
+_DISTILBERT_KEYS = {
+  "Wq": "attention.q_lin.weight", "bq": "attention.q_lin.bias",
+  "Wk": "attention.k_lin.weight", "bk": "attention.k_lin.bias",
+  "Wv": "attention.v_lin.weight", "bv": "attention.v_lin.bias",
+  "Wo": "attention.out_lin.weight", "bo": "attention.out_lin.bias",
+  "ln1w": "sa_layer_norm.weight", "ln1b": "sa_layer_norm.bias",
+  "Wi": "ffn.lin1.weight", "bi": "ffn.lin1.bias",
+  "Wd": "ffn.lin2.weight", "bd": "ffn.lin2.bias",
+  "ln2w": "output_layer_norm.weight", "ln2b": "output_layer_norm.bias",
+}
+
+
+def _encoder_layer_spec(model_type: str) -> tuple[str, dict[str, str]]:
+  """Return the layer prefix and weight-key map for a supported encoder family."""
+  if model_type == "distilbert":
+    return "transformer.layer.{i}.", _DISTILBERT_KEYS
+  return "encoder.layer.{i}.", _BERT_KEYS
+
 
 class Encoder:
   _POOL = ("mean", "cls", "max")
@@ -225,15 +243,20 @@ def _position_ids(ids: np.ndarray, pad_id: int | None) -> np.ndarray:
   return np.cumsum(mask) * mask + pad_id
 
 
-def _seqcls_head(sd: dict, pref: str | None) -> tuple[str, str, str, str] | None:
-  """The two-layer tanh classification head, as (dense_w, dense_b, out_w, out_b) state-dict keys.
+def _seqcls_head(
+  sd: dict, pref: str | None, model_type: str | None = None
+) -> tuple[str, str, str, str] | None:
+  """Return (dense_w, dense_b, out_w, out_b) classification-head state-dict keys.
 
   BERT is `pooler.dense -> tanh -> classifier`; RoBERTa is `RobertaClassificationHead`, i.e.
   `classifier.dense -> tanh -> classifier.out_proj`, with no pooler at all. Same arithmetic on token 0,
-  different names. Returns None when neither shape is present.
+  different names. DistilBERT uses `pre_classifier -> ReLU -> classifier` and has no pooler.
+  Returns None when neither shape is present.
 
   RoBERTa is identified by its head, *not* by a missing token-type table: XLM-R does ship
   `token_type_embeddings` (a single row, always index 0), so absence identifies nothing."""
+  if model_type == "distilbert" and "pre_classifier.weight" in sd and "classifier.weight" in sd:
+    return ("pre_classifier.weight", "pre_classifier.bias", "classifier.weight", "classifier.bias")
   if "classifier.dense.weight" in sd and "classifier.out_proj.weight" in sd:
     return ("classifier.dense.weight", "classifier.dense.bias",
             "classifier.out_proj.weight", "classifier.out_proj.bias")
@@ -243,17 +266,31 @@ def _seqcls_head(sd: dict, pref: str | None) -> tuple[str, str, str, str] | None
   return None
 
 
+def _seqcls_activation(values: np.ndarray, model_type: str) -> np.ndarray:
+  """Apply the activation used between the sequence-classification head layers."""
+  return np.maximum(values, 0) if model_type == "distilbert" else np.tanh(values)
+
+
+def _token_type_ids(enc: dict, length: int, has_token_type_embeddings: bool) -> np.ndarray:
+  """Return segment ids, ignoring tokenizer output when the model has no segment table."""
+  if not has_token_type_embeddings:
+    return np.zeros(length, dtype=np.int64)
+  values = enc.get("token_type_ids")
+  return np.asarray(values if values is not None else [0] * length, dtype=np.int64)
+
+
 class CrossEncoder:
-  """Reranker: scores (query, passage) pairs with a BERT- or RoBERTa-family sequence-classification
+  """Reranker: scores (query, passage) pairs with a BERT-, RoBERTa-, or DistilBERT-family sequence-classification
   model, the transformer running on the ANE. Mirrors `sentence_transformers.CrossEncoder`:
   `CrossEncoder(name).predict([(query, passage), ...])` returns one relevance score per pair
   (raw logits -- order is what a reranker needs). Higher is more relevant.
 
-  Both families share the encoder graph and the `_BERT_KEYS` layer names; they differ only in host-side
-  plumbing, so the two are handled by weight selection rather than by a second code path:
+  BERT and RoBERTa share the encoder graph and `_BERT_KEYS`; DistilBERT uses the same graph
+  operations with a family-specific key map. The families differ only in weight selection and
+  host-side head plumbing, rather than requiring separate graph code paths:
 
-  - **Head.** See `_seqcls_head`: same two-layer tanh head on token 0, different key names.
-  - **Position ids.** See `_position_ids`: RoBERTa counts from `padding_idx + 1`, BERT from 0."""
+  - **Head.** See `_seqcls_head`: BERT/RoBERTa use tanh; DistilBERT uses ReLU.
+  - **Position ids.** See `_position_ids`: RoBERTa counts from `padding_idx + 1`; BERT and DistilBERT count from 0."""
 
   def __init__(self, name: str, int8: bool = False) -> None:
     from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer  # lazy
@@ -264,24 +301,28 @@ class CrossEncoder:
     # The base transformer sits under a model-specific prefix (bert / roberta / ...).
     marker = ".embeddings.word_embeddings.weight"
     pref = next((k[: -len(marker)] for k in sd if k.endswith(marker)), None)
-    head = _seqcls_head(sd, pref)
+    head = _seqcls_head(sd, pref, cfg.model_type)
     if pref is None or head is None:
       raise ValueError(
         f"CrossEncoder: {name!r} is not a supported reranker -- it needs either a BERT-family head "
         "(a pooler plus `classifier`) or a RoBERTa-family one (`classifier.dense` plus "
-        "`classifier.out_proj`). DistilBERT-style heads are not handled yet.")
+        "`classifier.out_proj`), or a DistilBERT-family head (`pre_classifier` plus `classifier`).")
     roberta = head[0].startswith("classifier.")
+    layer_prefix, layer_keys = _encoder_layer_spec(cfg.model_type)
     self.D, self.H = cfg.hidden_size, cfg.num_attention_heads
-    self.L, self.eps, self.int8 = cfg.num_hidden_layers, cfg.layer_norm_eps, int8
+    # DistilBertConfig omits layer_norm_eps; its reference implementation uses 1e-12.
+    self.L, self.eps, self.int8 = cfg.num_hidden_layers, getattr(cfg, "layer_norm_eps", 1e-12), int8
     self.pad_id = int(cfg.pad_token_id) if roberta else None   # None -> positions count from 0
     self.word = g(f"{pref}.embeddings.word_embeddings.weight")
     self.pos = g(f"{pref}.embeddings.position_embeddings.weight")
     typ_key = f"{pref}.embeddings.token_type_embeddings.weight"
-    self.typ = g(typ_key) if typ_key in sd else np.zeros((1, self.D), np.float32)
+    self._has_typ = typ_key in sd
+    self.typ = g(typ_key) if self._has_typ else np.zeros((1, self.D), np.float32)
     self.eln_w, self.eln_b = g(f"{pref}.embeddings.LayerNorm.weight"), g(f"{pref}.embeddings.LayerNorm.bias")
-    self.layers = [{k: g(f"{pref}.encoder.layer.{i}." + v) for k, v in _BERT_KEYS.items()}
+    self.layers = [{k: g(f"{pref}.{layer_prefix.format(i=i)}" + v) for k, v in layer_keys.items()}
                    for i in range(self.L)]
     self.pool_w, self.pool_b, self.cls_w, self.cls_b = (g(k) for k in head)
+    self._model_type = cfg.model_type
     self._cache: dict[int, Model | SegmentedModel] = {}
 
   def _build(self, S: int) -> Model | SegmentedModel:
@@ -308,10 +349,10 @@ class CrossEncoder:
     for query, passage in pairs:
       enc = self.tok(query, passage, truncation=True)
       ids = np.asarray(enc["input_ids"], dtype=np.int64)
-      typ = np.asarray(enc.get("token_type_ids") or [0] * len(ids), dtype=np.int64)
+      typ = _token_type_ids(enc, len(ids), self._has_typ)
       net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
       cls = net(self._embed(ids, typ))[0]                              # [CLS] / <s> state, on the ANE
-      pooled = np.tanh(cls @ self.pool_w.T + self.pool_b)              # BERT pooler / Roberta head dense
+      pooled = _seqcls_activation(cls @ self.pool_w.T + self.pool_b, self._model_type)
       logits = pooled @ self.cls_w.T + self.cls_b                      # [num_labels]
       scores.append(float(logits[0]))
     return np.asarray(scores, dtype=np.float32)
