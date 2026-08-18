@@ -88,9 +88,12 @@ class Pipeline:
                                  # they do not accumulate across queries and exhaust the engine (op_create err=13)
     ranked = [self.chunks[cand[i]] for i in np.argsort(scores)[::-1][:TOP_N]]
     t["rerank"] = (time.perf_counter() - t0) * 1e3
+    def _wrap(content):   # Qwen chat format so the model answers from context and stops at EOS (no rambling)
+      return self.tok.apply_chat_template([{"role": "user", "content": content}],
+                                          tokenize=False, add_generation_prompt=True, enable_thinking=False)
     budget = MAX_LEN - ANSWER_TOKENS
-    prompt = pack_context(ranked, query, budget, lambda s: len(self.tok.encode(s)))
-    ids = self.tok.encode(prompt)[:budget]
+    content = pack_context(ranked, query, budget, lambda c: len(self.tok.encode(_wrap(c))))
+    ids = self.tok.encode(_wrap(content))[:budget]
     t0 = time.perf_counter()
     self.llm.generate(ids, max_new_tokens=ANSWER_TOKENS, max_len=MAX_LEN,
                       eos_id=self.tok.eos_token_id, on_token=on_token)
