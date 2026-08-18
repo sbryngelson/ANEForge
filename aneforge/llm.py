@@ -6,6 +6,7 @@ The runner is model-agnostic: a `LlamaConfig` carries a per-layer plan (`LayerSp
 and an MLP from the builder registries below, so supporting a new architecture is an *adapter* that emits
 the plan + canonical weights - not new branches in the hot path."""
 from __future__ import annotations
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 import time
@@ -246,29 +247,47 @@ DECODE_MLPS = {"swiglu": _swiglu, "geglu": _geglu, "gelu_new": _gelu_mlp}
 _DECODE_CTX = ("oh", "inv", "mask", "cosp", "sinp")
 
 
+def _lm_head_tile_size() -> int:
+  """Vocab-axis tile for the ANE lm_head: the target family's max tensor dim (A13-A15 16384,
+  A16+ 65536). compile_multi does not run the oversize gate, so this is the only guard."""
+  from . import _targets
+  return _targets.limit("max_tensor_dim", _targets.detect_family())
+
+
 class LlamaPrefill:
   """A decoder compiled for the ANE. `compile(seq)` builds the prefill graph for a fixed prompt length;
   `prefill(token_ids)` returns next-token logits; `generate(...)` does resident-KV-cache decode. Weights are
   a dict of numpy arrays (see `from_pretrained`). The host `lm_head` keeps a cached fp32 transpose
   (`_lmT`): for large vocabularies this is the runner's biggest host allocation (GPT-2 ~206 MB, a
-  151936x4096 head ~2.5 GB), freed by `release()`."""
-  def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None):
+  151936x4096 head ~2.5 GB), freed by `release()`. With `ane_lm_head=True`, the head runs on the ANE
+  as a tiled `compile_multi` instead, saving host memory but changing numerics (fp16 vs fp32 matmul)."""
+  def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None,
+               ane_lm_head: bool = False):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None; self._pre = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
     self._lmT = None               # cached contiguous fp32 lm_head^T (host matmul); built on first use
+    self.ane_lm_head = ane_lm_head  # run lm_head on the ANE (tiled compile_multi) instead of host matmul
+    self._lmh: dict | None = None  # cached ANE lm_head program (built once, shape-independent of max_len)
+    self._lmh_off = False          # True if ANE lm_head was attempted and failed or declined
+    self._lmhead_bytes = 1.2e9     # budget: heads above this fall back to host (safety under ~2GB ANE ceiling)
+    self._lmhead_compress: str | None = None  # head always fp16; quantizing the head degrades logits more
+                                               # than quantizing an intermediate layer (no residual to absorb)
 
   def release(self) -> None:
-    """Release every compiled program (prefill, decode chunks, batched-prefill chunks), the cached host
-    `_lmT` transpose, and the cached state, so a subsequent call transparently recompiles instead of
-    replaying a freed program or stale buffers."""
+    """Release every compiled program (prefill, decode chunks, batched-prefill chunks, ANE lm_head),
+    the cached host `_lmT` transpose, and the cached state, so a subsequent call transparently
+    recompiles instead of replaying a freed program or stale buffers."""
     if self._net is not None:
       self._net.release()
     if self._dec is not None:
       for c in self._dec["chunks"]: c["net"].release()
     if self._pre is not None:
       for c in self._pre["chunks"]: c["net"].release()
+    if self._lmh is not None:
+      self._lmh["net"].release()
     self._net, self._seq, self._dec, self._pre, self._lmT = None, 0, None, None, None
+    self._lmh = None; self._lmh_off = False
 
   def _check_positions(self, n: int) -> None:
     """Raise a clear error instead of an out-of-bounds `wpe` index/broadcast failure when `n` exceeds a
@@ -311,6 +330,10 @@ class LlamaPrefill:
     return np.asarray(net(emb.astype(np.float16))).astype(np.float32)
 
   def _logits(self, hidden_row):
+    if self.ane_lm_head:
+      lmh = self._lm_head_program()
+      if lmh is not None:
+        return self._ane_logits(lmh, hidden_row)
     lm = self._lmT
     if lm is None:
       # Build once: NumPy has no fp16 BLAS, and a live `.T` view is strided, so a per-call
@@ -318,6 +341,43 @@ class LlamaPrefill:
       # 50k vocab). A contiguous fp32 copy of the transpose is converted once and is ~10x faster.
       lm = self._lmT = np.ascontiguousarray(np.asarray(self.w["lm_head"]).T, np.float32)
     return hidden_row @ lm
+
+  def _lm_head_program(self):
+    """Build (once, cached) the tiled ANE lm_head: [1, dim] -> N vocab tiles, each <= the family
+    max tensor dim. Returns None when the head stays on the host (opt-out, oversize, or a failed
+    compile). Shape-independent of max_len, so a decoder rebuild does not invalidate it."""
+    if self._lmh is not None:
+      return self._lmh
+    if self._lmh_off:
+      return None
+    try:
+      W = np.asarray(self.w["lm_head"])
+      V, D = W.shape
+      assert D == self.cfg.dim, f"lm_head dim {D} != model dim {self.cfg.dim}"
+      if V * D * 2 > self._lmhead_bytes:
+        warnings.warn(f"ANE lm_head skipped: {V}x{D} head = {V * D * 2 / 1e9:.2f} GB exceeds budget")
+        self._lmh_off = True
+        return None
+      tile = _lm_head_tile_size()
+      x = _input((1, D))
+      from ._compile import compile_multi
+      tiles = [x.linear(W[i:i + tile]) for i in range(0, V, tile)]
+      assert all(t.shape[-1] <= tile for t in tiles)
+      net = compile_multi(tiles, compress=self._lmhead_compress)
+      inm = {id(t): n for t, n in net.input_ports}; om = dict(net.output_ports)
+      self._lmh = {"net": net, "x": inm[id(x)], "outs": [om[t] for t in tiles], "V": V}
+      return self._lmh
+    except Exception as e:
+      warnings.warn(f"ANE lm_head compile failed, falling back to host: {e}")
+      self._lmh_off = True
+      return None
+
+  def _ane_logits(self, lmh, hidden_row):
+    """Execute the tiled ANE lm_head and return [vocab] fp32 logits."""
+    pr = lmh["net"].prog
+    pr.set_input(lmh["x"], hidden_row.astype(np.float16)[None])
+    pr.execute()
+    return np.concatenate([np.asarray(pr.read_output(o), np.float32) for o in lmh["outs"]], axis=1)[0]
 
   @staticmethod
   def _sample(logits, temperature, top_p, top_k):
@@ -394,8 +454,12 @@ class LlamaPrefill:
 
   def warmup(self, max_len):
     """Compile and cache the decode program for context length `max_len` (the one-time cost) so the next
-    `generate` streams immediately. Returns self."""
-    self._decoder(int(max_len)); return self
+    `generate` streams immediately. If `ane_lm_head` is active, compile the ANE lm_head too, so the first
+    token does not pay the compilation cost. Returns self."""
+    self._decoder(int(max_len))
+    if self.ane_lm_head:
+      self._lm_head_program()
+    return self
 
   def _prefiller(self, seq):
     """Build (once, cached) the CHUNKED batched-prefill program(s) for prompt length `seq`: layers split under
@@ -469,7 +533,8 @@ class LlamaPrefill:
         c["net"].prog.set_input(port, buf)
 
   def generate(self, token_ids, max_new_tokens=40, eos_id=None, max_len=None, on_token=None,
-               temperature=0.0, top_p=1.0, top_k=0, batched_prefill=True, prefill_pad=None, on_stage=None):
+               temperature=0.0, top_p=1.0, top_k=0, batched_prefill=True, prefill_pad=None, on_stage=None,
+               ane_lm_head=None):
     """Autoregressive generation with a resident KV-cache. The decode program (compiled once and cached) runs
     all layers for one token attending to caches that stay on the ANE across steps, so each step feeds only the
     token embedding + a position one-hot. `on_token(id)` is called per token (streaming). Greedy by default
@@ -477,9 +542,14 @@ class LlamaPrefill:
 
     `on_stage(name, elapsed)` receives per-token timing (seconds) when profiling: `embedding` and `layers`
     are the two halves of one decode step (the `step` stage times the whole call, so summing all stages
-    double-counts `step`), then `lm_head` and `sample`. Only emitted while profiling is on."""
+    double-counts `step`), then `lm_head` and `sample`. Only emitted while profiling is on.
+
+    `ane_lm_head` overrides `self.ane_lm_head` for this call (None keeps the attribute)."""
     cfg = self.cfg; f16 = np.float16
     profiling = on_stage is not None
+    saved = self.ane_lm_head
+    if ane_lm_head is not None:
+      self.ane_lm_head = ane_lm_head
     prompt = [int(t) for t in token_ids]; M = int(max_len or len(prompt) + max_new_tokens)
     eos = {int(eos_id)} if isinstance(eos_id, int) else {int(e) for e in (eos_id or ())}   # any-of stop set
     d = self._decoder(M); chunks = d["chunks"]
@@ -535,6 +605,8 @@ class LlamaPrefill:
       if nxt in eos: break
       if on_token is not None: on_token(nxt)                   # stream the token
       cur, pos = nxt, pos + 1
+    if ane_lm_head is not None:
+      self.ane_lm_head = saved
     return out
 
 
