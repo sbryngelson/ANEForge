@@ -19,49 +19,23 @@ LLM = "Qwen/Qwen3-0.6B"
 MAX_LEN = 512
 ANSWER_TOKENS = 160
 TOP_K, TOP_N = 20, 4
+CHUNK_TOK = 192          # token-window chunk size; uniform windows keep the Encoder to a few compiled programs
 REPO_DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
 
 from examples._rag import Chunk, chunk_text, pack_context, top_k   # noqa: E402
 
 
-def _read_corpus(path: str) -> list[Chunk]:
+def _read_corpus(path: str, tok) -> list[Chunk]:
   chunks: list[Chunk] = []
   for root, _, files in os.walk(path):
     for f in sorted(files):
       if f.endswith((".md", ".txt")):
         fp = os.path.join(root, f)
-        chunks += chunk_text(open(fp, encoding="utf-8", errors="ignore").read(), os.path.relpath(fp, path))
+        text = open(fp, encoding="utf-8", errors="ignore").read()
+        chunks += chunk_text(text, os.path.relpath(fp, path),
+                             lambda s: tok.encode(s, add_special_tokens=False), tok.decode,
+                             size=CHUNK_TOK, overlap=32)
   return chunks
-
-
-FIXED_EMBED_TOK = 256   # embed at one fixed length so the Encoder compiles a single program (it caches per length)
-
-
-def _embed_fixed(st, texts):
-  """Embed texts at one fixed padded token length so aneforge's Encoder compiles a single ANE program
-  instead of one per distinct token length. A real corpus spans hundreds of distinct chunk lengths, and
-  the Encoder caches one resident program per length (`Encoder._cache[len(ids)]`), which exhausts the
-  ANE (`op_create err=13`) well before the whole corpus is embedded; a fixed padded length compiles once
-  and is reused for every chunk and the query. Pools exactly as `Encoder.__call__` would for the model's
-  configured pooling mode (mean/cls/max), masking out padding for mean/max so pad tokens don't dilute the
-  pooled vector, and L2-normalizes -- matching `SentenceTransformer.encode(..., normalize_embeddings=True)`."""
-  enc = st._enc                                    # the underlying aneforge Encoder
-  vecs = []
-  for t in texts:
-    batch = enc.tok(t, padding="max_length", truncation=True, max_length=FIXED_EMBED_TOK)
-    ids = np.asarray(batch["input_ids"], dtype=np.int64)
-    mask = np.asarray(batch["attention_mask"], dtype=bool)
-    net = enc._cache.get(len(ids)) or enc._cache.setdefault(len(ids), enc._build(len(ids)))
-    states = net(enc._embed(ids))                 # [S, D] per-token states, real tokens + padding
-    real = states[mask]
-    if enc.pooling == "cls":
-      v = states[0]
-    elif enc.pooling == "max":
-      v = real.max(0)
-    else:
-      v = real.mean(0)
-    vecs.append(v / (np.linalg.norm(v) + 1e-9))
-  return np.asarray(vecs, np.float32)
 
 
 def _sample_energy(fn):
@@ -93,19 +67,19 @@ class Pipeline:
     from transformers import AutoTokenizer            # lazy
     from aneforge import load_llm
     from aneforge.sentence_transformers import CrossEncoder, SentenceTransformer
-    chunks = _read_corpus(path)
+    tok = AutoTokenizer.from_pretrained(llm_name)
+    chunks = _read_corpus(path, tok)
     if not chunks:
       raise SystemExit(f"rag_chat: no .md/.txt files found under {path!r}")
     embed = SentenceTransformer(EMBED)
-    vecs = _embed_fixed(embed, [c.text for c in chunks])
+    vecs = embed.encode([c.text for c in chunks], normalize_embeddings=True).astype(np.float32)
     llm = load_llm(llm_name); llm.warmup(MAX_LEN)
-    tok = AutoTokenizer.from_pretrained(llm_name)
     return cls(embed, CrossEncoder(RERANK), llm, tok, chunks, vecs)
 
   def answer(self, query: str, on_token) -> dict:
     t = {}
     t0 = time.perf_counter()
-    qv = _embed_fixed(self.embed, [query])[0]
+    qv = self.embed.encode([query], normalize_embeddings=True)[0].astype(np.float32)
     cand = top_k(qv, self.vecs, TOP_K)
     t["retrieve"] = (time.perf_counter() - t0) * 1e3
     t0 = time.perf_counter()

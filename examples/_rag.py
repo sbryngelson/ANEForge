@@ -14,22 +14,26 @@ class Chunk:
   source: str
 
 
-def chunk_text(text: str, source: str, size: int = 800, overlap: int = 160) -> list[Chunk]:
-  """Split `text` into overlapping character windows of `size`, stepping `size - overlap`.
-  A document shorter than `size` is a single chunk; no text is dropped."""
+def chunk_text(text, source, encode, decode, size: int = 192, overlap: int = 32) -> list[Chunk]:
+  """Split `text` into windows of exactly `size` real tokens (back-extending the final window so it is
+  also `size`), using injected `encode(str)->list` and `decode(list)->str`. A document with <= `size`
+  tokens is a single chunk. Uniform-length windows keep the ANE embedder to a few compiled programs."""
   text = text.strip()
-  if len(text) <= size:
-    return [Chunk(text, source)] if text else []
+  if not text:
+    return []
+  ids = encode(text)
+  if len(ids) <= size:
+    return [Chunk(text, source)]
   step = size - overlap
-  chunks = []
-  i = 0
-  while i < len(text):
-    chunk = text[i:i + size]
-    chunks.append(Chunk(chunk, source))
-    if i + size >= len(text):
+  out = []
+  for i in range(0, len(ids), step):
+    w = ids[i:i + size]
+    if len(w) < size:
+      w = ids[-size:]
+    out.append(Chunk(decode(w), source))
+    if i + size >= len(ids):
       break
-    i += step
-  return chunks
+  return out
 
 
 def top_k(query_vec: np.ndarray, corpus: np.ndarray, k: int) -> list[int]:
