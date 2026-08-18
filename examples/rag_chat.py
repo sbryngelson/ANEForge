@@ -1,12 +1,17 @@
 """Chat with a folder of docs, entirely on the Apple Neural Engine: SentenceTransformer
 embeddings, a CrossEncoder reranker, and Qwen3-0.6B generation all run on the engine.
 
-  python3 examples/rag_chat.py [path]        # path defaults to this repo's docs/
-  sudo python3 examples/rag_chat.py --energy # add per-query joules (needs powermetrics)
+  python3 examples/rag_chat.py [path]                 # path defaults to this repo's docs/
+  python3 examples/rag_chat.py ./docs --llm Qwen/Qwen3-8B   # swap the generation model
+  sudo python3 examples/rag_chat.py --energy          # add per-query joules (needs powermetrics)
+
+The corpus index is cached per folder, so a restart over unchanged docs is instant (no re-embedding).
 """
+import hashlib
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import warnings
 
@@ -29,6 +34,7 @@ MAX_LEN = 512
 ANSWER_TOKENS = 160
 TOP_K, TOP_N = 20, 4
 REPO_DOCS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+_CACHE_DIR = os.path.join(tempfile.gettempdir(), "aneforge_rag")   # cached corpus embeddings live here
 
 from examples._rag import Chunk, chunk_text, pack_context, top_k   # noqa: E402
 
@@ -44,6 +50,37 @@ def _read_corpus(path: str) -> list[Chunk]:
           text = fh.read()
         chunks += chunk_text(text, os.path.relpath(fp, path))
   return chunks
+
+
+def _corpus_signature(path: str, embed_name: str) -> str:
+  """A hash over the embedding model and every doc's path/mtime/size -- the index cache key. Any edit,
+  addition, or removal changes it, so a stale index is never reused."""
+  parts = [embed_name]
+  for root, dirs, files in os.walk(path):
+    dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIP_DIRS]
+    for f in sorted(files):
+      if f.endswith((".md", ".txt")):
+        fp = os.path.join(root, f); st = os.stat(fp)
+        parts.append(f"{os.path.relpath(fp, path)}:{int(st.st_mtime)}:{st.st_size}")
+  return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
+
+
+def _load_or_build_index(path: str, embed, embed_name: str):
+  """Return (chunks, vectors), reading a cached index when the corpus is unchanged so a restart does not
+  re-embed. Keyed by `_corpus_signature`, so any doc edit rebuilds it automatically."""
+  cache = os.path.join(_CACHE_DIR, f"{_corpus_signature(path, embed_name)}.npz")
+  if os.path.exists(cache):
+    d = np.load(cache, allow_pickle=True)
+    chunks = [Chunk(t, s) for t, s in zip(d["texts"].tolist(), d["sources"].tolist())]
+    return chunks, d["vecs"]
+  chunks = _read_corpus(path)
+  if not chunks:
+    raise SystemExit(f"rag_chat: no .md/.txt files found under {path!r}")
+  vecs = embed.encode([c.text for c in chunks], normalize_embeddings=True).astype(np.float32)
+  os.makedirs(_CACHE_DIR, exist_ok=True)
+  np.savez(cache, texts=np.array([c.text for c in chunks], dtype=object),
+           sources=np.array([c.source for c in chunks], dtype=object), vecs=vecs)
+  return chunks, vecs
 
 
 def _sample_energy(fn):
@@ -72,20 +109,18 @@ class Pipeline:
     self.chunks, self.vecs = chunks, vecs
 
   @classmethod
-  def build(cls, path: str, llm_name: str = LLM) -> "Pipeline":
+  def build(cls, path: str, llm_name: str = LLM, embed_name: str = EMBED,
+            rerank_name: str = RERANK) -> "Pipeline":
     import transformers                               # lazy
     from transformers import AutoTokenizer
     from aneforge import load_llm
     from aneforge.sentence_transformers import CrossEncoder, SentenceTransformer
     transformers.logging.set_verbosity_error(); transformers.logging.disable_progress_bar()
     tok = AutoTokenizer.from_pretrained(llm_name)
-    chunks = _read_corpus(path)
-    if not chunks:
-      raise SystemExit(f"rag_chat: no .md/.txt files found under {path!r}")
-    embed = SentenceTransformer(EMBED)
-    vecs = embed.encode([c.text for c in chunks], normalize_embeddings=True).astype(np.float32)
+    embed = SentenceTransformer(embed_name)
+    chunks, vecs = _load_or_build_index(path, embed, embed_name)   # cached index -> instant restart
     llm = load_llm(llm_name); llm.warmup(MAX_LEN)
-    return cls(embed, CrossEncoder(RERANK), llm, tok, chunks, vecs)
+    return cls(embed, CrossEncoder(rerank_name), llm, tok, chunks, vecs)
 
   def answer(self, query: str, on_token) -> dict:
     t = {}
@@ -111,24 +146,29 @@ class Pipeline:
 
 
 def main(argv) -> int:
-  args = [a for a in argv if not a.startswith("--")]
-  path = args[0] if args else REPO_DOCS
-  energy = "--energy" in argv
-  print(f"loading models and indexing {path} on the Apple Neural Engine ...\n"
-        f"(first run downloads ~1.5 GB of models from Hugging Face; cached for later runs)", flush=True)
-  p = Pipeline.build(path)
+  import argparse
+  ap = argparse.ArgumentParser(description="Chat with a folder of docs, entirely on the Apple Neural Engine.")
+  ap.add_argument("path", nargs="?", default=REPO_DOCS, help="folder of .md/.txt docs (default: this repo's docs/)")
+  ap.add_argument("--energy", action="store_true", help="report per-query joules via powermetrics (needs sudo)")
+  ap.add_argument("--llm", default=LLM, help=f"HF generation model (default: {LLM})")
+  ap.add_argument("--embed", default=EMBED, help=f"HF embedding model (default: {EMBED})")
+  ap.add_argument("--rerank", default=RERANK, help=f"HF reranker model (default: {RERANK})")
+  a = ap.parse_args(argv)
+  print(f"loading models and indexing {a.path} on the Apple Neural Engine ...\n"
+        f"(first run downloads the models from Hugging Face -- ~1.5 GB for the defaults; cached for later runs)", flush=True)
+  p = Pipeline.build(a.path, llm_name=a.llm, embed_name=a.embed, rerank_name=a.rerank)
   print(f"indexed {len(p.chunks)} chunks from {len({c.source for c in p.chunks})} files. "
-        f"embeddings + reranker + Qwen3-0.6B all on the ANE.\nask a question (Ctrl-D to quit).\n")
+        f"embeddings + reranker + {os.path.basename(a.llm)} all on the ANE.\nask a question (Ctrl-D to quit).\n")
   while True:
     try:
       q = input("> ").strip()
-    except EOFError:
+    except (EOFError, KeyboardInterrupt):
       print(); return 0
     if not q:
       continue
     print("ane> ", end="", flush=True)
     stream = lambda i: print(p.tok.decode([i]), end="", flush=True)
-    if energy:
+    if a.energy:
       timing, mj = _sample_energy(lambda: p.answer(q, on_token=stream))
       tail = f" | ~{mj:.0f} mJ this query, 0 GPU" if mj is not None else " | (energy: run with sudo)"
     else:
