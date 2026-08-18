@@ -161,3 +161,46 @@ Embeddings match the reference encoder at a fraction of the GPU's energy.
 
 - **Pooling** comes from `1_Pooling/config.json` (`pooling_mode_cls_token` / `pooling_mode_max_tokens` / `pooling_mode_mean_tokens`).
 - **Normalize** is true if `modules.json` lists a `Normalize` module. A model that ships a Normalize module is L2-normalised regardless of `normalize_embeddings`, matching sentence-transformers.
+
+## RAG on the ANE (examples/rag_chat.py)
+
+`examples/rag_chat.py` is a chat-with-your-docs demo where every stage runs on the
+Neural Engine: embedding, reranking, and generation. There is no host-side model, and no
+GPU or CPU inference path in the loop.
+
+Run it against a folder of `.md`/`.txt` files:
+
+```
+python3 examples/rag_chat.py [path]   # path defaults to this repo's docs/
+```
+
+It walks `path`, chunks each file (`examples._rag.chunk_text`), embeds every chunk with
+`SentenceTransformer`, and holds the vectors in memory. Each query is embedded, matched
+by cosine similarity against the corpus (`top_k`), reranked with a `CrossEncoder`, packed
+into a prompt (`pack_context`), and answered by a resident-KV-cache Qwen3-0.6B decode
+(`aneforge.load_llm`) that streams tokens as they are produced.
+
+Model stack:
+
+- `sentence-transformers/all-MiniLM-L6-v2` for embeddings
+- `cross-encoder/ms-marco-MiniLM-L-6-v2` for reranking
+- `Qwen/Qwen3-0.6B` for generation
+
+All three are fixed and small enough to keep the demo's compile and load times short.
+
+`MAX_LEN` is a fixed 512-token context (`ANSWER_TOKENS = 160` reserved for the answer, so
+the packed prompt budget is 352 tokens). The decode program is compiled once via
+`llm.warmup(MAX_LEN)` before the first question, so every subsequent query streams
+immediately instead of paying a per-query compile cost.
+
+`--energy` adds a per-query joules line (needs `sudo` and `powermetrics`):
+
+```
+sudo python3 examples/rag_chat.py --energy
+```
+
+It samples package power with `powermetrics` for the duration of one `Pipeline.answer`
+call and reports the query's energy as `~NNN mJ this query, 0 GPU` -- 0 GPU because the
+whole pipeline, including generation, never leaves the Neural Engine. Without `sudo` (or
+without `powermetrics` on the machine), the flag falls back to running the query with no
+energy figure rather than failing.

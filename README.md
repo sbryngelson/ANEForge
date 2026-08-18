@@ -91,7 +91,8 @@ model via `af.load_llm` and benchmarks prefill/decode (matching Hugging Face
 logits). For retrieval,
 [`examples/rag_embeddings.py`](examples/rag_embeddings.py) is a LangChain
 `Embeddings` drop-in backed by the on-ANE encoder (4-5x faster than the GPU,
-cosine 1.0000).
+cosine 1.0000). Chat with your docs entirely on the Neural Engine -- embeddings,
+reranker, and LLM on one engine: `python3 examples/rag_chat.py`.
 
 ## How it compares
 
