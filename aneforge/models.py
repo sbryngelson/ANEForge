@@ -193,8 +193,9 @@ class Encoder:
 
   def _build(self, S: int) -> Model | SegmentedModel:
     h = input((S, self.D))
+    m = input((1, S, S))                     # additive key-padding mask: 0 on real keys, -1e4 on padded ones
     for w in self.layers:
-      attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H)
+      attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H, mask=m)
       h = (h + attn).layer_norm(w["ln1w"], w["ln1b"], self.eps)
       ff = h.linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
       h = (h + ff).layer_norm(w["ln2w"], w["ln2b"], self.eps)
@@ -209,11 +210,18 @@ class Encoder:
 
   def __call__(self, texts, normalize: bool = True) -> np.ndarray:
     if isinstance(texts, str): texts = [texts]
+    enc = [np.asarray(self.tok(t)["input_ids"], dtype=np.int64) for t in texts]
+    # Pad the whole batch to its longest sequence and compile ONE program for that length -- the padded
+    # keys are masked out per text, so a corpus of varied lengths shares one program instead of one each.
+    S = max((len(ids) for ids in enc), default=1)
+    net = self._cache.get(S) or self._cache.setdefault(S, self._build(S))
+    pad_id = self.tok.pad_token_id or 0
     vecs = []
-    for t in texts:
-      ids = np.asarray(self.tok(t)["input_ids"], dtype=np.int64)
-      net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
-      states = net(self._embed(ids))               # [S, D] per-token states on the ANE
+    for ids in enc:
+      n = len(ids)
+      padded = np.full(S, pad_id, dtype=np.int64); padded[:n] = ids
+      mask = np.zeros((1, S, S), dtype=np.float32); mask[0, :, n:] = -1e4   # mask the padded key columns
+      states = net(self._embed(padded), mask)[:n]  # real-token states on the ANE (pads masked + dropped)
       if self.pooling == "cls":
         v = states[0]
       elif self.pooling == "max":
@@ -323,8 +331,9 @@ class CrossEncoder:
 
   def _build(self, S: int) -> Model | SegmentedModel:
     h = input((S, self.D))
+    m = input((1, S, S))                     # additive key-padding mask: 0 on real keys, -1e4 on padded ones
     for w in self.layers:
-      attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H)
+      attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H, mask=m)
       h = (h + attn).layer_norm(w["ln1w"], w["ln1b"], self.eps)
       ff = h.linear(w["Wi"], w["bi"]).gelu().linear(w["Wd"], w["bd"])
       h = (h + ff).layer_norm(w["ln2w"], w["ln2b"], self.eps)
@@ -341,13 +350,21 @@ class CrossEncoder:
     """`pairs` is a (query, passage) tuple or a list of them; returns a relevance score each."""
     if pairs and isinstance(pairs[0], str):     # a single (query, passage) pair
       pairs = [pairs]
+    enc = [self.tok(q, p, truncation=True) for q, p in pairs]
+    ids = [np.asarray(e["input_ids"], dtype=np.int64) for e in enc]
+    # Pad the batch to its longest pair and compile ONE program; padded keys are masked per pair, so a
+    # query's candidates (and the next query) share one program instead of one per pair length.
+    S = max((len(i) for i in ids), default=1)
+    net = self._cache.get(S) or self._cache.setdefault(S, self._build(S))
+    pad_id = self.pad_id or 0
     scores = []
-    for query, passage in pairs:
-      enc = self.tok(query, passage, truncation=True)
-      ids = np.asarray(enc["input_ids"], dtype=np.int64)
-      typ = _token_type_ids(enc, len(ids), self._has_typ)
-      net = self._cache.get(len(ids)) or self._cache.setdefault(len(ids), self._build(len(ids)))
-      cls = net(self._embed(ids, typ))[0]                              # [CLS] / <s> state, on the ANE
+    for e, tid in zip(enc, ids):
+      n = len(tid)
+      typ = _token_type_ids(e, n, self._has_typ)
+      padded = np.full(S, pad_id, dtype=np.int64); padded[:n] = tid
+      typ_p = np.zeros(S, dtype=np.int64); typ_p[:n] = typ
+      mask = np.zeros((1, S, S), dtype=np.float32); mask[0, :, n:] = -1e4   # mask the padded key columns
+      cls = net(self._embed(padded, typ_p), mask)[0]                   # [CLS] / <s> state (row 0), on the ANE
       pooled = _seqcls_activation(cls @ self.pool_w.T + self.pool_b, self._model_type)
       logits = pooled @ self.cls_w.T + self.cls_b                      # [num_labels]
       scores.append(float(logits[0]))

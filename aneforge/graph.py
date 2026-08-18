@@ -944,8 +944,11 @@ def _tiled_attention(qh: Tensor, kt: Tensor, vh: Tensor, scale: float, n_tiles: 
   return concat(out_tiles, axis=seq_axis)
 
 
-def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
-  """Multi-head self-attention on `x` [S,D]. Weights [out,in]; biases [D] or None."""
+def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int, mask=None) -> Tensor:
+  """Multi-head self-attention on `x` [S,D]. Weights [out,in]; biases [D] or None. `mask`, when given,
+  is an additive score bias broadcast to [H,S,S] and sliced along the query axis -- pass `[1,S,S]` (or
+  `[S,S]`) with -inf/-1e4 at padded key columns for a key-padding mask (lets a padded batch share one
+  program without pad tokens corrupting the real ones)."""
   S, D = x.shape
   if D % n_heads:
     raise ValueError(f"mha: D={D} not divisible by n_heads={n_heads}")
@@ -957,7 +960,7 @@ def mha(x: Tensor, Wq, bq, Wk, bk, Wv, bv, Wo, bo, n_heads: int) -> Tensor:
   # query-tiling: [tile, S] score tiles per head instead of the full [H, S, S] matrix
   from . import _optimize as _opt
   n_tiles = _opt.attention_tiles(S, n_heads, dh)
-  o = _tiled_attention(qh, kt, vh, scale, n_tiles, seq_axis=1)  # [H, S, dh]
+  o = _tiled_attention(qh, kt, vh, scale, n_tiles, seq_axis=1, mask=mask)  # [H, S, dh]
   o = o.transpose([1, 0, 2]).reshape(S, D)
   return o.linear(Wo, bo)
 
