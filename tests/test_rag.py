@@ -1,5 +1,8 @@
 from examples._rag import Chunk, chunk_text, top_k, PROMPT_TEMPLATE, pack_context
 import numpy as np
+import pytest
+
+from _helpers import requires_ane
 
 
 def test_chunk_text_windows_with_overlap():
@@ -39,3 +42,13 @@ def test_pack_context_truncates_a_single_oversized_chunk():
   prompt = pack_context(chunks, "Q?", budget=budget, token_len=len)
   assert "Q?" in prompt and "Z" in prompt
   assert len(prompt) <= budget
+
+
+@requires_ane
+def test_pipeline_answers_end_to_end(tmp_path):
+  import examples.rag_chat as rc
+  (tmp_path / "d.md").write_text("The ANE runs fp16. Espresso e5rt is the runtime aneforge targets.")
+  p = rc.Pipeline.build(str(tmp_path))
+  toks = []
+  timing = p.answer("What runtime does aneforge target?", on_token=toks.append)
+  assert toks and "stage_ms" in timing
