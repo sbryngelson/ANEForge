@@ -14,7 +14,7 @@ The `aneforge` package imports only `numpy`. `torch` / `torchvision` /
 `transformers` (and `soundfile` for Whisper) are lazy imports used only by the
 pretrained loaders (`af.load`, `af.load_resnet`, `af.load_vit`, `af.load_clip`,
 `af.load_gpt2`, `af.load_llm`, `af.load_whisper`, `af.load_onnx`) and the
-diffusion examples; install them with the `models` extra when you need them.
+diffusion examples; install them with the `models` extra.
 
 ## Install
 
@@ -62,12 +62,12 @@ net.release()
 
 Inputs are fed in the order they were created with `af.input`; arrays are cast
 to fp16 in, fp32 out. `compile(out, compress="int8")` streams matmul/linear weights
-as per-channel int8; `compile(out, compress=...)` selects the weight encoding more
-generally (`int8`, `int4`, `sparse`, `blockwise`, or family-aware `auto`) - see
+as per-channel int8; `compile(out, compress=...)` selects the weight encoding
+(`int8`, `int4`, `sparse`, `blockwise`, or family-aware `auto`) - see
 the [API reference](aneforge-api.md#weight-compression).
 
-The op surface covers conv/conv_transpose, matmul/`@`/linear/bmm, the usual
-activations (relu/silu/gelu/...), elementwise arithmetic, reductions and norms
+The op surface covers conv/conv_transpose, matmul/`@`/linear/bmm, activations
+(relu/silu/gelu/...), elementwise arithmetic, reductions and norms
 (softmax, rms_norm/layer_norm/group_norm/batch_norm, l2_norm), pooling/upsample/
 concat/reshape/transpose/pixel_(un)shuffle, and nn helpers (mha,
 cross_attention, geglu). A second family of netplist-bridge ops (sdpa,
@@ -113,9 +113,9 @@ Worked demos live in [`examples/`](https://github.com/sbryngelson/ANEForge/tree/
 
 ## MIL input format
 
-Under the hood the frontend emits a small subset of Apple's MIL (Model
-Intermediate Language), the same textual IR `coremltools.convert(convert_to=
-'mlprogram')` produces. A minimal program:
+The frontend emits a small subset of Apple's MIL (Model Intermediate Language),
+the same textual IR `coremltools.convert(convert_to='mlprogram')` produces. A
+minimal program:
 
 ```mil
 program(1.3)
@@ -129,7 +129,7 @@ program(1.3)
 ```
 
 You rarely write MIL by hand - the frontend generates it - but the
-[MIL primer](mil-primer.md) covers it if you need to.
+[MIL primer](mil-primer.md) covers it.
 
 ## Next
 

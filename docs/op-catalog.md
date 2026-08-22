@@ -175,7 +175,7 @@
 | `reduce_min` | Y | Y | Y | Y | Reduce | F2 |
 | `reduce_prod` | N | N | N | N | Unsupported | `Unsupported` everywhere - decompose (log-sum-exp / scan) on host |
 | `reduce_sum` | Y | Y | Y | Y | Reduce | F2 (native A13+; decomposed on A11/A12). reduced-axis >=192 -> transpose route (>=384 on A15+) |
-| `reduce_sum_square` | Y | Y | Y | Y | Reduce | F2; the 0x494 `reduce->square` *fusion* is M2+ only - M1 emits an extra fp16 round (<=1-round numeric, not a wall) |
+| `reduce_sum_square` | Y | Y | Y | Y | Reduce | F2; the 0x494 `reduce->square` fusion is M2+ only - M1 emits an extra fp16 round (<=1-round numeric, not a wall) |
 
 ## Special / math
 | op | M1 | M2 | M3 | M4/M5 | kernel | note |

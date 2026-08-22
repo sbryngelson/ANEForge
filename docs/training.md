@@ -2,10 +2,9 @@
 
 ANEForge is not inference-only. `aneforge/autograd.py` is a small reverse-mode
 autograd in which both the forward and the backward pass compile to, and run on,
-the Apple Neural Engine through the e5rt path. A model's weights, its
-gradients, and the optimizer update all live as ANE graph ops; the host computes
-only a scalar learning rate, samples minibatches, and reads results at
-checkpoints.
+the Apple Neural Engine through the e5rt path. A model's weights, gradients, and
+the optimizer update all live as ANE graph ops; the host computes only a scalar
+learning rate, samples minibatches, and reads results at checkpoints.
 
 Training runs on the same e5rt dispatch backend as the rest of ANEForge - no
 CoreML, no entitlement.
@@ -27,9 +26,9 @@ W = af.parameter(np.random.randn(784, 128).astype(np.float32))
 `af.parameter(init)` creates a graph input tagged trainable. It carries an
 fp32 master value in `attrs["value"]`, is used in the graph like any other
 input, and is fed its current value on each evaluation. Updating a weight is
-therefore just writing a new value into the master array and feeding it on the
-next step - no recompile per step. This is the general mutable-weight mechanism
-the whole training stack rests on.
+then just writing a new value into the master array and feeding it on the
+next step - no recompile per step. This mutable-weight mechanism underlies the
+whole training stack.
 
 ### The VJP registry
 
@@ -44,9 +43,8 @@ def _vjp_mul(t, g):
 ```
 
 Each rule takes the node and its incoming cotangent `g` and returns one gradient
-per source. The gradients are themselves ordinary ANEForge tensor ops, so the
-backward pass is a graph that compiles and runs on the engine exactly like the
-forward pass.
+per source. The gradients are ordinary ANEForge tensor ops, so the backward pass
+is a graph that compiles and runs on the engine like the forward pass.
 
 ### `backward` builds an on-ANE backward graph
 
@@ -61,7 +59,7 @@ into an additive constant rather than emitted as a multiply, which sidesteps the
 `af.backward_from(grad_root, root, params)` seeds from an explicit gradient at an
 intermediate tensor (for example the logits) instead of from a scalar loss.
 
-Both functions accept a `stop` stop-gradient frontier (it defaults to `params`).
+Both functions accept a `stop` stop-gradient frontier (default `params`).
 For ordinary leaf weights this is a no-op, but it is what makes multi-step
 unrolling possible: when one step's updated-weight tensors thread into the next
 step's forward, each step's gradient must treat the current weights as leaves
@@ -91,13 +89,13 @@ values (`af.SGD` / `af.Adam`), which is the byte-for-byte baseline path.
 
 ### `device_optimizer=True`: the update on the engine
 
-With `device_optimizer=True` the optimizer arithmetic is compiled to ANE graph
-ops as well. In addition to the per-parameter backward programs, a per-parameter
+With `device_optimizer=True` the optimizer arithmetic compiles to ANE graph
+ops too. Alongside the per-parameter backward programs, a per-parameter
 update program computes the new state on the engine, so no training tensor math
 runs on the host. The host only computes the scalar `lr_t`, shuttles state and
 gradients in and out, samples the minibatch, and prints.
 
-One subtlety is load-bearing here. The learning rate `lr_t` fed to the on-engine
+One subtlety is load-bearing. The learning rate `lr_t` fed to the on-engine
 Adam update must not divide by `loss_scale`. Adam's step is the ratio
 `m / sqrt(v)`; with a scaled gradient `g' = S*g` the moments scale as `m' = S*m`
 and `v' = S^2*v`, so the ratio is scale-invariant and the loss-scale cancels.
@@ -112,7 +110,7 @@ fed each step and read back.
 per-parameter update - as one fused multi-output program and keeps the optimizer
 state resident on-device across steps. Each updated-state output is aliased back
 onto its own input port with `Program.share_buffer` (via `compile_multi` /
-`MultiModel`) and the shared buffers are seeded once. The host then feeds only
+`MultiModel`), the shared buffers seeded once. The host then feeds only
 the minibatch and `lr_t` each step, and reads the weights off the device only at
 checkpoints; nothing is shuttled in and out.
 
@@ -128,15 +126,15 @@ roughly 2,340 steps, in about 1.0 s - faster than the host round-trip path
 Gradients are computed in fp16. A loss scale (commonly 1024) lifts small
 gradients out of fp16 underflow before the backward pass and is divided back out
 before the optimizer step (or, for Adam, cancels in the ratio as above). The
-optimizer state itself is fine in fp16: the Adam moments stay O(1-20) and do not
-overflow, so fp16 optimizer state is sufficient and paired-fp16 is not needed
+optimizer state is fine in fp16: the Adam moments stay O(1-20) and do not
+overflow, so fp16 optimizer state suffices and paired-fp16 is not needed
 for the models trained here.
 
-There is one chip-specific caveat. On the A13-class ANE (M1), the trainable
+One chip-specific caveat. On the A13-class ANE (M1), the trainable
 conv's width-offset im2col slices route through a fixed-point crop-DMA that
 saturates any value past 4094 (= 65504/16) to infinity, so an extreme
-`loss_scale` times a large backward activation could in principle corrupt a conv
-weight-gradient. ANEForge emits a warning only in that case and never caps
+`loss_scale` times a large backward activation could corrupt a conv
+weight-gradient. ANEForge warns in that case and never caps
 `loss_scale`. The auto-cap was refuted end-to-end on M1: a real normalized CNN
 trains identically at loss_scale 128, 1024, and 65536 - only a synthetic
 `0.5*sum(y^2)` repro with random inputs ever reaches the threshold. The warning
@@ -163,7 +161,7 @@ deterministic across repeats. A14 lands exactly on M1's number, so the one-sampl
 ANE's <=1-ULP-per-op cross-chip fp16 difference accumulating over 300 steps, with the
 drift boundary at A15/A16 rather than per-chip noise: real, but far too small to
 matter. Training is chip-portable across all three measured generations. See
-[cross-chip.md](cross-chip.md) for the portability story.
+[cross-chip.md](cross-chip.md).
 
 ### Versus the GPU and CPU
 
@@ -182,7 +180,7 @@ and both beat the CPU. On the same 784-256-10 GELU MLP (Adam, B=128, 5 epochs =
 This is the dispatch-bound, tiny-model regime (~0.4 ms/step, ~200K parameters),
 so the ANE matching the GPU is about per-step overhead, not peak FLOPS; for
 larger compute-bound models the GPU's raw throughput is expected to pull ahead.
-ANE training is a capability and an efficiency story, not a peak-speed claim.
+ANE training is a capability and efficiency story, not a peak-speed claim.
 
 ## Host-free multi-step dispatch
 
@@ -193,7 +191,7 @@ builds it: each `step()` runs K steps in one dispatch on the engine, with the
 host feeding K minibatches plus the per-step learning rates (an array move, no
 per-step host round-trip inside the block). With `resident=True` (the default)
 the optimizer state is `share_buffer`-aliased across dispatches, so the host
-feeds only the K minibatches and per-step lr and reads weights at checkpoints.
+feeds only the K minibatches and per-step lr, reading weights at checkpoints.
 
 ```python
 xs = [af.input((B, DIN)) for _ in range(K)]
@@ -206,12 +204,11 @@ acc = (tr.predict(Xte).argmax(1) == yte).mean()
 ```
 
 One `execute_multi` drives K on-engine steps with no Path B and no
-entitlement. The honest finding is that this is performance-neutral: on the
-resident-buffer path the per-step host dispatch was never the bottleneck, so
-collapsing the per-step `execute()` calls into one buys nothing measurable. The
-bounded multi-step path is reachable without an entitlement, and by this
-measurement the entitlement-gated fully-autonomous loop would not run these
-workloads any faster.
+entitlement. This is performance-neutral: on the resident-buffer path the per-step
+host dispatch was never the bottleneck, so collapsing the per-step `execute()`
+calls into one buys nothing measurable. The bounded multi-step path is reachable
+without an entitlement, and by this measurement the entitlement-gated
+fully-autonomous loop would not run these workloads any faster.
 
 For a full-batch task the data and learning rate can also be seeded once, after
 which the training loop is literally `prog.execute()` and the host feeds nothing
@@ -224,9 +221,9 @@ end to end on the engine:
 
 - `examples/train_mnist_mlp.py` - a GELU MLP, K steps unrolled per dispatch.
 - `examples/train_mnist_cnn.py` - conv -> relu -> avg_pool -> fc, with a
-  trainable conv. The native ANE conv requires a baked weight, so
+  trainable conv. The native ANE conv needs a baked weight, so
   `af.conv_param` / `af.conv2d` build the conv from primitives (static im2col plus
-  a batched matmul), which gives a weight gradient that runs on the engine; the
+  a batched matmul) for a weight gradient that runs on the engine; the
   `conv_shape` is carried across each in-graph optimizer update automatically.
 - `examples/train_transformer.py` - a multi-head self-attention block trained
   fully host-free with `af.adam_step` and resident state.
@@ -246,7 +243,7 @@ end to end on the engine:
   and it reconstructs its training text from a seed. Token embedding is a one-hot
   matmul (`onehot @ W_emb`) rather than a `gather` (which has no VJP), so the
   embedding gradient is an ordinary matmul gradient; causal masking is an additive
-  upper-triangular bias before softmax. Stacking the fused forward + backward +
+  upper-triangular bias before softmax. The fused forward + backward +
   optimizer program converges through eight layers; compile time, not correctness,
   is the practical ceiling on depth.
 - `examples/train_charlm_corpus.py` - the data-scale companion: the same model trains
@@ -262,7 +259,7 @@ end to end on the engine:
   layer's shape, so each is compiled once and reused for every layer; the six programs
   (embed, layer, head, each with a forward and a backward) compile in about half a
   second regardless of depth, where the monolithic eight-layer compile alone took
-  about 162 seconds. Cross-entropy falls from about 3.0 to 0.03. This removes compile
+  about 162 seconds. Cross-entropy falls from about 3.0 to 0.03, removing compile
   size as the ceiling on training depth.
 
 ## Depth without a compile-size wall
@@ -270,18 +267,18 @@ end to end on the engine:
 A monolithic compile fuses a model's whole forward, backward, and optimizer step into
 one program, so compile time grows superlinearly with depth and caps how deep a model
 can train. `aneforge.streaming.CheckpointedStack` removes that ceiling for a stack of
-identical layers. The per-layer forward and the per-layer backward are each compiled
+identical layers. The per-layer forward and backward are each compiled
 once and reused for every layer, fed that layer's parameters and its checkpointed
-input activation, so compile work is independent of the layer count. The backward is
+input activation, so compile work is independent of layer count. The backward is
 standard gradient checkpointing: each layer's input is stored, the layer's forward is
 recomputed inside the reused backward program, and that program returns the parameter
-gradients together with the gradient with respect to the input (the upstream gradient
+gradients plus the gradient with respect to the input (the upstream gradient
 for the layer below). The streamed gradients are bit-exact against a monolithic
 backward. The caller drives the embedding and output stages (each compiled once) and a
 host-side optimizer over the streamed gradients, with all forward and backward compute
 on the engine.
 
-The two normalization layers in those blocks demonstrate that a real
+The two normalization layers in those blocks show that a real
 norm-bearing architecture trains on the engine, affine included. The norm methods
 are polymorphic in their affine arguments: a numpy `gamma` / `beta` bakes a fixed
 affine (the native lowering, gradient flows through the input only), while a
@@ -290,7 +287,7 @@ with an explicit learnable scale and shift, so the affine trains alongside the
 rest of the model (its gradient flows through the broadcast-aware `mul` / `add`
 VJPs). Pass `gamma` / `beta` shaped to broadcast over the normalized axis
 (`[1, D]` for `layer_norm` / `rms_norm`, `[1, C, 1, 1]` for `group_norm`). Models
-that use `prelu` are likewise trainable through the `Trainer`.
+using `prelu` are likewise trainable through the `Trainer`.
 
 ## Honest limits
 
@@ -314,7 +311,7 @@ CNNs, plain CNNs, and MLPs end to end on the engine. The normalization VJPs use
 the exact closed-form input gradient; because ANEForge has no constant-tensor op,
 the backward graph re-injects `gamma` as a fed value-input.
 
-If a model uses a forward op with no registered VJP, it compiles and runs its forward
+A forward op with no registered VJP compiles and runs its forward
 pass, then fails at `backward` with `no vjp for op '<name>'`. The norms and `silu` are
 covered (they appear in nearly every modern architecture). The remaining gaps are
 low-value and do not block mainstream training: the reduction-routing ops `amax` / `amin`
@@ -335,7 +332,7 @@ the combination fails). The autograd builds constant tensors with
 `_const_like(t, c) = (t - t).adds(c)` - an exact-zero subtract rather than a
 multiply by zero - which sidesteps the wall for any finite tensor, and the
 backward seed folds the loss scale into an additive constant for the same reason.
-This is handled internally; it matters only if you author backward graphs by hand.
+Handled internally; it matters only if you author backward graphs by hand.
 
 ### Throughput
 

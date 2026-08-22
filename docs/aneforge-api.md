@@ -1,11 +1,11 @@
 # aneforge - frontend API reference
 
-`aneforge` is a clean graph -> compile -> run frontend for the Apple Neural
+`aneforge` is a graph -> compile -> run frontend for the Apple Neural
 Engine. You build a small tensor graph from Python, `compile` it into ONE fused
 e5rt program, and call the result on the ANE. Fusing is the point: the ANE
 penalises many tiny dispatches, so a whole subgraph becomes a single program.
 
-This page is the API reference. For the underlying hardware op surface and dtype
+For the underlying hardware op surface and dtype
 limits see [`capabilities.md`](capabilities.md).
 
 ```python
@@ -30,7 +30,7 @@ net.release()
 - `compile(out, int8=True)` streams matmul/linear weights as per-channel int8
   (dequantised during the tile DMA - half the bytes, same fused program). `int8=True`
   is the alias for `compress='int8'`; see [weight compression](#weight-compression)
-  for the full set of encodings (`int4`, `sparse`, `blockwise`, `auto`).
+  for the other encodings (`int4`, `sparse`, `blockwise`, `auto`).
 
 ## Image input
 
@@ -39,8 +39,8 @@ dequantises it on the engine: `cast(uint8->fp16) -> mul(scale) -> add(bias)` run
 in-graph ANE ops, so raw camera / decoded-video bytes feed the model directly and
 the host skips the float-convert + repack. `scale` / `bias` are scalars (the usual
 `x/255` normalisation) or length-`C` sequences for per-channel NCHW normalisation
-(broadcast as `[1,C,1,1]`). The result is a normal fp16 `Tensor` for the rest of the
-graph; it is byte-identical to converting on the host.
+(broadcast as `[1,C,1,1]`). The result is a normal fp16 `Tensor`; it is
+byte-identical to converting on the host.
 
 ## Two op routes
 
@@ -52,7 +52,7 @@ Ops come in two families, decided automatically at `compile` time:
    frontend never emits (e.g. fused SDPA, TopK, point-cloud layers). The graph
    is cut around each one: the surrounding fused regions run as e5rt
    programs and the bridge node runs as a separate native-ANE sub-program, with
-   tensors threaded between stages as host fp16 arrays. The presence of any
+   tensors threaded between stages as host fp16 arrays. Any
    bridge op turns `compile` into a `SegmentedModel`.
 
 ---
@@ -125,8 +125,8 @@ the emitter.) Binary ops broadcast NumPy-style and take two graph `Tensor`s - us
 ## Netplist-bridge ops (native Path-A sub-programs)
 
 Each of these cuts the graph: it runs as its own native-ANE sub-program,
-accelerated by the persistent Path-A worker (see below). Get exact shape constraints
-and arch-gated rejections from `aneforge/graph.py`; the highlights:
+accelerated by the persistent Path-A worker (see below). Exact shape constraints
+and arch-gated rejections are in `aneforge/graph.py`; the highlights:
 
 | Op | Signature | Notes / constraints |
 | --- | --- | --- |
@@ -248,7 +248,7 @@ stream (dequantise during the tile DMA) inside the same fused program.
 | `'blockwise'` | per-inner-block int8 | `constexpr_blockwise_shift_scale`, `block_size` columns per scale; accuracy-gated -> int8 -> fp16. |
 | `'auto'` | per-weight best | Sparse if sparse, else int4 if accurate, else int8, else fp16. |
 
-`compress='auto'` is family-aware: only encodings that stream *natively* on the
+`compress='auto'` is family-aware: only encodings that stream natively on the
 target family (the host-detected family when `target=None`) are candidates
 (`tg.native_streams(family)`). On h13 / M1 the natively-streaming forms are
 int4-LUT and sparse, so `auto` skips int8 and blockwise there (they would fold to
@@ -292,14 +292,14 @@ surfaces). Silence it with
 | `af.project_peak(arch)` | A per-chip fp16 peak-throughput projection `{tflops, rel_m1, cores, ghz}`, anchored to the measured M1 point. The generational table needs no silicon beyond M1/M5. |
 | `af.precision_risk(out, verbose=False)` | Heuristic fp16-cancellation risk (`graph_error`, flagged `nodes`, `hotspots`). |
 
-Both `estimate` and `project_peak` are structural - they touch no device. Real
-variant selection in the autotuner is always by on-device measurement.
+Both `estimate` and `project_peak` are structural - they touch no device. Variant
+selection in the autotuner is always by on-device measurement.
 
 ---
 
 ## Compile-failure backoff guard
 
-As a defensive backstop for the autotuner's burst of variant compiles, ANEForge
+As a backstop for the autotuner's burst of variant compiles, ANEForge
 paces the next compile after a failure by a short interval, keeping consecutive
 failures apart.
 
@@ -315,18 +315,18 @@ A successful compile clears the backoff.
 ## Training on the ANE
 
 ANEForge has a small reverse-mode autograd (`aneforge/autograd.py`): the forward
-*and* backward passes compile and run on the engine. `af.parameter` declares a
+and backward passes compile and run on the engine. `af.parameter` declares a
 trainable graph input (a mutable weight, no recompile per step); `af.backward` /
 `af.softmax_cross_entropy` / `af.mse` build the on-ANE gradient graph; `af.SGD` /
 `af.Adam` / `af.Trainer` drive a training loop. `Trainer(device_optimizer=True)`
-runs the optimizer update itself as graph ops, and `Trainer(resident_state=True)`
+runs the optimizer update as graph ops, and `Trainer(resident_state=True)`
 keeps optimizer state on-engine across steps. See [`training.md`](training.md) and
 `examples/train_mnist_mlp.py`.
 
 ## The persistent netplist worker
 
 Netplist-bridge stages (sdpa, topk, ...) default to a persistent Path-A worker
-(load-once, eval-many) built lazily on first call and reused for the model's
+(load-once, eval-many) built lazily on first call, reused for the model's
 lifetime, then freed in `release()`. Sub-program dispatch is sub-millisecond.
 Set `ANEFORGE_NETPLIST_WORKER=0` to force the A1 (subprocess-per-call) fallback;
 the runtime also falls back automatically when no worker route exists for an op.

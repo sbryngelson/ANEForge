@@ -1,8 +1,7 @@
 # Dispatch backends
 
 ANEForge maps three working paths from a regular user process to the ANE silicon,
-plus several surfaces that are reachable but blocked or unsuitable. This document
-explains each path and when to use it.
+plus several surfaces that are reachable but blocked or unsuitable.
 
 ## Summary
 
@@ -59,7 +58,7 @@ Built on Espresso.framework's `e5rt_*` C API, all resolvable via `dlsym` from an
 unentitled process. The flow is compile-once / eval-many: compile a MIL program to a
 program library, retain the `main` function, bind input/output buffers, then encode
 and execute on a stream. A stable program handle stays resident in `aned` across
-submissions, so per-call cost reduces to `input memcpy + execute + output memcpy`.
+submissions, so per-call cost is `input memcpy + execute + output memcpy`.
 
 Full call sequence and the `e5rt_*` C ABI are in
 [e5rt-dispatch-reference.md](e5rt-dispatch-reference.md).
@@ -98,7 +97,7 @@ model = [_ANEInMemoryModel inMemoryModelWithDescriptor:desc];
 ```
 
 `compile + load` cost: ~38 ms one-time per shape. Eval is ~110 us at the canonical
-conv shape - the same hardware path as e5rt, just reached through ObjC rather than C.
+conv shape - the same hardware path as e5rt, reached through ObjC rather than C.
 
 Use Path A when you need behavior the e5rt wrapper does not yet expose (e.g.,
 multi-output programs the e5rt wrapper handles differently, or compile-options keys
@@ -121,7 +120,7 @@ ANEForge's direct paths (`_ANEInMemoryModel` and `e5rt`) reach the ANE on smalle
 workloads where CoreML would keep things on CPU.
 
 `MLComputePlan` is still useful as an audit oracle: it asks Apple's compiler
-whether a compiled MIL has any ANE-preferred ops, which catches silent CPU
+whether a compiled MIL has any ANE-preferred ops, catching silent CPU
 dispatches in a CoreML pipeline. ANEForge uses it offline to audit its corpus,
 not as a dispatch path - the direct `e5rt` / Path A routes reach the ANE
 regardless of what Apple's routing heuristic prefers.
@@ -135,7 +134,7 @@ entitlement. Apple uses Path B internally; third parties cannot.
 
 ANEForge reproduces the Path-B behavior that mattered for autonomy - a host-free
 dispatch loop - on the e5rt path in bounded form (one `execute_multi` drives K
-on-engine steps), and it is performance-neutral, so the entitlement is not a reason
+on-engine steps), and it is performance-neutral, so the entitlement is no reason
 to want it. See
 [e5rt-dispatch-reference.md](e5rt-dispatch-reference.md#251-persistent-on-device-state-via-output-input-buffer-aliasing).
 

@@ -1,10 +1,9 @@
 # ANEForge - using the tool
 
-ANEForge is a direct, CoreML-free Python frontend for the Apple Neural Engine:
-it lowers a tensor graph into one fused Espresso `e5rt` program and dispatches
-it to ANE silicon from an ordinary user process, with no CoreML and no special
-entitlement. These docs are the software manual - how to install, call,
-train, target, and extend the frontend.
+ANEForge is a CoreML-free Python frontend for the Apple Neural Engine: it lowers
+a tensor graph into one fused Espresso `e5rt` program and dispatches it to ANE
+silicon from an ordinary user process, with no CoreML and no special entitlement.
+These docs cover how to install, call, train, target, and extend the frontend.
 
 ## By task
 

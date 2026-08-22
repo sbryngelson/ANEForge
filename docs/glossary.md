@@ -1,7 +1,6 @@
 # Glossary
 
-Terms a tool user is likely to meet across the ANEForge documentation, in alphabetical
-order.
+Terms a tool user is likely to meet across the ANEForge documentation, alphabetical.
 
 ## A - D
 
@@ -24,8 +23,8 @@ weight blobs and metadata. The `kANEFModel*` constants in
 
 aned - `/usr/libexec/aned`. The root-privileged XPC daemon that does
 MIL -> HWX compile work. Receives requests via XPC, runs the four-IR
-compile pipeline, returns a compiled program handle. Maintains a
-per-PID HWX program cache.
+compile pipeline, returns a compiled program handle. Maintains a per-PID
+HWX program cache.
 
 aneuserd - `/usr/libexec/aneuserd`. The per-user broker that
 arbitrates between processes and `aned`. Runs as `_neuralengine`.
@@ -44,15 +43,15 @@ ANE.
 capability family - An ANE generation's op-capability tier, gated in the
 compiler by a `MinimumFamily<N>` trait on each op. M-series chips map to
 H-targets by `M(n) = H(n + 12)` (M1 = H13 = family 2, M5 = H17 = family 5),
-so capability is a property of the family, not of one chip. Walls (e.g. the
+so capability is a property of the family, not one chip. Walls (e.g. the
 trig floor on older families) are family-wide. ANEForge resolves the running
 family with `detect_family` and gates target names with `cross_compile_check`.
 See [cross-chip.md](cross-chip.md).
 
 circuit breaker - ANEForge's compile backoff rate-limiter
 (`aneforge/_circuit.py`, wired into `Program.compile`). After a failed compile
-the breaker paces the next compile by a short interval, a defensive backstop so
-the autotuner's burst of variant compiles cannot pile up. Warn-and-sleep by
+it paces the next compile by a short interval, a defensive backstop so the
+autotuner's burst of variant compiles cannot pile up. Warn-and-sleep by
 default; raises under `ANEFORGE_COMPILE_BREAKER_STRICT`. Exposes
 `CompileBackoffError` and `reset_compile_breaker`.
 
@@ -71,8 +70,8 @@ entitlement - A code-signing capability Apple grants its own software
 (for example CoreML) to use certain private interfaces. ANEForge reaches the
 ANE through the `e5rt` path, which requires no entitlement, so it runs from an
 ordinary user process. "Without an entitlement" or "no entitlement needed" in
-these docs means exactly that. The one surface that does require an entitlement
-is Path B.
+these docs means that. The one surface that does require an entitlement is
+Path B.
 
 fp16 - IEEE 754 binary16 floating point. ANE's native compute type.
 The dataplane is fp16-only; fp32 is acceptable as an intermediate but
@@ -122,7 +121,7 @@ MLComputePlan - Public macOS 14.4+ API
 (`MLComputePlan loadContentsOfURL:configuration:completionHandler:`).
 Returns per-op `(preferred_device, supported_set, cost_weight)` for
 any compiled `.mlmodelc`. Useful as a routing oracle for what Apple's
-compiler *would* choose; does NOT reflect direct Path A behavior
+compiler would choose; does NOT reflect direct Path A behavior
 (which bypasses the heuristic).
 
 MLIR - Multi-Level Intermediate Representation. The second IR in
@@ -141,9 +140,9 @@ benchmark baseline.
 native (weight) streaming - Reading compressed weights directly into the
 multiply-accumulate datapath, dequantizing during DMA rather than expanding
 them to a dense fp16 buffer first. int8, int4-LUT, and sparse weights stream
-this way on the `e5rt` path, moving fewer bytes per dispatch and
-buying a bandwidth win on weight-bound layers. Blockwise-affine instead
-dequantizes in-program (a footprint lever, not a bandwidth one). Exposed via
+this way on the `e5rt` path, moving fewer bytes per dispatch and buying a
+bandwidth win on weight-bound layers. Blockwise-affine instead dequantizes
+in-program (a footprint lever, not a bandwidth one). Exposed via
 `compile(compress=...)`. Whether a format streams is family-dependent (on
 the bandwidth-starved families only int4-LUT streams).
 
@@ -160,9 +159,8 @@ draw power on the ANE rail (1.4 W sustained during hot loops; idle =
 
 Program - In `ane_e5rt.py`, the compiled-and-loaded e5rt
 dispatch handle. Holds the compiled library, function, operation,
-input/output ports, and execution stream. Designed for
-compile-once-eval-many: `prog.eval(inputs)` per call has only
-memcpy + execute_sync + memcpy overhead.
+input/output ports, and execution stream. Compile-once-eval-many:
+`prog.eval(inputs)` per call has only memcpy + execute_sync + memcpy overhead.
 
 programHandle - A 64-bit handle returned by `_ANEInMemoryModel
 programHandle` after compile + load. Identifies the model within
@@ -176,10 +174,10 @@ foundation of 127-deep async pipelining for decoder loops.
 resident state - Keeping tensor state (weights, optimizer moments)
 resident on the ANE across `execute_sync` calls with no host round-trip, by
 aliasing an op's output buffer onto its own input port (`share_buffer`).
-ANEForge uses this for `Trainer(resident_state=True)` and the default
-`UnrolledTrainer`, so during training the host supplies only the minibatch
-and learning rate and reads weights back at checkpoints. Reachable
-without an entitlement. See [training.md](training.md).
+Used for `Trainer(resident_state=True)` and the default `UnrolledTrainer`, so
+during training the host supplies only the minibatch and learning rate and
+reads weights back at checkpoints. Reachable without an entitlement. See
+[training.md](training.md).
 
 SDPA - Scaled Dot-Product Attention.
 `softmax(Q @ K^T * scale) @ V`. The MIL op
@@ -200,4 +198,5 @@ linear-algebra ops (matmul/bmm, conv, pooling, reductions, shape ops), the
 common activations (relu/silu/gelu/tanh/sigmoid/softmax and variants), the
 math ops (exp/log/sqrt/rsqrt/erf/...), and the normalization layers (`layer_norm`,
 `rms_norm`, `group_norm`, `l2_norm`) - enough to train transformer, LLaMA-style,
-diffusion-UNet, CNN, and MLP graphs end to end. See [training.md](training.md).
+diffusion-UNet, CNN, and MLP graphs end to end. See
+[training.md](training.md).

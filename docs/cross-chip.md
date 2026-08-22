@@ -3,7 +3,7 @@
 ANEForge compiles a tensor graph for any Apple Neural Engine generation from one host,
 and predicts how that graph will behave on the target chip without owning it. Apple's
 ANE compiler is the same code across chips; everything that differs between an M1 and an
-M5 is per-chip target data plus the `MinimumFamily<N>` op-capability floors. So cross-chip
+M5 is per-chip target data plus the `MinimumFamily<N>` op-capability floors. Cross-chip
 support is mostly a lookup problem: ANEForge ships a per-family capability table, a
 measurement-free per-chip cost model, and a static fp16 divergence predictor.
 
@@ -35,7 +35,7 @@ ANEForge groups the ANE into five capability families, exposed as `tg.Family`:
 
 The e5rt/MIL path ANEForge dispatches through carries a hard assert, "MIL is only
 supported for H13+ ANE architectures", so family 2 (`tg.MIN_FAMILY`) is the absolute floor
-regardless of any per-op trait. `tg.Family.OLDER` chips are unreachable.
+regardless of per-op traits. `tg.Family.OLDER` chips are unreachable.
 
 ### The M(n) = H(n+12) ladder
 
@@ -49,7 +49,7 @@ The mapping from M-series generation to ANE architecture is `M(n) == H(n+12)`:
 | M4 | H16 | A16 |
 | M5 | H17s | A16 |
 
-M2/M3/M4 resolve to ground-truth *capability* families this way (only each chip's
+M2/M3/M4 resolve to ground-truth capability families this way (only each chip's
 absolute power/watt rail still needs its own silicon).
 
 ### Runtime arch vs compiler target
@@ -62,7 +62,7 @@ There are two distinct namespaces, and ANEForge keeps them separate:
   `h16s`, `h17s`, `h17d`, etc.
 
 The compiler enumerates 28 valid `TargetArchitecture` strings across the five families.
-A17 (the H17* targets) and A18 (H18) exist but add no op capabilities over A16 - they
+A17 (the H17* targets) and A18 (H18) add no op capabilities over A16 - they
 scale the NE-core count only (the suffix `g`/`s`/`c`/`d` is a core-count variant; M5 ==
 H17s). The A16 tier is therefore the capability ceiling, and ANEForge folds every A17/A18
 arch into `Family.A16`.
@@ -92,7 +92,7 @@ which auto-detects the host). Before lowering, the graph is gated for that famil
   The caps are per-op-class (A14/A16-measured): spatial/contraction 16384 through A15 ->
   65536 at A16; channel 65536 on both; transpose 2^2^3-1 (A14) -> >=2^2^4-1 (A16). preflight
   classifies axes accordingly (channel cap on axis 1 of rank-4, wide extent for
-  transposes, spatial elsewhere). The A13 row is now measured on the live M1 and equals
+  transposes, spatial elsewhere). The A13 row is measured on the live M1 and equals
   A14 exactly (16385 W/H, 65537 C both reject), so the caps are generation-monotone (no
   inversion). Conv kernel width is a further monotone per-family cap (A13 <= 13, A16 <= 15;
   16+ -> `space_to_depth`), enforced family-aware in preflight.
@@ -120,14 +120,14 @@ On the A13/M1 family only, a `slice_by_size` with a nonzero last-axis begin-offs
 routes through a Q.4 fixed-point crop-DMA with an implied x16 scale, which silently
 clamps any sliced element with `|value| > 4094` (= 65504/16) to +/-inf. A zero last-axis
 begin, or an offset on any other axis, takes a clean route. The value threshold is a
-runtime property, so `compile(target='h13')` *warns* about such a slice rather than
-blocking it. On A14+ the route is clean and no warning fires.
+runtime property, so `compile(target='h13')` warns about such a slice rather than
+blocking it. A14+ takes the clean route and no warning fires.
 
 ### e5rt TargetArchitecture and the silent-fallback gotcha
 
 Cross-compilation is separable from device-load: the e5rt compiler honors
 `TargetArchitecture=<arch>` via its custom ANE-compiler options, so one box can compile a
-library for any chip. The catch: e5rt *silently falls back* to the host target on an
+library for any chip. The catch: e5rt silently falls back to the host target on an
 unrecognized `TargetArchitecture` string (a typo like `'zzz'` compiles cleanly against
 the host, turning a mistake into a false cross-target pass).
 
@@ -138,7 +138,7 @@ lowers the fused graph and asks the e5rt compiler to produce a library for that
 CI: validate that the op corpus compiles for every family from one machine. It is
 compile-level validation only; numeric correctness still needs the real silicon, and
 bridge/segmented graphs are out of scope (it raises). `cross_compile_check` also emits the
-fp16 divergence warning described below before compiling.
+fp16 divergence warning below before compiling.
 
 ```python
 import aneforge as af
@@ -153,7 +153,7 @@ cross_compile_check(y, "h13")               # True iff the e5rt compiler builds 
 
 `tg.detect_family()` resolves the host ANE family in order:
 
-1. the `ANEFORGE_TARGET` environment variable (an arch string, e.g. `ANEFORGE_TARGET=h16s`) - an explicit override, useful for CI, for forcing a higher tier on an under-detected
+1. the `ANEFORGE_TARGET` environment variable (an arch string, e.g. `ANEFORGE_TARGET=h16s`) - an explicit override for CI, for forcing a higher tier on an under-detected
    chip, or for host-independent tests.
 2. the CPU brand string (`Apple M5 Pro`), mapped through the M-series ladder. The model
    identifier is a trap (`MacBookPro17,1` is an M1, `Mac17,8` an M5), so detection reads
@@ -165,8 +165,8 @@ cross_compile_check(y, "h13")               # True iff the e5rt compiler builds 
 ## fp16 portability
 
 The MAC accumulator width and the compiler `__TEXT` are uniform across chips, so cross-chip
-fp16 *value* divergence can only come from HAL-data-selected codegen routes that reorder or
-saturate fp16 ops. That makes it statically predictable.
+fp16 value divergence can only come from HAL-data-selected codegen routes that reorder or
+saturate fp16 ops - making it statically predictable.
 `tg.predict_fp16_divergence(kind, shape, target_a, target_b, ...)` compares the relevant
 per-family HAL fields and returns one of four verdicts, strongest first:
 
@@ -194,7 +194,7 @@ the target is A13, the graph trains a conv weight with `kW > 1`, and `loss_scale
 since `loss_scale x |backward activation|` could then exceed 4094. This is deliberately
 not an auto-cap: a real normalized CNN trains identically at loss_scale 128, 1024, and
 65536 on M1 - the saturation needs unusually large backward magnitudes a real net never
-reaches. A14/A16 have no such path.
+reaches. A14/A16 have no such route.
 
 ### Measured end-to-end training parity
 
@@ -202,7 +202,7 @@ The same seeded MNIST-CNN, trained 300 steps, reaches 0.9080 on M1, 0.9080 on
 M2/A14 (deterministic x3), and 0.9070 on M5 - the A16 generation differs by
 exactly one test sample out of 1000 (0.1%), each run internally deterministic. A14 lands
 exactly on M1's number, so the fp16 drift boundary is the A15/A16 generation, not per-chip
-noise. Training is chip-portable, with cross-chip fp16 drift accumulating to a negligible
+noise. Training is chip-portable, cross-chip fp16 drift accumulating to a negligible
 <= 1-ULP-per-step level.
 
 ## Per-chip performance
@@ -221,16 +221,16 @@ The model is anchored to silicon-measured chips (M1, M2, M5; only A15/M3 is unme
 and validated out-of-sample: `estimate(target='h17s')` reproduces the M5 loop-closure
 convs with mean |error| ~12%.
 
-Honest caveat on `project_peak`. It reports a *peak ceiling*: M5 projects to ~5.5x
+Honest caveat on `project_peak`. It reports a peak ceiling: M5 projects to ~5.5x
 M1, but the measured M5/M1 end-to-end latency speedup is 2.3-3.3x (the dispatch floor
 caps real workloads below both the bandwidth ratio and the compute-peak ratio). Use
-`project_peak` for the generational shape, not as a promised speedup, and prefer
-on-device measurement when the number matters.
+`project_peak` for the generational shape, not as a promised speedup, and measure
+on-device when the number matters.
 
 ## Per-family compressed-weight streaming
 
 Compressed weights are only a bandwidth win where the per-family lowering keeps them as a
-*native streaming* kernel rather than folding them to a dense fp16 const. Which encodings
+native streaming kernel rather than folding them to a dense fp16 const. Which encodings
 stream is family-specific, exposed as `tg.native_streams(family)`:
 
 | Family | Native-streaming encodings | Measured win |
@@ -241,8 +241,8 @@ stream is family-specific, exposed as `tg.native_streams(family)`:
 
 On M1, `int4` (the `constexpr_lut_to_dense` palette) and `sparse`
 (`constexpr_sparse_to_dense`, on weights >= 50% zeros) stream natively; int4 streams
-*better* than on M5 (2.37x vs 1.6-1.8x), because M1's lower effective bandwidth makes
-quartering the weight bytes pay off more. int8 and blockwise still compile and stay
+better than on M5 (2.37x vs 1.6-1.8x), because M1's lower effective bandwidth makes
+quartering the weight bytes pay off more. int8 and blockwise compile and stay
 correct on M1, but the compiler folds them to dense fp16 (an accuracy cost for zero
 bandwidth win). A14/M2 adds int8 streaming but still folds blockwise; from A15 up the
 full set streams.
@@ -251,6 +251,6 @@ ANEForge wires this into `compile(compress='auto', target=...)`: `auto` is
 family-aware, considering only encodings that stream natively on the target family
 (host-detected when `target=None`). On M1 that is int4-LUT and sparse, so `auto` skips
 int8/blockwise there and a rejected int4 falls back to fp16 rather than a folding
-encoding; on A14+ it can pick from the wider native set. Explicit single-mode knobs
-(`compress='int8'`, etc.) are never filtered - they always compile, with correctness
+encoding; on A14+ it picks from the wider native set. Explicit single-mode knobs
+(`compress='int8'`, etc.) are never filtered - they always compile, correctness
 preserved even where streaming does not help.

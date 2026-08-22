@@ -2,7 +2,7 @@
 
 MIL (Model Intermediate Language) is Apple's textual IR for ML programs. This
 primer covers writing it by hand for ANEForge: what the parser accepts, what
-each operator looks like, and what to do when something rejects.
+each operator looks like, and what to do when something is rejected.
 
 ## Anatomy of a MIL program
 
@@ -43,8 +43,8 @@ tensor<RESULT_TYPE, [RESULT_SHAPE]> RESULT_NAME =
     OP_NAME(arg1 = value1, arg2 = value2, ...)[name = string("RESULT_NAME")];
 ```
 
-The `[name = string("...")]` annotation is required for any op that
-produces an output the program references later. By convention `RESULT_NAME`
+The `[name = string("...")]` annotation is required for any op whose
+output the program references later. By convention `RESULT_NAME`
 matches the string inside `name`.
 
 ## Common operators
@@ -154,8 +154,8 @@ tensor<fp16, [B, H, Sq, Dh]> y = scaled_dot_product_attention(
 ```
 
 No mask argument - for masked attention, decompose into matmul + softmax +
-matmul with an explicit mask multiply (`af.sdpa` builds this fused route for
-you). ANE routes the fused op when heads>=64 and seq>=~496 at d=64.
+matmul with an explicit mask multiply (`af.sdpa` builds this fused route).
+ANE routes the fused op when heads>=64 and seq>=~496 at d=64.
 
 ## Constants and inline weights
 
@@ -243,9 +243,9 @@ func main<ios18>(
 The runtime aliases IOSurfaces between consecutive calls so each call's
 output state becomes the next call's input state.
 
-The MIL `state<tensor<...>>` form (with `read_state`/`write_state`) IS
-parser-accepted but ANEForge's working streaming prototypes use the
-plain paired-tensor approach because it's simpler and equivalent.
+The MIL `state<tensor<...>>` form (with `read_state`/`write_state`) is
+parser-accepted, but ANEForge's streaming prototypes use the
+plain paired-tensor approach: simpler and equivalent.
 
 ## Validation gotchas
 
@@ -268,14 +268,14 @@ edge, not a capability or parse limit):
   `reduce * nonzero` compiles, and `mul`-by-zero with no preceding reduce compiles;
   only the pair trips it (a `1e-30` multiplier that underflows to fp16 zero also
   fails). Build a zero/constant from a `sub`-based zero instead - `(t - t) + c`,
-  not `(t * 0.0) + c`. ANEForge's autograd does exactly this in its `_const_like`
+  not `(t * 0.0) + c`. ANEForge's autograd does this in its `_const_like`
   helper.
 
 When you build a graph with `import aneforge as af` you rarely write MIL by
 hand, and the frontend catches many of these before the compile. Shape and
 rank limits are enforced at graph-build time - constructing an out-of-bounds
 Tensor raises immediately (e.g. a rank-6 tensor, or a conv with kernel width
-> 15), rather than failing deep in `ANECCompile`. To check whether a built
+> 15) rather than failing deep in `ANECCompile`. To check whether a built
 graph compiles for a given ANE family without running it, use
 `af.cross_compile_check(out, target='hXX')`, and query per-op support with
 `af.op_info(name)` / `af.is_native(name)`.
@@ -306,8 +306,8 @@ concat. Each named tensor must be unique within the function.
 
 ## Ops MIL rejects (use ANECIR netplist instead)
 
-These hardware-native ops the MIL parser rejects, but ANECIR netplists
-accept:
+The MIL parser rejects these hardware-native ops, but ANECIR netplists
+accept them:
 
 ```
 Rsqrt, Inv, Sqrt, Log2, Exp2, Sign, Erf, Swish, Sqr

@@ -1,6 +1,6 @@
 # Per-operator ANE quirks
 
-A reference for the hardware constraints baked into ANEForge's op constructors. Each is guarded at build time (a clear error, not a cryptic `ANECCompile` crash), and most were found by reverse-engineering or fuzzing the silicon. The pattern throughout: the ANE *has* the capability but only within a narrow envelope.
+A reference for the hardware constraints baked into ANEForge's op constructors. Each is guarded at build time (a clear error, not a cryptic `ANECCompile` crash), and most were found by reverse-engineering or fuzzing the silicon. The pattern throughout: the ANE has the capability, but only within a narrow envelope.
 
 ## Global constraints
 
@@ -20,8 +20,8 @@ A reference for the hardware constraints baked into ANEForge's op constructors. 
 
 ## Reductions and norms
 
-- `group_norm` tiled-axis bound (`finding_sd15`): the rank-4 tiled lowering reshapes to `[1,G,C/groups,H*W]` and reduces the trailing two axes, so the bound is the largest *single* axis, `max(C/groups, H*W)`, against the per-axis cap of 65536 — not the flattened `(C/groups)*H*W` product (which overflowed for SD-UNet's 512ch@128 and 640ch@64).
-- `channel_layer_norm`: LayerNorm over the channel axis of a channels-first `[N, C, 1, S]` tensor (the ANE-native transformer layout). Same result as `layer_norm` on the `[N*S, C]` view, but with no transpose into/out of `[seq, d]` — which is what keeps the attention/MLP stack cheap (projections stay 1x1 convs over `[N, C, 1, S]`).
+- `group_norm` tiled-axis bound (`finding_sd15`): the rank-4 tiled lowering reshapes to `[1,G,C/groups,H*W]` and reduces the trailing two axes, so the bound is the largest single axis, `max(C/groups, H*W)`, against the per-axis cap of 65536 - not the flattened `(C/groups)*H*W` product (which overflowed for SD-UNet's 512ch@128 and 640ch@64).
+- `channel_layer_norm`: LayerNorm over the channel axis of a channels-first `[N, C, 1, S]` tensor (the ANE-native transformer layout). Same result as `layer_norm` on the `[N*S, C]` view, but with no transpose into/out of `[seq, d]` - which keeps the attention/MLP stack cheap (projections stay 1x1 convs over `[N, C, 1, S]`).
 - `l2_norm`: runs as fused e5rt MIL (`reduce_l2_norm` over the axis, then `real_div`), no graph cut. The MIL `l2_norm` op normalizes over all non-batch dims, so the per-axis form `x / sqrt(sum(x2, axis) + eps)` is built explicitly.
 - Matmul int8 layout: store as `[N,K]` and consume with `transpose_y=true` (the proven int8 layout).
 - Trainable norm affine: `rms_norm`/`layer_norm`/`group_norm` take either arrays (fixed/baked affine) or broadcastable parameter `Tensor`s (trainable). The trainable path normalizes with a unit affine, then scales/shifts by the Tensors so gradients flow via the mul/add VJPs.
@@ -31,7 +31,7 @@ A reference for the hardware constraints baked into ANEForge's op constructors. 
 `gather` for static indices lowers to `slice_by_size` + `concat`. But a last-axis (width) gather lowers to a `slice_by_size` with a nonzero width begin-offset, which routes through the A13/A14 x16 fixed-point crop-DMA path and returns the wrong elements there (correct on A16+).
 
 !!! warning "Gather a non-last axis instead"
-    For rank>=2, transpose the gathered axis off the last position and transpose back; for rank 1, gather a `[N,1]` view. Both are identity-preserving and correct on every chip family — the same width-axis-slice avoidance the conv im2col backward uses.
+    For rank>=2, transpose the gathered axis off the last position and transpose back; for rank 1, gather a `[N,1]` view. Both are identity-preserving and correct on every chip family - the same width-axis-slice avoidance the conv im2col backward uses.
 
 ## Attention (mha / cross_attention / sdpa)
 
@@ -45,7 +45,7 @@ A reference for the hardware constraints baked into ANEForge's op constructors. 
 
 ### Native fused-attention reliability bounds
 
-`sdpa` uses the ANE's native fused-attention layer (`ANECSDPALayerDesc`, a path Apple's MIL compiler never emits — it always decomposes) only where it's numerically reliable; outside, it emits the accurate fused decomposition. Q/K/V are `[1, heads, seq, d_head]`, fp16. Where native is used, it's a graph-cut boundary (see [Native bridges](bridges.md)).
+`sdpa` uses the ANE's native fused-attention layer (`ANECSDPALayerDesc`, a path Apple's MIL compiler never emits - it always decomposes) only where it's numerically reliable; outside, it emits the accurate fused decomposition. Q/K/V are `[1, heads, seq, d_head]`, fp16. Where native is used, it's a graph-cut boundary (see [Native bridges](bridges.md)).
 
 | Constant | Value | Meaning |
 |---|---|---|
@@ -54,14 +54,14 @@ A reference for the hardware constraints baked into ANEForge's op constructors. 
 
 ### Causal masking
 
-`is_causal=True` is native: the causal additive mask rides the SDPA layer's optional 5th bottom and the route optimizer keeps it on the native route (the decomposition is unmasked). Validated on M1: cos 1.0 vs `softmax(QK^T*scale + causal)*V`, single + multi-head. Requires `S <= SDPA_NATIVE_MAX_SEQ`. Causal outside the reliable native regime is refused — the decomposition would need a causal additive mask, but there's no host-constant add on the graph here. (Chunk the query into tiles whose `min(q,k)` seq stays < 512.)
+`is_causal=True` is native: the causal additive mask rides the SDPA layer's optional 5th bottom and the route optimizer keeps it on the native route (the decomposition is unmasked). Validated on M1: cos 1.0 vs `softmax(QK^T*scale + causal)*V`, single + multi-head. Requires `S <= SDPA_NATIVE_MAX_SEQ`. Causal outside the reliable native regime is refused - the decomposition would need a causal additive mask, but there's no host-constant add on the graph. (Chunk the query into tiles whose `min(q,k)` seq stays < 512.)
 
 ### attn_mask restrictions
 
-`attn_mask` is a runtime additive bias riding the native layer's 5th bottom. The native layer applies one additive-mask plane shared across all heads, over the full query axis — shape must be `[1,1,Sq,Skv]`.
+`attn_mask` is a runtime additive bias riding the native layer's 5th bottom. The native layer applies one additive-mask plane shared across all heads, over the full query axis - shape must be `[1,1,Sq,Skv]`.
 
 !!! warning "Rejected mask shapes"
-    A per-head mask (`[1,H,Sq,Skv]`, H>1) is silently mis-applied (one plane used for all heads), and a query-broadcast mask (`[1,1,1,Skv]` with q_seq>1) underflows the bridge — both are rejected rather than returning garbage. (For KV-cache decode, q_seq==1, so `[1,1,1,Skv]` is a full-query plane and is accepted.)
+    A per-head mask (`[1,H,Sq,Skv]`, H>1) is silently mis-applied (one plane used for all heads), and a query-broadcast mask (`[1,1,1,Skv]` with q_seq>1) underflows the bridge - both are rejected rather than returning garbage. (For KV-cache decode, q_seq==1, so `[1,1,1,Skv]` is a full-query plane and is accepted.)
 
 ### Decode shapes
 
