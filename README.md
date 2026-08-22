@@ -3,6 +3,7 @@
 [![Website](https://img.shields.io/badge/web-aneforge.com-2e6b69.svg)](https://aneforge.com)
 [![CI](https://github.com/sbryngelson/ANEForge/actions/workflows/ci.yml/badge.svg)](https://github.com/sbryngelson/ANEForge/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/aneforge?color=2e6b69)](https://pypi.org/project/aneforge/)
+[![Lines of code](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsbryngelson%2FANEForge%2Fmain%2F.github%2Fbadges%2Floc.json)](#)
 [![Docs](https://readthedocs.org/projects/aneforge/badge/?version=latest)](https://aneforge.readthedocs.io)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.17090-b31b1b.svg)](https://arxiv.org/abs/2606.17090)
 [![ANE guide](https://img.shields.io/badge/ANE%20guide-arXiv%202606.22283-b31b1b.svg)](https://arxiv.org/abs/2606.22283)
