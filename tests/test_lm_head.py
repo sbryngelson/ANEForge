@@ -162,6 +162,38 @@ def test_lm_head_compile_failure_falls_back():
   np.testing.assert_array_equal(m._logits(h), _host_logits(m, h))
 
 
+def test_decode_logits_tie_margin_fallback():
+  """_decode_logits recomputes a greedy step on the host fp32 head only when the ANE top-2 gap is under
+  lmhead_tie_margin * max|logit| -- so greedy matches the host on ties, keeps ANE speed otherwise, and
+  never falls back while sampling."""
+  m = _random_model(_cfg(100), seed=1)
+  m.ane_lm_head = True
+  m._lmh = object()                                  # pretend the ANE head is live
+  m.lmhead_tie_margin = 3e-3
+  near_tie = np.zeros(100, np.float32); near_tie[0] = 10.0; near_tie[1] = 10.0 - 0.001   # gap 0.001 < 0.03
+  clear = np.zeros(100, np.float32); clear[0] = 10.0                                       # gap 10 >> margin
+  host = np.zeros(100, np.float32); host[1] = 10.0; host[0] = 9.99                         # host prefers idx 1
+  calls = []
+
+  def fake(which):
+    def _f(h, ane=None):
+      calls.append(ane)
+      return which if ane else host
+    return _f
+
+  m._logits = fake(near_tie)                          # near-tie -> ANE then host recompute
+  out = m._decode_logits(np.zeros(m.cfg.dim, np.float32), True, greedy=True)
+  assert calls == [True, False] and int(out.argmax()) == 1     # host's pick wins the tie
+
+  calls.clear(); m._logits = fake(clear)              # clear winner -> ANE only, no host recompute
+  out = m._decode_logits(np.zeros(m.cfg.dim, np.float32), True, greedy=True)
+  assert calls == [True] and int(out.argmax()) == 0
+
+  calls.clear(); m._logits = fake(near_tie)           # sampling -> never falls back, even on a tie
+  m._decode_logits(np.zeros(m.cfg.dim, np.float32), True, greedy=False)
+  assert calls == [True]
+
+
 def test_lm_head_program_dim_mismatch_falls_back():
   """A lm_head whose in-dim disagrees with cfg.dim declines with a clear reason (a raise, not an
   assert, so `python -O` keeps the check) and leaves the host path serving logits."""

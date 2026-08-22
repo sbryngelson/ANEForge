@@ -263,9 +263,9 @@ class LlamaPrefill:
   a dict of numpy arrays (see `from_pretrained`). The host `lm_head` keeps a cached fp32 transpose
   (`_lmT`): for large vocabularies this is the runner's biggest host allocation (GPT-2 ~206 MB, a
   151936x4096 head ~2.5 GB), freed by `release()`. With `ane_lm_head=True`, the head runs on the ANE
-  as a tiled `compile_multi` instead: `_lmT` is never built, at the cost of fp16 (not fp32) matmul
-  numerics, and - when the head is TIED to `embed`, as in GPT-2 - of baking a second copy of those
-  weights into the ANE program while `embed` stays on the host for the token gather."""
+  as a tiled `compile_multi`; greedy stays exact via the `lmhead_tie_margin` host fallback (so `_lmT`
+  is built only if a near-tie fires), and a head tied to `embed` (GPT-2) bakes a second copy into the
+  program while `embed` stays on the host for the token gather."""
   def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None,
                ane_lm_head: bool = False):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None; self._pre = None
@@ -278,6 +278,7 @@ class LlamaPrefill:
     self._lmhead_bytes = 1.2e9     # budget: heads above this fall back to host (safety under ~2GB ANE ceiling)
     self._lmhead_compress: str | None = None  # head always fp16; quantizing it degrades logits more than
                                               # an intermediate layer (no residual to absorb the error)
+    self.lmhead_tie_margin = 3e-3  # greedy near-tie (top-2 gap < margin*max|logit|) recomputes on host fp32
 
   def release(self) -> None:
     """Release every compiled program (prefill, decode chunks, batched-prefill chunks, ANE lm_head),
@@ -386,6 +387,17 @@ class LlamaPrefill:
     pr.set_input(lmh["x"], hidden_row.astype(np.float16)[None])
     pr.execute()
     return np.concatenate([np.asarray(pr.read_output(o), np.float32) for o in lmh["outs"]], axis=1)[0]
+
+  def _decode_logits(self, hidden_row, use_ane, greedy):
+    """Step logits with the greedy tie-margin fallback: an ANE-head near-tie recomputes on the host fp32
+    head, so greedy matches the host exactly (see `lmhead_tie_margin`). Sampling stays on the ANE."""
+    use_ane = self.ane_lm_head if use_ane is None else bool(use_ane)
+    logits = self._logits(hidden_row, use_ane)
+    if greedy and use_ane and self._lmh is not None:      # only when the ANE head, not a host fallback, ran
+      p = np.partition(logits, -2)
+      if p[-1] - p[-2] < self.lmhead_tie_margin * (float(np.abs(logits).max()) + 1e-9):
+        logits = self._logits(hidden_row, ane=False)      # host fp32 recompute for this near-tie step
+    return logits
 
   @staticmethod
   def _sample(logits, temperature, top_p, top_k):
@@ -501,7 +513,7 @@ class LlamaPrefill:
     self._pre = {"seq": seq, "chunks": chunks}
     return self._pre
 
-  def _prefill_seed(self, token_ids, pad_to=None, ane: bool | None = None):
+  def _prefill_seed(self, token_ids, pad_to=None, ane: bool | None = None, greedy: bool = True):
     """Batched prefill via the cached chunked prefiller: run the whole prompt in one pass per chunk (full causal
     attention -- the compute-bound matmuls the engine likes) instead of stepping the decode program per token.
     `pad_to` right-pads the prompt to a fixed bucket length so ONE prefiller compile is reused across prompts of
@@ -524,7 +536,7 @@ class LlamaPrefill:
       for li, kport, vport in p["kv"]:                                        # keep only the real positions
         kv_by_layer[li] = (np.asarray(pr.read_output(kport)).astype(f16)[:, :real, :],
                            np.asarray(pr.read_output(vport)).astype(f16)[:, :real, :])
-    return self._logits(h[real - 1].astype(np.float32), ane)[None], kv_by_layer
+    return self._decode_logits(h[real - 1].astype(np.float32), ane, greedy)[None], kv_by_layer
 
   def _seed_cache(self, d, kv_by_layer, seq):
     """Write a batched prefill's per-layer K/V into the resident decode cache buffers (positions [0:seq]), the
@@ -592,7 +604,7 @@ class LlamaPrefill:
                    and all(self._spec(i).mixer == "attention" for i in range(cfg.n_layers)))
     out = []
     if use_batched:                                            # one-pass prefill, then seed the resident cache
-      logits0, kv = self._prefill_seed(prompt, prefill_pad, use_ane)
+      logits0, kv = self._prefill_seed(prompt, prefill_pad, use_ane, temperature <= 0)
       self._seed_cache(d, kv, len(prompt))
       cur = self._sample(logits0[0], temperature, top_p, top_k); out.append(cur)
       if cur in eos: return out
@@ -605,7 +617,7 @@ class LlamaPrefill:
       if pos >= M - 1: break                                   # cache full
       t0 = time.perf_counter() if profiling else 0.0; hidden = step(cur, pos)
       if on_stage is not None: on_stage("step", time.perf_counter() - t0)
-      t0 = time.perf_counter() if profiling else 0.0; logits = self._logits(hidden, use_ane)
+      t0 = time.perf_counter() if profiling else 0.0; logits = self._decode_logits(hidden, use_ane, temperature <= 0)
       if on_stage is not None: on_stage("lm_head", time.perf_counter() - t0)
       t0 = time.perf_counter() if profiling else 0.0; nxt = self._sample(logits, temperature, top_p, top_k)
       if on_stage is not None: on_stage("sample", time.perf_counter() - t0)
