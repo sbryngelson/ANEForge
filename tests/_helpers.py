@@ -38,7 +38,8 @@ def make_random_llama_model(cfg, compress=None, seed=0):
                    ("mlp.gate_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.up_proj", (cfg.ffn_dim, cfg.dim)), ("mlp.down_proj", (cfg.dim, cfg.ffn_dim))]:
       sd[p + nm + ".weight"] = R(*sh)
     sd[p + "input_layernorm.weight"] = np.ones(cfg.dim, np.float32); sd[p + "post_attention_layernorm.weight"] = np.ones(cfg.dim, np.float32)
-  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), compress=compress)
+  # host lm_head for a deterministic fp32 baseline; ANE-head tests opt in with m.ane_lm_head = True
+  return LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), compress=compress, ane_lm_head=False)
 
 
 def ane_available() -> bool:

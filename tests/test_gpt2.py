@@ -99,7 +99,7 @@ def test_logits_caches_contiguous_fp32():
   rng = np.random.default_rng(0)
   cfg = LlamaConfig(dim=16, n_layers=2, n_heads=4, n_kv_heads=4, ffn_dim=64, vocab=100)
   w = {"lm_head": rng.standard_normal((100, 16)).astype(np.float16), "layers": []}
-  model = LlamaPrefill(cfg, w)
+  model = LlamaPrefill(cfg, w, ane_lm_head=False)    # this test is about the host fp32 transpose cache
   h = rng.standard_normal(16).astype(np.float32)
   expected = h @ np.asarray(w["lm_head"]).T          # the pre-cache matmul, unchanged numerics
   assert np.array_equal(model._logits(h), expected)

@@ -111,7 +111,7 @@ def test_prefill_matches_huggingface_llama():  # the definitive check: ANE prefi
   toks = np.random.default_rng(0).integers(0, 64, 10)
   with torch.no_grad(): ref = m(torch.tensor(toks)[None]).logits[0, -1].numpy()
   cfg = _cfg_from_hf(m.config); sd = {k: v.detach().float().numpy() for k, v in m.state_dict().items()}
-  ane = np.asarray(LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg)).prefill(toks)).ravel().astype(np.float32)
+  ane = np.asarray(LlamaPrefill(cfg, _weights_from_state_dict(sd, cfg), ane_lm_head=False).prefill(toks)).ravel().astype(np.float32)
   cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE prefill vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
 
@@ -129,7 +129,7 @@ def test_prefill_matches_huggingface_gemma():  # the Gemma adapter: embed scale,
   with torch.no_grad(): ref = m(torch.tensor(toks)[None]).logits[0, -1].numpy()
   sd = {k: v.detach().float().numpy() for k, v in m.state_dict().items()}
   cfg, w = _gemma_adapter(m.config, sd)
-  ane = np.asarray(LlamaPrefill(cfg, w).prefill(toks)).ravel().astype(np.float32)
+  ane = np.asarray(LlamaPrefill(cfg, w, ane_lm_head=False).prefill(toks)).ravel().astype(np.float32)
   cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE Gemma prefill vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
 
@@ -147,7 +147,7 @@ def test_prefill_matches_huggingface_mistral():  # the Mistral adapter: GQA + sl
   sd = {k: v.detach().float().numpy() for k, v in m.state_dict().items()}
   cfg, w = _mistral_adapter(m.config, sd)
   assert cfg.extra["sliding_window"] == 32, "sliding window must be surfaced in cfg.extra"
-  ane = np.asarray(LlamaPrefill(cfg, w).prefill(toks)).ravel().astype(np.float32)
+  ane = np.asarray(LlamaPrefill(cfg, w, ane_lm_head=False).prefill(toks)).ravel().astype(np.float32)
   cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE Mistral prefill vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
 

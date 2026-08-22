@@ -111,6 +111,27 @@ def test_lm_head_program_is_built_once():
     assert cm.call_count == 1
 
 
+def test_ane_lm_head_defaults_on():
+  """load_llm / LlamaPrefill default to the ANE head."""
+  from aneforge.llm import LlamaPrefill
+  assert LlamaPrefill(_cfg(100), {}).ane_lm_head is True
+
+
+def test_ane_lm_head_execute_failure_falls_back():
+  """If the ANE head compiles but execute raises, _logits declines to host and never breaks generate."""
+  m = _random_model(_cfg(100), seed=42)
+  m.ane_lm_head = True
+  h = np.random.default_rng(3).standard_normal(m.cfg.dim).astype(np.float32)
+  with patch("aneforge._compile.compile_multi", side_effect=_make_mock_net), \
+       patch.object(type(m), "_ane_logits", side_effect=RuntimeError("execute boom")):
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      out = m._logits(h, ane=True)
+    assert len([x for x in w if "execute failed" in str(x.message)]) == 1
+  np.testing.assert_array_equal(out, _host_logits(m, h))
+  assert m._lmh_off is True and m._lmh is None
+
+
 def test_logits_host_path_unchanged_when_flag_off():
   """With ane_lm_head=False, _logits never builds _lmh and returns h @ lm_head.T fp32 bit-identical."""
   m = _random_model(_cfg(100, dim=16), seed=0)

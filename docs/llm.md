@@ -27,9 +27,10 @@ logits = model.prefill(prompt_ids)                # next-token logits [1, vocab]
 
 ### lm_head on the ANE
 
-`ane_lm_head=True` (default `False`) runs the lm_head on the ANE as a `compile_multi` tiled along
-vocab, instead of the host fp32 matmul. Pass it to `af.load_llm` or `af.LlamaPrefill`, or per call
-as `generate(..., ane_lm_head=True)`. Measured on an M2 Pro (macOS 26.5.2, fp16), median of 3 runs:
+`ane_lm_head` (default `True`) runs the lm_head on the ANE as a `compile_multi` tiled along vocab,
+instead of the host fp32 matmul. Pass `ane_lm_head=False` to `af.load_llm` or `af.LlamaPrefill`, or per
+call as `generate(..., ane_lm_head=False)`, to force the host matmul. Measured on an M2 Pro (macOS
+26.5.2, fp16), median of 3 runs:
 
 | model | lm_head host | lm_head ANE | decode host | decode ANE |
 |---|---|---|---|---|
@@ -41,10 +42,12 @@ greedy argmax could flip against the host fp32 on a close tie; a tie-margin fall
 by recomputing a step on the host fp32 head when the top-2 gap is under `lmhead_tie_margin` (default
 `3e-3`) times the max logit magnitude -- about 6x the measured fp16-head error, firing on ~2-3% of
 tokens. So greedy matches the host (and Hugging Face) exactly while the rest keep ANE speed; the
-recompute builds `_lmT` only if a tie fires, and sampling stays on the ANE. When the head is tied to
-`embed` (GPT-2), the ANE program bakes a second copy of those weights. The default stays `False`,
-mainly because the head compiles on first use (0.4 s GPT-2, 1.8 s Qwen3-0.6B); `warmup(max_len)` moves
-that off the first token.
+recompute builds `_lmT` only if a tie fires, and sampling stays on the ANE (softmax shifts by ~2e-3, so
+sampling is unaffected). If the head compiles but fails to execute -- e.g. `ANEFORGE_TARGET` set above
+the host family -- it declines to the host matmul rather than breaking `generate`. When the head is tied
+to `embed` (GPT-2), the ANE program bakes a second copy of those weights. The head compiles on first use
+(0.4 s GPT-2, 1.8 s Qwen3-0.6B, ~15% of the decode-program compile that first token already pays);
+`warmup(max_len)` moves it off the first token.
 
 ## Prefill and decode
 

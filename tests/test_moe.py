@@ -86,6 +86,6 @@ def test_moe_prefill_matches_huggingface():  # definitive: ANE MoE model (adapte
   sd = {k: v.detach().float().numpy() for k, v in m.state_dict().items()}
   cfg, weights = _moe_adapter(m.config, sd)
   assert [ls.mlp for ls in cfg.layers] == ["moe", "moe"]      # both layers routed (decoder_sparse_step=1)
-  ane = np.asarray(LlamaPrefill(cfg, weights).prefill(toks)).ravel().astype(np.float32)
+  ane = np.asarray(LlamaPrefill(cfg, weights, ane_lm_head=False).prefill(toks)).ravel().astype(np.float32)
   cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE MoE vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
