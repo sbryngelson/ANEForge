@@ -70,7 +70,7 @@ On Qwen3-0.6B: ~8,600 prompt-tok/s prefill, ~75 tok/s decode. On Qwen3-8B (36 la
 
 A small *draft* model proposes K tokens; the large *target* verifies all K in a single forward. This
 is a natural fit for the ANE: decode is latency-bound, so `verify(K) ~ verify(1)` - measured 1.05x for
-K=5 on Qwen3-8B - and the draft's proposals are checked almost for free. The output is **exact**: the
+K=5 on Qwen3-8B - and the draft's proposals are checked almost for free. The output is exact: the
 same tokens plain greedy decode would produce.
 
 ```python
@@ -116,7 +116,7 @@ compose across layers. Qwen2-MoE's shared expert and QKV biases are detected fro
 math matches HF `Qwen3MoeForCausalLM` (cosine >0.99), and the full 24-layer Qwen1.5-MoE-A2.7B decodes
 coherently end-to-end on the ANE at int8 (~2 tok/s). `examples/moe_chat.py` is an interactive MoE chat.
 
-Unlike the dense 8B, MoE decode at 30B scale is **weight-bandwidth-bound**: ~13.5 ms per MoE layer
+Unlike the dense 8B, MoE decode at 30B scale is weight-bandwidth-bound: ~13.5 ms per MoE layer
 (~89 GB/s), because each token reads all of the experts' weights. So here int8 *does* help (~1.3x), and
 the experts' sparsity (4-8 of 60-128 active) is the real lever - but exploiting it needs a host-side
 FFN split (measured ~4.6x in a prototype), not the dense on-ANE path. The 30B-A3B is currently gated
@@ -124,13 +124,13 @@ only by compile-time RAM on a 52 GB machine (it fits and runs on more).
 
 ## Hybrid models (Qwen3.5)
 
-Qwen3.5 / Qwen3-Next interleave gated **DeltaNet** (linear-attention) layers with gated full-attention
+Qwen3.5 / Qwen3-Next interleave gated DeltaNet (linear-attention) layers with gated full-attention
 layers. Both mixers run on the ANE: DeltaNet carries a resident causal-conv state and a recurrent
 `[heads, dk, dv]` state across decode steps (a decay-first recurrence); attention carries the usual
 resident KV cache. A per-layer plan (`LayerSpec`) names the mixer for each layer, so the runner stays
 architecture-agnostic - it dispatches on the plan, not the weight shapes.
 
-The real **Qwen3.5-27B** (64 layers, 48 DeltaNet + 16 attention) decodes coherently end-to-end on a pure
+The real Qwen3.5-27B (64 layers, 48 DeltaNet + 16 attention) decodes coherently end-to-end on a pure
 ANE from its GGUF at int8 - no host fallback:
 
 ```python
@@ -176,10 +176,10 @@ before RoPE), and a large vocab - the layers run on the ANE; the lm_head project
 
 ## Scope
 
-Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), **Mistral**
-(GQA + sliding window), **Gemma** (scaled embeddings + GeGLU + `(1+w)` RMSNorm), **GPT-2** (pre-norm
-LayerNorm decoder, learned positions, tiled tied lm_head), sparse **Mixture-of-Experts**
-(Qwen3-MoE, Qwen2-MoE), and **hybrid** DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
+Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), Mistral
+(GQA + sliding window), Gemma (scaled embeddings + GeGLU + `(1+w)` RMSNorm), GPT-2 (pre-norm
+LayerNorm decoder, learned positions, tiled tied lm_head), sparse Mixture-of-Experts
+(Qwen3-MoE, Qwen2-MoE), and hybrid DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
 KV-cache decode, automatic segmentation past the ~2 GB program ceiling, int8/int4 weights, and exact
 speculative decoding. Static prompt length per compiled graph; the lm_head projection runs on host by
 default, or on the ANE with `ane_lm_head` (above).

@@ -206,7 +206,7 @@ bottlenecks section.
 
 Per-component validation passes (UNet and VAE steps run on the ANE within a
 few percent), and the group-norm shape wall is gone. The remaining wall is
-**classifier-free guidance (CFG) cancellation**: the conditional minus
+classifier-free guidance (CFG) cancellation: the conditional minus
 unconditional difference is a small fraction of the signal magnitude and is
 swamped by accumulated fp16 noise over the denoising trajectory. This is a
 numerical-envelope limit, not a missing op. The path forward is paired-fp16
@@ -222,7 +222,7 @@ A13, M2 Pro / A14, and M5 / A16-class): the M2 run is the full 16-class watt map
 drives the h14 cost anchor and its mid-utilization ramp and a power anchor
 (per-compression-mode energy and idle/compute/conv rails). The M-series-to-H-target
 ladder is verified, so M3/M4 remain
-ground-truth capability targets (H15/H16). The remaining gap is **A15/M3**:
+ground-truth capability targets (H15/H16). The remaining gap is A15/M3:
 its absolute power rail and full watt-complete map have not been measured, and
 neither M1 nor the now-anchored A14 can supply those points. Capability and
 relative cost are covered family-wide; per-rail watts for the A15 generation
@@ -235,7 +235,7 @@ stated so nothing here overclaims.
 
 ### The two locks
 
-1. **No fp32 / int32 / bf16 compute.** The ANE compute dataplane is fp16
+1. No fp32 / int32 / bf16 compute. The ANE compute dataplane is fp16
    (with a wide, at-least-fp32 accumulator). fp32, int32, and bf16 are
    accepted by the MIL parser but are "not implemented on any backend" for
    the ANE - even a bare cast is rejected. This is silicon, not a path
@@ -243,7 +243,7 @@ stated so nothing here overclaims.
    (notably long-contraction matmuls under cancellation, and the
    transformer down-projection) has no fp16-tolerable form.
 
-2. **The entitlement boundary.** Custom signed HWX cannot be loaded (the
+2. The entitlement boundary. Custom signed HWX cannot be loaded (the
    kernel driver verifies code signatures), and the fully autonomous,
    zero-host-call dispatch loop is entitlement-gated. Measurement shows the
    e5rt surface is functionally complete for the workloads here: bounded
@@ -254,7 +254,7 @@ stated so nothing here overclaims.
 ### True 4CC (FourCC) image input
 
 Declaring a true interchange image format (e.g. `&BGA`) as an input is
-**not reachable on the e5rt path**. The format grammar is solved and the MIL
+not reachable on the e5rt path. The format grammar is solved and the MIL
 parses and type-checks, but the final lowering of `pixel_buffer_to_tensor`
 does not complete without the entitled CoreML `Input4CCFormat` + IOSurface
 route. `af.image_input(uint8)` is the terminal form for direct image input
@@ -271,13 +271,13 @@ data-dependent control flow does not.
 
 Measured, not speculative.
 
-- **Per-call dispatch floor.** Each `e5rt` dispatch has a fixed launch cost
+- Per-call dispatch floor. Each `e5rt` dispatch has a fixed launch cost
   (tens of microseconds; higher on bandwidth-rich chips). Tiny op chains
   are floor-bound, where BNNS or numpy can win; ANE territory begins around
   ~100 MFLOPs per call. Fusing the whole graph into one program - what the
   frontend does by default - amortizes this.
 
-- **LLM decode is dispatch-bound and GPU-favored.** The fp16-product
+- LLM decode is dispatch-bound and GPU-favored. The fp16-product
   precision limits force the precision-sensitive layers onto the CPU, which
   burns more power than running the whole model on the GPU; combined with
   the per-token dispatch overhead, the GPU wins LLM decode on speed and
@@ -285,12 +285,12 @@ Measured, not speculative.
   lever, but ANE batched serving plateaus far below the GPU because it stays
   CPU-dominated.
 
-- **Per-PID program cap.** `aned` enforces a hard cap of 128 simultaneously
+- Per-PID program cap. `aned` enforces a hard cap of 128 simultaneously
   loaded programs per process, with no LRU eviction (program 129 fails to
   compile). `Program.release()` frees a slot immediately. Budget shape
   specializations against this cap, or fuse more aggressively.
 
-- **Very large or rapid back-to-back compiles.** Very large unrolled graphs
+- Very large or rapid back-to-back compiles. Very large unrolled graphs
   or many programs compiled back-to-back in one process can fail to compile.
   This is environmental, not a code bug; reduce program size or re-run. The
   compile backoff in `aneforge/_circuit.py` paces repeated failures as a
@@ -302,19 +302,19 @@ The op census is exhaustive over the surface Apple *exports*, not over the
 silicon's full op set. Three structural blind spots remain and are worth
 keeping in view:
 
-1. **Internal-only layers.** The crackability predictor keys on exported
+1. Internal-only layers. The crackability predictor keys on exported
    validators; at least one real hardware layer (`RCAS`) has an internal
    validator and no exported symbol, found only by an opcode cross-check.
    Others may exist that the export census structurally cannot see.
 
-2. **Composite reachability without a single-layer validator.** Several ops
+2. Composite reachability without a single-layer validator. Several ops
    run on silicon with no `*Layer` validator (`conv_transpose`,
    `group_norm`, `rms_norm`, and others). Reachability is empirical
    (probe-confirmed), not derivable from the validator list, and the
    predictor is necessary-leaning but not sufficient - HWX codegen is the
    real gate.
 
-3. **Temporal and single-process scope.** The whole map is one OS build and
+3. Temporal and single-process scope. The whole map is one OS build and
    one compiler version, measured single-process and steady-state.
    Contention with other ANE clients, QoS preemption, cache eviction under
    memory pressure, and per-op thermal behavior are unmapped. Negative

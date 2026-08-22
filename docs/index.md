@@ -3,46 +3,46 @@
 ANEForge is a direct, CoreML-free Python frontend for the Apple Neural Engine:
 it lowers a tensor graph into one fused Espresso `e5rt` program and dispatches
 it to ANE silicon from an ordinary user process, with no CoreML and no special
-entitlement. **These docs are the software manual** - how to install, call,
+entitlement. These docs are the software manual - how to install, call,
 train, target, and extend the frontend.
 
 ## By task
 
 ### Get something running
 
-- **[Getting started](getting-started.md)** - install, build, first program.
-- **[aneforge API](aneforge-api.md)** - the graph -> compile -> run frontend reference.
-- **[Training on the ANE](training.md)** - on-ANE autograd and the `Trainer` loop.
-- **[FAQ](faq.md)** - common questions, gotchas, what to expect.
-- **[MIL primer](mil-primer.md)** - writing MIL programs by hand.
+- [Getting started](getting-started.md) - install, build, first program.
+- [aneforge API](aneforge-api.md) - the graph -> compile -> run frontend reference.
+- [Training on the ANE](training.md) - on-ANE autograd and the `Trainer` loop.
+- [FAQ](faq.md) - common questions, gotchas, what to expect.
+- [MIL primer](mil-primer.md) - writing MIL programs by hand.
 
 ### Run pretrained models
 
-- **[LLMs on the ANE](llm.md)** - `af.load_llm` prefill + resident-KV-cache decode for
+- [LLMs on the ANE](llm.md) - `af.load_llm` prefill + resident-KV-cache decode for
   Llama/Qwen/Mistral/Gemma/GPT-2/MoE, speculative decoding, and MoE from GGUF.
-- **[Model loaders](developer/models.md)** - vision (ResNet / ViT / CLIP), sentence
+- [Model loaders](developer/models.md) - vision (ResNet / ViT / CLIP), sentence
   encoders and rerankers, GPT-2, and Whisper speech-to-text (both towers on the ANE).
-- **[ONNX import](onnx.md)** - run an existing `.onnx` model on the engine via `af.load_onnx`.
+- [ONNX import](onnx.md) - run an existing `.onnx` model on the engine via `af.load_onnx`.
 
 ### Use the engine well
 
-- **[Cross-chip deployment](cross-chip.md)** - compiling and gating for other ANE
+- [Cross-chip deployment](cross-chip.md) - compiling and gating for other ANE
   families (M1-M5, 28 targets), `cross_compile_check`, `detect_family`, fp16 portability.
-- **[Dispatch backends](dispatch.md)** - Path A vs e5rt vs MPSGraph vs CoreML, and which to use.
-- **[e5rt dispatch reference](e5rt-dispatch-reference.md)** - the full e5rt path: call
+- [Dispatch backends](dispatch.md) - Path A vs e5rt vs MPSGraph vs CoreML, and which to use.
+- [e5rt dispatch reference](e5rt-dispatch-reference.md) - the full e5rt path: call
   sequence, the `ane_e5rt_*` C ABI, multi-op / async / pipelining / IOSurface.
 
 ### Know what works
 
-- **[Capabilities](capabilities.md)** - operator coverage, dtype matrix, known limits.
-- **[Op catalog](op-catalog.md)** - every native MIL op x device (M1-M5), generated from
+- [Capabilities](capabilities.md) - operator coverage, dtype matrix, known limits.
+- [Op catalog](op-catalog.md) - every native MIL op x device (M1-M5), generated from
   the package's `_op_catalog.py` (the runtime `af.op_info` data); the exhaustive Y/~/N table.
 
 ### Contribute
 
-- **[Development](development.md)** - building, testing, adding ops.
-- **[Glossary](glossary.md)** - terminology used across docs and code.
-- **[Roadmap](roadmap.md)** - next directions, open unknowns, and known bottlenecks.
+- [Development](development.md) - building, testing, adding ops.
+- [Glossary](glossary.md) - terminology used across docs and code.
+- [Roadmap](roadmap.md) - next directions, open unknowns, and known bottlenecks.
 
 ## By question
 

@@ -2,7 +2,7 @@
 
 The MLPerf Inference reference ResNet-50 runs on the ANE through aneforge -- no CoreML, no CPU/GPU fallback --
 and passes the upstream MLCommons `submission_checker` (v5.1): all three edge scenarios VALID, at reference
-accuracy. Believed to be the first MLPerf-shaped ResNet-50 result on the ANE. It is **unofficial**:
+accuracy. Believed to be the first MLPerf-shaped ResNet-50 result on the ANE. It is unofficial:
 self-measured, no MLCommons audit trail.
 
 ## Reproduce in one command
@@ -61,11 +61,11 @@ ResNet-50 at 224x224 is ~8.2 GFLOP/image; at 0.82 ms that is ~10 TFLOP/s. The me
 18.8 TFLOP/s (conv) and 10.2 TFLOP/s (GEMM), so ResNet-50 sits at the GEMM roof. It is compute-bound, and three
 levers do not move it:
 
-- **Batching**: fitting `t = D + N*C` over batch 1..64 gives `C ~ 0.855 ms/sample` and `D ~ 0` -- no fixed cost
+- Batching: fitting `t = D + N*C` over batch 1..64 gives `C ~ 0.855 ms/sample` and `D ~ 0` -- no fixed cost
   to amortize.
-- **int8/int4**: ~9% then flat. Near the plateau the weight stream is element-rate-bound, not byte-bound, so
+- int8/int4: ~9% then flat. Near the plateau the weight stream is element-rate-bound, not byte-bound, so
   compression buys energy, not throughput; the int8 flag quantizes weights but leaves the MAC in fp16.
-- **Latency-bound batching** (verify K tokens for the cost of one) applies only to dispatch-bound decode;
+- Latency-bound batching (verify K tokens for the cost of one) applies only to dispatch-bound decode;
   ResNet-50 has no idle compute.
 
 The gap to 18.8 is structural: that roof is a Winograd effect for dense 3x3 stride-1 convs, and ~half of

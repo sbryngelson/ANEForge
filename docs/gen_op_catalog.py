@@ -37,7 +37,7 @@ def render() -> str:
                "(`python docs/gen_op_catalog.py`); do not hand-edit. Query the same "
                "data at runtime via `af.op_info`, `af.is_native(op, chip)`, `af.ops_on(chip)`, "
                "`af.min_native_family(op)`, `af.walled_everywhere()`.\n")
-    out.append(f"**{len(OP_CATALOG)} native MIL ops.** Device ladder: m1=A13, m2=A14, "
+    out.append(f"{len(OP_CATALOG)} native MIL ops. Device ladder: m1=A13, m2=A14, "
                "m3=A15, m4_m5=A16/A17. Cells: Y native, ~ bridge/decompose, N walled. "
                "aneforge's higher-level ops (rms_norm/group_norm/mha/sdpa/fft/linalg/...) are "
                "composites that lower to these.\n")

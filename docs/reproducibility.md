@@ -7,20 +7,20 @@ whole set end to end; each row below is also a standalone one-command claim.
 
 ## Environment
 
-- **Hardware:** an Apple Silicon Mac. The absolute numbers were measured on an
+- Hardware: an Apple Silicon Mac. The absolute numbers were measured on an
   M5 Pro (ANE architecture `h17s`) and are host- and thermal-dependent; the
   portable claim is the qualitative device map, not the multipliers. The
   single-stream map additionally reproduces, verdict for verdict, on an M1 (A13)
   and an M2 (A14).
-- **OS / toolchain:** macOS 14+ (verified macOS 26.5, ANECompiler 3520.4.1),
+- OS / toolchain: macOS 14+ (verified macOS 26.5, ANECompiler 3520.4.1),
   Xcode command-line tools.
-- **Install:**
+- Install:
   ```sh
   pip install -e .            # core (numpy only)
   pip install -e ".[bench]"   # adds MLX for the GPU comparison + power tooling
   sh aneforge/_lib/build.sh   # build the e5rt dispatch dylib (not tracked)
   ```
-- **Power steps** run `sudo powermetrics`, which reports an *estimated* per-rail
+- Power steps run `sudo powermetrics`, which reports an *estimated* per-rail
   power (not a wall meter); they prompt for your password. The deterministic
   gates (routes, corpus) need no sudo.
 

@@ -7,8 +7,6 @@ M5 is per-chip target data plus the `MinimumFamily<N>` op-capability floors. So 
 support is mostly a lookup problem: ANEForge ships a per-family capability table, a
 measurement-free per-chip cost model, and a static fp16 divergence predictor.
 
-This page covers the practical API.
-
 ## Where these live
 
 `af.compile`, `af.estimate`, and `af.project_peak` are top-level (`import aneforge as af`).
@@ -58,13 +56,13 @@ absolute power/watt rail still needs its own silicon).
 
 There are two distinct namespaces, and ANEForge keeps them separate:
 
-- **Runtime arch** - what the OS reports for the host ANE: `h13`, `h13g`, `h14g`, and so
+- Runtime arch - what the OS reports for the host ANE: `h13`, `h13g`, `h14g`, and so
   on (the `g`/`c`/`s`/`d` suffix is a die variant: more NE cores, same capability).
-- **Compiler target** - the `TargetArchitecture` string the compiler accepts: `h13`,
+- Compiler target - the `TargetArchitecture` string the compiler accepts: `h13`,
   `h16s`, `h17s`, `h17d`, etc.
 
 The compiler enumerates 28 valid `TargetArchitecture` strings across the five families.
-A17 (the H17* targets) and A18 (H18) exist but add **no op capabilities** over A16 - they
+A17 (the H17* targets) and A18 (H18) exist but add no op capabilities over A16 - they
 scale the NE-core count only (the suffix `g`/`s`/`c`/`d` is a core-count variant; M5 ==
 H17s). The A16 tier is therefore the capability ceiling, and ANEForge folds every A17/A18
 arch into `Family.A16`.
@@ -79,17 +77,17 @@ arch into `Family.A16`.
 which auto-detects the host). Before lowering, the graph is gated for that family
 (`_retarget_for`), which can do one of four things per op:
 
-- **native** - emit it directly (the bulk of the F0/F2 vocabulary: conv, matmul, pooling,
+- native - emit it directly (the bulk of the F0/F2 vocabulary: conv, matmul, pooling,
   elementwise, activations, softmax, norms, reductions, sqrt/rsqrt/erf/exp2/log2, SDPA,
   resize, tile, space<->channel - all native on A13+).
-- **decompose** - substitute an in-graph equivalent. `sin`/`cos` are A15+ on the silicon,
+- decompose - substitute an in-graph equivalent. `sin`/`cos` are A15+ on the silicon,
   so below that floor they are rewritten through `aneforge.special` (a Horner expansion);
   `dropout`/`random` route to host-side RNG.
-- **reject** - a clear compile-time error. Texture-engine ops (`crop_resize`, `resample`,
+- reject - a clear compile-time error. Texture-engine ops (`crop_resize`, `resample`,
   `affine`, A14+) and bridge ops that pass validation but reject at codegen on M1
   (`topk`, `sort`, `dynamic_slice`, A14+) hard-reject below their floor rather than crash
   at dispatch.
-- **oversize** - a tensor (or a known internal-reshape extent, e.g. `group_norm`'s rank-4
+- oversize - a tensor (or a known internal-reshape extent, e.g. `group_norm`'s rank-4
   tiled lowering) exceeds the family's extent cap for that op class and must be tiled.
   The caps are per-op-class (A14/A16-measured): spatial/contraction 16384 through A15 ->
   65536 at A16; channel 65536 on both; transpose 2^2^3-1 (A14) -> >=2^2^4-1 (A16). preflight
@@ -118,7 +116,7 @@ af.compile(y, target="h13")                 # gate + lower for M1 from any host
 
 ### The h13 slice-saturation warning
 
-On the A13/M1 family only, a `slice_by_size` with a nonzero **last-axis** begin-offset
+On the A13/M1 family only, a `slice_by_size` with a nonzero last-axis begin-offset
 routes through a Q.4 fixed-point crop-DMA with an implied x16 scale, which silently
 clamps any sliced element with `|value| > 4094` (= 65504/16) to +/-inf. A zero last-axis
 begin, or an offset on any other axis, takes a clean route. The value threshold is a
@@ -129,7 +127,7 @@ blocking it. On A14+ the route is clean and no warning fires.
 
 Cross-compilation is separable from device-load: the e5rt compiler honors
 `TargetArchitecture=<arch>` via its custom ANE-compiler options, so one box can compile a
-library for any chip. **The catch:** e5rt *silently falls back* to the host target on an
+library for any chip. The catch: e5rt *silently falls back* to the host target on an
 unrecognized `TargetArchitecture` string (a typo like `'zzz'` compiles cleanly against
 the host, turning a mistake into a false cross-target pass).
 
@@ -172,17 +170,17 @@ saturate fp16 ops. That makes it statically predictable.
 `tg.predict_fp16_divergence(kind, shape, target_a, target_b, ...)` compares the relevant
 per-family HAL fields and returns one of four verdicts, strongest first:
 
-- **`saturation`** - a slice with a nonzero last-axis begin-offset where one target is
+- `saturation` - a slice with a nonzero last-axis begin-offset where one target is
   A13: A13 routes the offset through the Q.4 x16 crop-DMA that clamps `|value| > 4094`
-  (= 65504/16) to +/-inf, while A14+ takes a clean route. This is the **only** finite->inf
+  (= 65504/16) to +/-inf, while A14+ takes a clean route. This is the only finite->inf
   axis. It is magnitude-gated: a finite `max_abs <= 4094` downgrades it.
-- **`round1`** - a reduce immediately followed by a square/mul (variance, L2-norm,
+- `round1` - a reduce immediately followed by a square/mul (variance, L2-norm,
   RMSNorm) where the `0x494` reduce->square fusion bit differs (A13 = 0, A14+ = 1): one
   target keeps a rounding step the other fuses away, ~ 1 fp16 round of difference.
-- **`ulp1`** - a reduction/softmax/norm whose `0x3f0` route threshold differs (192 on
+- `ulp1` - a reduction/softmax/norm whose `0x3f0` route threshold differs (192 on
   A13/A14, 384 on A15+): a partial-sum reorder, <= 1 ULP. Empirically a no-op (block
   accumulation absorbs it), but a differing field still flags the risk.
-- **`none`** - no HAL field selects a differing route.
+- `none` - no HAL field selects a differing route.
 
 `cross_compile_check` surfaces any non-`none` verdict as a `CrossChipFP16Warning` (a
 numeric heads-up, never a rejection; silence it with
@@ -200,8 +198,8 @@ reaches. A14/A16 have no such path.
 
 ### Measured end-to-end training parity
 
-The same seeded MNIST-CNN, trained 300 steps, reaches **0.9080 on M1**, **0.9080 on
-M2/A14** (deterministic x3), and **0.9070 on M5** - the A16 generation differs by
+The same seeded MNIST-CNN, trained 300 steps, reaches 0.9080 on M1, 0.9080 on
+M2/A14 (deterministic x3), and 0.9070 on M5 - the A16 generation differs by
 exactly one test sample out of 1000 (0.1%), each run internally deterministic. A14 lands
 exactly on M1's number, so the fp16 drift boundary is the A15/A16 generation, not per-chip
 noise. Training is chip-portable, with cross-chip fp16 drift accumulating to a negligible
@@ -223,8 +221,8 @@ The model is anchored to silicon-measured chips (M1, M2, M5; only A15/M3 is unme
 and validated out-of-sample: `estimate(target='h17s')` reproduces the M5 loop-closure
 convs with mean |error| ~12%.
 
-**Honest caveat on `project_peak`.** It reports a *peak ceiling*: M5 projects to ~5.5x
-M1, but the measured M5/M1 end-to-end latency speedup is **2.3-3.3x** (the dispatch floor
+Honest caveat on `project_peak`. It reports a *peak ceiling*: M5 projects to ~5.5x
+M1, but the measured M5/M1 end-to-end latency speedup is 2.3-3.3x (the dispatch floor
 caps real workloads below both the bandwidth ratio and the compute-peak ratio). Use
 `project_peak` for the generational shape, not as a promised speedup, and prefer
 on-device measurement when the number matters.
@@ -249,8 +247,8 @@ correct on M1, but the compiler folds them to dense fp16 (an accuracy cost for z
 bandwidth win). A14/M2 adds int8 streaming but still folds blockwise; from A15 up the
 full set streams.
 
-ANEForge wires this into `compile(compress='auto', target=...)`: **`auto` is
-family-aware**, considering only encodings that stream natively on the target family
+ANEForge wires this into `compile(compress='auto', target=...)`: `auto` is
+family-aware, considering only encodings that stream natively on the target family
 (host-detected when `target=None`). On M1 that is int4-LUT and sparse, so `auto` skips
 int8/blockwise there and a rejected int4 falls back to fp16 rather than a folding
 encoding; on A14+ it can pick from the wider native set. Explicit single-mode knobs

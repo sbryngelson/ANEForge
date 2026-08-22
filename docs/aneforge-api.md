@@ -1,6 +1,6 @@
 # aneforge - frontend API reference
 
-`aneforge` is a clean **graph -> compile -> run** frontend for the Apple Neural
+`aneforge` is a clean graph -> compile -> run frontend for the Apple Neural
 Engine. You build a small tensor graph from Python, `compile` it into ONE fused
 e5rt program, and call the result on the ANE. Fusing is the point: the ANE
 penalises many tiny dispatches, so a whole subgraph becomes a single program.
@@ -22,7 +22,7 @@ out = net(image)                        # run on the ANE -> np.float32
 net.release()
 ```
 
-- Inputs are fed to the compiled model **in the order they were created** with
+- Inputs are fed to the compiled model in the order they were created with
   `af.input`. Arrays are cast to fp16 on the way in; outputs come back fp32.
 - Weights (for `conv`, `@`, `linear`, norms, ...) are NumPy arrays passed at build
   time, packed into one weight blob - float dtype only (fp16/fp32/fp64 accepted;
@@ -34,7 +34,7 @@ net.release()
 
 ## Image input
 
-`af.image_input(shape, scale=1/255, bias=0.0)` declares a **uint8** input port and
+`af.image_input(shape, scale=1/255, bias=0.0)` declares a uint8 input port and
 dequantises it on the engine: `cast(uint8->fp16) -> mul(scale) -> add(bias)` run as
 in-graph ANE ops, so raw camera / decoded-video bytes feed the model directly and
 the host skips the float-convert + repack. `scale` / `bias` are scalars (the usual
@@ -46,11 +46,11 @@ graph; it is byte-identical to converting on the host.
 
 Ops come in two families, decided automatically at `compile` time:
 
-1. **Fused e5rt-MIL ops** lower to MIL and fuse into a single ANE program - no
+1. Fused e5rt-MIL ops lower to MIL and fuse into a single ANE program - no
    graph cut. These are the default and cover most networks.
-2. **Netplist-bridge ops** run as native Path-A sub-programs that Apple's MIL
+2. Netplist-bridge ops run as native Path-A sub-programs that Apple's MIL
    frontend never emits (e.g. fused SDPA, TopK, point-cloud layers). The graph
-   is **cut** around each one: the surrounding fused regions run as e5rt
+   is cut around each one: the surrounding fused regions run as e5rt
    programs and the bridge node runs as a separate native-ANE sub-program, with
    tensors threaded between stages as host fp16 arrays. The presence of any
    bridge op turns `compile` into a `SegmentedModel`.
@@ -124,7 +124,7 @@ the emitter.) Binary ops broadcast NumPy-style and take two graph `Tensor`s - us
 
 ## Netplist-bridge ops (native Path-A sub-programs)
 
-Each of these **cuts the graph**: it runs as its own native-ANE sub-program,
+Each of these cuts the graph: it runs as its own native-ANE sub-program,
 accelerated by the persistent Path-A worker (see below). Get exact shape constraints
 and arch-gated rejections from `aneforge/graph.py`; the highlights:
 
@@ -237,7 +237,7 @@ af.compile(out, int8=False, build_dir=None, opt="routes",
 ## Weight compression
 
 `compress=` selects how matmul/linear weights are packed into the blob. All forms
-**stream** (dequantise during the tile DMA) inside the same fused program.
+stream (dequantise during the tile DMA) inside the same fused program.
 
 | `compress` | Encoding | Notes |
 | --- | --- | --- |
@@ -248,9 +248,9 @@ af.compile(out, int8=False, build_dir=None, opt="routes",
 | `'blockwise'` | per-inner-block int8 | `constexpr_blockwise_shift_scale`, `block_size` columns per scale; accuracy-gated -> int8 -> fp16. |
 | `'auto'` | per-weight best | Sparse if sparse, else int4 if accurate, else int8, else fp16. |
 
-`compress='auto'` is **family-aware**: only encodings that stream *natively* on the
+`compress='auto'` is family-aware: only encodings that stream *natively* on the
 target family (the host-detected family when `target=None`) are candidates
-(`tg.native_streams(family)`). On **h13 / M1** the natively-streaming forms are
+(`tg.native_streams(family)`). On h13 / M1 the natively-streaming forms are
 int4-LUT and sparse, so `auto` skips int8 and blockwise there (they would fold to
 dense fp16 - accuracy cost, no bandwidth win) and a rejected int4 falls back to
 fp16, not to a folding encoding. Explicit single-mode knobs (`compress='int8'`,
@@ -274,10 +274,10 @@ are 28 compiler targets covering M1 through M5 (and the A-series equivalents). S
 | `cross_compile_check(out, target)` (in `aneforge._compile`) | Does the graph **compile** for another family, checked from this host? Returns `True` iff the e5rt compiler produces a library for that `TargetArchitecture`. Compile-level validation only; numeric correctness still needs the real silicon. Raises on an unknown arch name. |
 | `detect_family()` (in `aneforge._targets`) | Best-effort target family for the host ANE: the `ANEFORGE_TARGET` env var if set, else the CPU brand (M1/M5 are silicon-measured anchors), else the conservative floor with a one-time warning. |
 
-The **`ANEFORGE_TARGET`** environment variable (an arch string such as `h13` or
+The `ANEFORGE_TARGET` environment variable (an arch string such as `h13` or
 `h16s`) overrides host detection everywhere.
 
-**`CrossChipFP16Warning`** is raised when a graph carries an fp16 pattern whose
+`CrossChipFP16Warning` is raised when a graph carries an fp16 pattern whose
 result can diverge across chip families (warn-only, so a compile error still
 surfaces). Silence it with
 `warnings.filterwarnings('ignore', category=af.CrossChipFP16Warning)`.
@@ -300,7 +300,7 @@ variant selection in the autotuner is always by on-device measurement.
 ## Compile-failure backoff guard
 
 As a defensive backstop for the autotuner's burst of variant compiles, ANEForge
-**paces the next compile after a failure** by a short interval, keeping consecutive
+paces the next compile after a failure by a short interval, keeping consecutive
 failures apart.
 
 - `af.CompileBackoffError` - raised (in strict mode) when a compile is attempted
@@ -325,7 +325,7 @@ keeps optimizer state on-engine across steps. See [`training.md`](training.md) a
 
 ## The persistent netplist worker
 
-Netplist-bridge stages (sdpa, topk, ...) default to a **persistent Path-A worker**
+Netplist-bridge stages (sdpa, topk, ...) default to a persistent Path-A worker
 (load-once, eval-many) built lazily on first call and reused for the model's
 lifetime, then freed in `release()`. Sub-program dispatch is sub-millisecond.
 Set `ANEFORGE_NETPLIST_WORKER=0` to force the A1 (subprocess-per-call) fallback;

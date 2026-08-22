@@ -15,28 +15,28 @@ is a 16-bit float with roughly 3-4 significant decimal digits.
 That single dtype constraint is the root of everything below. The headroom is real
 but narrow:
 
-- The fp16 **range** ceiling is 65504. Any intermediate that crosses it saturates
+- The fp16 range ceiling is 65504. Any intermediate that crosses it saturates
   to infinity, silently corrupting the result. Several modules pre-scale to keep
   intermediates inside this envelope (see *the dynamic-range walls* below).
-- The fp16 **precision** floor is ~1e-3 relative error. A polynomial that is exact
+- The fp16 precision floor is ~1e-3 relative error. A polynomial that is exact
   in fp64 is capped at ~1e-3..1e-4 relerr once its operands and products round to
   fp16.
 
 ## The WIDE accumulator and where fp16 actually bites
 
-The crucial asymmetry: **reductions and matmuls accumulate in a wide,
-fp32-class accumulator fed by radix-4 fp16-rounded input tiles.** The *inputs* and
+The crucial asymmetry: reductions and matmuls accumulate in a wide,
+fp32-class accumulator fed by radix-4 fp16-rounded input tiles. The *inputs* and
 *products* round to fp16, but the *running sum* does not.
 
 The practical consequence is that representable sums are near-exact where a naive
 fp16 running sum would have stalled long ago:
 
-- A sum (or dot) of 16384 ones is **bit-exact**, where naive fp16 saturation of the
+- A sum (or dot) of 16384 ones is bit-exact, where naive fp16 saturation of the
   running sum stalls at ~2048.
 - A `+1` survives next to a 16000 partial that an fp16 running sum would simply
   swallow.
 
-So the fp16 limit lives at **the products and the I/O cast, not the running sum.**
+So the fp16 limit lives at the products and the I/O cast, not the running sum.
 This reframes where accuracy is lost:
 
 | Source of error | Affected by the wide accumulator? |
@@ -59,7 +59,7 @@ There is one catch that every numerically careful kernel must respect:
 
 This is the single most important numerics rule in the codebase. Every dot product
 and accumulation in the math modules is written as `(u * v) @ ones` — a matmul —
-**never** as `(u * v).sum()`. A narrow `reduce_sum` re-injects exactly the rounding
+never as `(u * v).sum()`. A narrow `reduce_sum` re-injects exactly the rounding
 error a careful kernel is trying to avoid.
 
 ### reduce_sum-as-matmul
@@ -71,8 +71,8 @@ rebuilds a single-axis `reduce_sum` node as a contraction against a ones-vector:
 x[..., K].sum(-1, keepdims) == x @ ones[K, 1]
 ```
 
-This is mathematically identical (`sum_k x_k == x @ 1`) and **strictly >= accuracy
-under cancellation**, because it routes the sum through the wide accumulator. It is
+This is mathematically identical (`sum_k x_k == x @ 1`) and strictly >= accuracy
+under cancellation, because it routes the sum through the wide accumulator. It is
 therefore classed *lossless-or-better*: always safe, and the precision-aware tuner
 offers it as the flagship cheap accuracy win (one matmul vs one reduce). Only the
 single, last-axis case is rewritten directly; a non-last axis is transposed to the
@@ -86,8 +86,8 @@ triangular ones weight, made exact by the wide accumulator.
 
 When cancellation is the wall — a tiny result from large nearly-equal operands,
 where the fp16 rounding of the operands and products (not the accumulation) swamps
-the signal — ANEForge offers **paired-fp16** ("double-fp16") extended precision,
-with **no fp32 anywhere in the compute path**.
+the signal — ANEForge offers paired-fp16 ("double-fp16") extended precision,
+with no fp32 anywhere in the compute path.
 
 A value is carried as an unevaluated pair `(hi, lo)` with `hi = fp16(x)` and
 `lo = fp16(x - hi)`, so the pair represents `hi + lo` to roughly twice the fp16
@@ -97,11 +97,11 @@ paired operation compiles to a pure-fp16 graph that runs on the ANE.
 The arithmetic is the classic *error-free transforms*, every intermediate rounded
 to fp16:
 
-- **TwoSum** (Knuth) — add/sub: `a + b = s + e` exactly, `s = fl(a + b)`.
-- **TwoProduct** (Dekker) — mul: `a * b = p + e` exactly via a Veltkamp split (the
+- TwoSum (Knuth) — add/sub: `a + b = s + e` exactly, `s = fl(a + b)`.
+- TwoProduct (Dekker) — mul: `a * b = p + e` exactly via a Veltkamp split (the
   split constant is `2^ceil(11/2)+1` for fp16's 11-bit significand). The
   `hi*lo + lo*hi` cross terms are captured; `lo*lo` is dropped (below fp16 ulp).
-- **Compensated dot** — TwoProduct each element, then accumulate the product *and*
+- Compensated dot — TwoProduct each element, then accumulate the product *and*
   the error streams. Crucially, the accumulation is again via `@ ones` (the wide
   matmul accumulator), never `reduce_sum` — a narrow sum would re-inject the very
   error the compensation just removed.
@@ -137,15 +137,15 @@ fp16 result), so it drops straight into an existing graph at a cancellation hots
 
 ## Numeric graph rewrites
 
-The optimizer distinguishes **lossless** rewrites (always-on canonicalization) from
-**numeric** ones (accuracy-affecting, tuner-gated):
+The optimizer distinguishes lossless rewrites (always-on canonicalization) from
+numeric ones (accuracy-affecting, tuner-gated):
 
 - `reduce_sum_to_matmul` (above) — lossless-or-better, the safe accuracy lever.
-- **Scalar-chain folding** — `muls(b) ∘ muls(a) -> muls(a*b)`, and likewise for
+- Scalar-chain folding — `muls(b) ∘ muls(a) -> muls(a*b)`, and likewise for
   `adds`. The fold is done in fp16 to match device semantics, but because the fp16
   NumPy kernels are never assumed bit-identical to the engine, const-folding is
   gated as a numeric (not lossless) rewrite.
-- **SDPA / bridge decompositions** — `sdpa -> ((q @ k^T) * scale).softmax(-1) @ v`,
+- SDPA / bridge decompositions — `sdpa -> ((q @ k^T) * scale).softmax(-1) @ v`,
   and the bridge-elimination family (`minmax_norm`, `flatten`, `lrn`). These are
   metamorphic-proven bit-identical (or within fp16 op-noise), so they are lossless
   and chosen purely by speed.
@@ -165,13 +165,13 @@ Cre = Are@Bre - Aim@Bim
 Cim = Are@Bim + Aim@Bre
 ```
 
-This is the straight 4-matmul form, **not Karatsuba**: on the ANE matmul is cheap,
+This is the straight 4-matmul form, not Karatsuba: on the ANE matmul is cheap,
 and the wide accumulator keeps the straight form cleanest — Karatsuba's `(a+b)(c+d)`
 sums would lose a bit of fp16 headroom for no real op savings. The twiddle matrices
 ride in as small fp16 constants folded into the graph.
 
 The staged Cooley-Tukey FFT keeps the "every stage is a matmul" property while
-cutting MACs to sub-quadratic. Its accuracy is ~5e-4..8e-4, **flat in N** (the wide
+cutting MACs to sub-quadratic. Its accuracy is ~5e-4..8e-4, flat in N (the wide
 accumulator means per-stage sums don't compound) — about 3x the naive single-DFT
 floor (~2.5e-4) from the extra cross-twiddle multiplies, but still fp16-clean to
 N=2048+. So staged is not *more* accurate than the dense DFT, just far cheaper at
@@ -186,11 +186,11 @@ cancellation precision heuristic; these kernels are numerically verified against
 Several places must actively defend the 65504 ceiling, because the accumulator
 holds the unscaled sum *before* any normalization:
 
-- **2-D FFT** folds the `1/(M*N)` normalization *into the twiddles* (`1/N` on the
+- 2-D FFT folds the `1/(M*N)` normalization *into the twiddles* (`1/N` on the
   row pass, `1/M` on the column pass), never as one scale at the end. A real
   spectrum is O(M*N) at the dominant modes, so an unscaled first-axis transform
   would push intermediates past 65504 and shred precision.
-- **iFFT for convolution spectra** pre-scales `Y` so the unscaled inverse-DFT sum
+- iFFT for convolution spectra pre-scales `Y` so the unscaled inverse-DFT sum
   stays well within range (`s = 30000 / peak`), runs the linear iFFT, then undoes
   the scale on the host. Products of two transforms can otherwise peak past 65504
   and saturate.
@@ -209,19 +209,19 @@ The wide accumulator makes a single `A @ x` clean even at cond ~1e4 — but the
 iterates and residuals are stored and re-fed as fp16, and the residual `b - A x` is
 a catastrophic-cancellation subtract. That subtract, not the matmul, is the wall:
 
-- **Iterative refinement** recovers about *one order of magnitude* of accuracy for
+- Iterative refinement recovers about *one order of magnitude* of accuracy for
   moderate conditioning. By cond ~1e3 the fp16 approximate solve barely converges
   and refinement only nibbles.
-- **Conjugate gradient** uses symmetric Jacobi (diagonal) preconditioning to keep
+- Conjugate gradient uses symmetric Jacobi (diagonal) preconditioning to keep
   the fp16 dot products in range: scaling `A` so its entries are ~1 stops raw
   cond ~1e2 GEMV products from blowing past 65504. Without a convergence test to
   stop early, the unrolled iterates can overflow fp16 at high cond — reported as a
   finite large relerr rather than a NaN.
-- **Least squares via normal equations** *squares* the condition number; refinement
+- Least squares via normal equations *squares* the condition number; refinement
   buys back roughly the order of magnitude the squaring cost.
-- **LSQR / GMRES** Krylov envelopes: ~1e-3 at cond <= 1e1, ~1e-2 at cond <= 1e2 for
+- LSQR / GMRES Krylov envelopes: ~1e-3 at cond <= 1e1, ~1e-2 at cond <= 1e2 for
   overdetermined least squares.
-- **Power iteration** (dominant SVD) normalizes *between* the `A` and `A^T`
+- Power iteration (dominant SVD) normalizes *between* the `A` and `A^T`
   applications: `A^T(A v)` has magnitude ~σ², which overflows fp16 for σ > ~250.
   Likewise, extra `A^T A` power steps *hurt* trailing singular values in fp16 — each
   step squares the spectrum and crushes the small values toward the dominant one.
@@ -235,10 +235,10 @@ Special functions are long, dependent chains of fused fp16 mul/add (Horner /
 Clenshaw evaluation of minimax or rational approximations). Two fp16 constraints
 shape every implementation:
 
-1. **fp16 compute (~3-4 digits).** Where a function's *output* leaves the fp16 range
+1. fp16 compute (~3-4 digits). Where a function's *output* leaves the fp16 range
    (gamma > 65504 past x~8, I0 past x~12) that is a hard wall, not a coefficient
    problem.
-2. **No scalar-add op and no in-graph branch.** A constant `c` is added with a
+2. No scalar-add op and no in-graph branch. A constant `c` is added with a
    `exp(0) == 1` ones tensor scaled by `c` (built on `exp`, an F0 native unary on
    every ANE family including M1, rather than `cos`, which is A15+). Only fixed,
    smooth range reduction is used — never a data-dependent step count.
@@ -246,27 +246,27 @@ shape every implementation:
 Several functions exist specifically because the naive fp16 form cancels or
 centers badly:
 
-- **erfc** is evaluated directly (A&S 7.1.26), *not* as `1 - erf`: in fp16,
+- erfc is evaluated directly (A&S 7.1.26), *not* as `1 - erf`: in fp16,
   `1 - erf(x)` cancels to 0 for x > ~2 (`fp16(1 - erf(3)) == 0`, but
   `erfc(3) = 2.2e-5`).
-- **erf** is the mirror case, and gets its own polynomial for the same reason:
+- erf is the mirror case, and gets its own polynomial for the same reason:
   `x * P(x^2)`, a deg-5 minimax of `erf(x)/x` on [0, 2], *not* `1 - erfc`. Near 0
   `erf` is small while `erfc → 1`, so the subtraction cancels exactly where `erf`
-  is wanted: on `geomspace(1e-3, 1)` the naive form is off by **187%** against
+  is wanted: on `geomspace(1e-3, 1)` the naive form is off by 187% against
   0.10% for the direct one, and it returns `-0.000977` at `x = 0` — a negative
   value for a function that is odd through the origin. Past |x| ~ 2 the two swap
   roles and `1 - erfc(|x|)` is the accurate path, since there `erfc` is small.
-- **lgamma / gamma** evaluate in a *centered* variable (`x - 4.5`, `x - 1.5`). A raw
+- lgamma / gamma evaluate in a *centered* variable (`x - 4.5`, `x - 1.5`). A raw
   Horner in `x` has terms up to ~1e7 with alternating large coefficients that cancel
   catastrophically (abserr ~8); centering keeps the powers small and the chain
   fp16-clean (abserr ~3e-3).
-- **sin / cos** use half-period [-π/2, π/2] minimax polynomials. Over the full
+- sin / cos use half-period [-π/2, π/2] minimax polynomials. Over the full
   [-π, π] the alternating terms reach ~5 in magnitude, a cancellation that loses
   ~2 fp16 digits (abserr ~0.2 at ±π); on the half-period the terms stay O(1) and the
   error is fp16-rounding-limited (~1e-3). These polynomial forms also give a portable
   path on M1/H13, where native trig is unavailable.
 
-Note a negative result: `exp_wide` / `log_wide` range-reduction recipes do **not**
+Note a negative result: `exp_wide` / `log_wide` range-reduction recipes do not
 reliably beat the native fp16 `exp` / `log` on this hardware — the re-rounding from
 repeated squaring/sqrt usually costs more than the small-argument benefit gains. They
 are documented recipes, not the default.
@@ -280,13 +280,13 @@ DRAM bytes during the tile DMA.
 
 The numeric contract:
 
-- **Default tune is accuracy-preserving.** The default tolerance is fp16 noise
+- Default tune is accuracy-preserving. The default tolerance is fp16 noise
   (`_ACCURACY_TOL = 5e-3`). A lossy rewrite like int8 (~1-2% quantization error,
   well above fp16 noise) is *rejected* at this default, so `tune()` returns the
   lossless baseline. int8 is opt-in: `tune(out, atol=0.1)` admits it within a stated
   budget, and even then a lossy variant must beat the baseline by at least 1.10x to
   be chosen, so a measurement-noise "win" never costs accuracy for free.
-- **`compress='auto'`** chooses per weight: sparse if the weight is >=50% zeros,
+- `compress='auto'` chooses per weight: sparse if the weight is >=50% zeros,
   else int4 if it stays within `compress_atol`, else int8, else fp16. int4 carries an
   accuracy-gated fallback to int8/fp16.
 - An encoding only helps if the per-family lowering *streams* it natively. Encodings
@@ -312,14 +312,14 @@ graph's fp16 *values* are largely chip-independent. The remaining divergence com
 only from HAL-data-selected codegen routes that reorder or saturate fp16 ops, and the
 target table predicts it statically into one of:
 
-- **`saturation`** — a width-offset slice on A13 (family 2) routes through the Q.4
+- `saturation` — a width-offset slice on A13 (family 2) routes through the Q.4
   x16 crop-DMA that clamps `|value| > 4094` to ±infinity, while A14+ takes a clean
   route. Magnitude-gated: only flagged when values can exceed 4094.
-- **`ulp1`** — a reduction/softmax/norm whose route threshold differs (192 on
+- `ulp1` — a reduction/softmax/norm whose route threshold differs (192 on
   A13/A14 vs 384 on A15+): a partial-sum reorder, <= 1 ULP.
-- **`round1`** — a reduce-then-square fusion difference; currently never returned
+- `round1` — a reduce-then-square fusion difference; currently never returned
   (A13/A14/A16 silicon all compute `fp16(sum)^2`, a measured no-op).
-- **`none`** — no HAL field selects a differing route.
+- `none` — no HAL field selects a differing route.
 
 The native fused-attention layer also carries a numeric reliability envelope:
 reliable to ~3e-3 up to S=2048, but garbage (~1.0) at S=4096 and once *both* query

@@ -2,7 +2,7 @@
 
 > Generated from `aneforge/_op_catalog.py` in the ANEForge repository (`python docs/gen_op_catalog.py`); do not hand-edit. Query the same data at runtime via `af.op_info`, `af.is_native(op, chip)`, `af.ops_on(chip)`, `af.min_native_family(op)`, `af.walled_everywhere()`.
 
-**187 native MIL ops.** Device ladder: m1=A13, m2=A14, m3=A15, m4_m5=A16/A17. Cells: Y native, ~ bridge/decompose, N walled. aneforge's higher-level ops (rms_norm/group_norm/mha/sdpa/fft/linalg/...) are composites that lower to these.
+187 native MIL ops. Device ladder: m1=A13, m2=A14, m3=A15, m4_m5=A16/A17. Cells: Y native, ~ bridge/decompose, N walled. aneforge's higher-level ops (rms_norm/group_norm/mha/sdpa/fft/linalg/...) are composites that lower to these.
 
 ## Activations (incl. LUT)
 | op | M1 | M2 | M3 | M4/M5 | kernel | note |

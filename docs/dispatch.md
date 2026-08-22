@@ -144,7 +144,7 @@ to want it. See
 Public Metal-based graph API. It can in principle route to ANE via private
 compilation-descriptor selectors, but for most workloads it keeps execution on the
 Metal GPU. ANEForge does not use MPSGraph as a dispatch backend, but it is a useful
-**verified GPU baseline** for cross-device benchmarking, and the
+verified GPU baseline for cross-device benchmarking, and the
 `EspressoANEIOSurface metalBufferWithDevice:` zero-copy primitive is available for a
 future hybrid CPU/GPU/ANE pipeline.
 

@@ -71,14 +71,14 @@ a plain `pytest tests/` works.
 
 Operator coverage grows by mapping a MIL spelling to a Python op. The path:
 
-1. **Catalog it.** Add the op to `aneforge/_op_catalog.py` (the single source of
+1. Catalog it. Add the op to `aneforge/_op_catalog.py` (the single source of
    truth for per-device availability), then regenerate the reference table with
    `python docs/gen_op_catalog.py > docs/op-catalog.md`.
-2. **Lower it.** Add the fused-MIL emitter in `aneforge/_compile.py`, or, for an
+2. Lower it. Add the fused-MIL emitter in `aneforge/_compile.py`, or, for an
    op that MIL rejects but the hardware supports, add a netplist bridge under
    `aneforge/_bridges/`.
-3. **Expose it.** Add the method on the graph type in `aneforge/graph.py`.
-4. **Test it.** Mirror an existing case: compile, run on the ANE, and compare
+3. Expose it. Add the method on the graph type in `aneforge/graph.py`.
+4. Test it. Mirror an existing case: compile, run on the ANE, and compare
    against a numpy reference at fp16. Add it to the corpus.
 
 ## Code style

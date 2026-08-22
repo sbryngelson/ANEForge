@@ -42,7 +42,7 @@ the full build and tests.
 
 ## First program
 
-`aneforge` is a **graph -> compile -> run** API: build a small tensor graph,
+`aneforge` is a graph -> compile -> run API: build a small tensor graph,
 `compile` it into ONE fused ANE program (weights packed automatically), and call
 the result.
 
@@ -70,7 +70,7 @@ The op surface covers conv/conv_transpose, matmul/`@`/linear/bmm, the usual
 activations (relu/silu/gelu/...), elementwise arithmetic, reductions and norms
 (softmax, rms_norm/layer_norm/group_norm/batch_norm, l2_norm), pooling/upsample/
 concat/reshape/transpose/pixel_(un)shuffle, and nn helpers (mha,
-cross_attention, geglu). A second family of **netplist-bridge** ops (sdpa,
+cross_attention, geglu). A second family of netplist-bridge ops (sdpa,
 topk/sort/argmax, point-cloud and rearrange layers) run as native ANE
 sub-programs and cut the graph into a `SegmentedModel`.
 

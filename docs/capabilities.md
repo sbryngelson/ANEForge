@@ -5,7 +5,7 @@ table see [op-catalog.md](op-catalog.md).
 
 ## Coverage summary
 
-ANEForge classifies the full **166-op MIL vocabulary** against a machine-checkable
+ANEForge classifies the full 166-op MIL vocabulary against a machine-checkable
 registry (`aneforge/_capabilities.py`, serialized to `capabilities.json` and
 CI-gated). Each op falls into one of a few practical buckets:
 
@@ -41,15 +41,15 @@ and boolean tensor I/O have no path.
 
 ## Dimension bounds
 
-Tensor dimension caps are **per-family and per-op-class** - the limit rides the
+Tensor dimension caps are per-family and per-op-class - the limit rides the
 op's lowering, not the tensor, so a graph that fits an M5 may overflow an M1.
 Practical caps:
 
-- **Spatial / contraction** extents (flat W/H, matmul-K, conv spatial): 16384
+- Spatial / contraction extents (flat W/H, matmul-K, conv spatial): 16384
   through A15, 65536 at A16.
-- **Channel** axis: 65536 on both A14 and A16.
-- **Transpose** extent: very large (offset-field width), effectively unbounded.
-- **Conv kernel width**: `kW <= 13` on M1, `<= 15` on M5 (route wider kernels via
+- Channel axis: 65536 on both A14 and A16.
+- Transpose extent: very large (offset-field width), effectively unbounded.
+- Conv kernel width: `kW <= 13` on M1, `<= 15` on M5 (route wider kernels via
   `space_to_depth`).
 
 `tg.limit("max_tensor_dim" | "channel_extent" | "transpose_extent", family)`
@@ -60,7 +60,7 @@ are generation-monotone (A13 == A14 <= A16). See [cross-chip.md](cross-chip.md).
 
 ## Shapes (static only)
 
-Every program compiles for a **concrete** shape. Variable-shape (symbolic) programs
+Every program compiles for a concrete shape. Variable-shape (symbolic) programs
 are not reachable through the e5rt path ANEForge uses: a symbolic dim
 parses but fails to compile. For variable-length (for example LLM sequence)
 inference, either pad to a fixed maximum and compile once, or bucket a small set of
@@ -112,10 +112,10 @@ ANEForge adds fused composites (`conv1x1`, `conv1x1_chain`, `conv_relu`,
 `conv1x1_add_relu`, `conv1x1_project_add`) and a quantized chain
 `conv1x1_int8_chain`.
 
-**Dynamic-kernel conv** (`af.dynamic_conv`): a conv whose weight is a runtime
-**input tensor** rather than a baked constant, enabling hypernetwork /
-weight-generating inference. Reachable and correct at **batch 1** only;
-**batch >= 2** does not compile, so `af.dynamic_conv` rejects `B >= 2`
+Dynamic-kernel conv (`af.dynamic_conv`): a conv whose weight is a runtime
+input tensor rather than a baked constant, enabling hypernetwork /
+weight-generating inference. Reachable and correct at batch 1 only;
+batch >= 2 does not compile, so `af.dynamic_conv` rejects `B >= 2`
 at build time. A constant-weight conv at any batch is unaffected. (This is why the
 trainable conv uses an im2col path rather than a native dynamic-weight conv.)
 
@@ -153,7 +153,7 @@ autoregressive GPT/LLaMA generation loop (causal-SDPA prefill, then per-step
 decode-shape SDPA) runs on the engine token-for-token matching numpy
 (`examples/gpt_generate_ane.py`).
 
-**Resident KV-cache decode.** The decode KV-cache can stay resident on the engine
+Resident KV-cache decode. The decode KV-cache can stay resident on the engine
 across steps so it never round-trips to the host: the masked positional write runs
 in the graph, `compile_multi` emits the hidden state plus every cache output, and
 `Program.share_buffer` aliases each cache output onto its own input. Works for a
@@ -195,19 +195,19 @@ byte-identical to a host-side convert and saving the host conversion latency
 (~2 ms/frame at 1080p). This is the terminal image-input form.
 
 Direct 4CC interchange input (a pixel buffer fed straight from a camera or video
-surface with no host RGB convert) is a **no-go on the e5rt path** - it needs
+surface with no host RGB convert) is a no-go on the e5rt path - it needs
 the entitled CoreML route. Use `af.image_input(uint8)` instead.
 
 ## Compressed weight streaming
 
 `af.compile(out, compress=None | "int8" | "int4" | "sparse" | "blockwise" | "auto")`
-emits compressed weights that **stream** (dequant-during-DMA) rather than fold to
+emits compressed weights that stream (dequant-during-DMA) rather than fold to
 dense fp16, so a weight-bandwidth-bound op gets a real eval-latency win, not just a
 smaller file. `compress=None` (the default) is byte-identical to fp16. int4-LUT and
 sparse are accuracy-gated (int4 falls back int4->int8->fp16 within `compress_atol`).
 All `constexpr_*` quant forms, including blockwise-affine, are reachable on the e5rt path.
 
-Which formats stream natively is **per-family** (`tg.native_streams(family)`, with
+Which formats stream natively is per-family (`tg.native_streams(family)`, with
 `from aneforge import _targets as tg`):
 
 | family / chip | int4-LUT | int8-affine | sparse | blockwise |
@@ -220,7 +220,7 @@ So `compress="auto"` is family-aware: on M1 it considers int4-LUT and sparse (th
 native streams there) and skips int8/blockwise, while a budget-rejected int4 falls
 back to fp16 rather than a folding encoding (which costs accuracy for zero bandwidth
 win). Explicit single-mode knobs are never filtered. End to end, compression is
-primarily a **footprint/capacity** lever (~4x smaller weights); the per-matmul win
+primarily a footprint/capacity lever (~4x smaller weights); the per-matmul win
 dilutes through norms, attention, and dispatch in full models.
 
 ## Training (on-engine autograd)

@@ -20,7 +20,7 @@ generation differ in core count and clock, not in which ops compile.
 gives the per-chip fp16 peak projection; `af.estimate(out, target='hXX')` a
 measurement-free latency estimate.
 
-ANEForge always compiles **in-process**, so compiled-bundle portability across
+ANEForge always compiles in-process, so compiled-bundle portability across
 chip generations only matters if you copy build artifacts between machines. To
 compile a graph *for* another family from one host, see
 [`cross-chip.md`](cross-chip.md).
@@ -36,7 +36,7 @@ host's family, and the `ANEFORGE_TARGET` environment variable overrides detectio
 
 ## "Why did a compile suddenly pause for ~15 seconds?"
 
-ANEForge paces a compile when a recent compile **failed**, a defensive backstop for the
+ANEForge paces a compile when a recent compile failed, a defensive backstop for the
 autotuner's burst of variant compiles. The backoff guard keeps consecutive failures a
 short interval apart. It is tunable: `ANEFORGE_COMPILE_BACKOFF`
 (seconds, default `15.0`; `0` disables pacing), `ANEFORGE_COMPILE_BREAKER_STRICT=1`

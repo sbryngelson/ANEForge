@@ -1,9 +1,8 @@
 # MIL primer
 
-MIL (Model Intermediate Language) is Apple's textual IR for ML programs.
-This document covers writing MIL by hand for ANEForge - what the parser
-accepts, what each operator looks like, and what to do when something
-rejects.
+MIL (Model Intermediate Language) is Apple's textual IR for ML programs. This
+primer covers writing it by hand for ANEForge: what the parser accepts, what
+each operator looks like, and what to do when something rejects.
 
 ## Anatomy of a MIL program
 
@@ -195,8 +194,8 @@ tensor<fp16, [256, 256, 3, 3]> w = const(
 )[name = string("w")];
 ```
 
-The compiler reads the binary file from the filesystem. **This does not
-work via e5rt** - e5rt compiles in-process and has no sibling weight file.
+The compiler reads the binary file from the filesystem. This does not
+work via e5rt - e5rt compiles in-process and has no sibling weight file.
 For e5rt, inline weights as hex literals or use a smaller model.
 
 ## Multi-output programs
@@ -252,19 +251,19 @@ plain paired-tensor approach because it's simpler and equivalent.
 
 These reject at MIL parse:
 
-- **fp32 / int32 / bf16 as input or output type.** Only fp16 / int8 /
+- fp32 / int32 / bf16 as input or output type. Only fp16 / int8 /
   uint8 / int16 / uint16 work as I/O. fp32 is acceptable as an
   intermediate via `cast(x, dtype="fp32")`.
-- **Any axis dim < 1 or > 65536.** Hard bound on every axis (N, C, H, W, D).
-- **Bool as I/O.** Bool tensors are compute-only.
-- **Missing `epsilon` on `log`.** Required argument; pass `const(fp16(0))`.
-- **Missing `mode` on `gelu`.** Required; pass `const(string("EXACT"))`.
-- **Empty `[name = ...]` annotation.** Required for every named output.
+- Any axis dim < 1 or > 65536. Hard bound on every axis (N, C, H, W, D).
+- Bool as I/O. Bool tensors are compute-only.
+- Missing `epsilon` on `log`. Required argument; pass `const(fp16(0))`.
+- Missing `mode` on `gelu`. Required; pass `const(string("EXACT"))`.
+- Empty `[name = ...]` annotation. Required for every named output.
 
 These pass the parser but reject later, in `ANECCompile` (a codegen-optimizer
 edge, not a capability or parse limit):
 
-- **`mul(reduce_output, 0.0)`** - multiplying a `reduce_sum`/`reduce_mean` output
+- `mul(reduce_output, 0.0)` - multiplying a `reduce_sum`/`reduce_mean` output
   by fp16 zero fails `ANECCompile`. It is the specific combination:
   `reduce * nonzero` compiles, and `mul`-by-zero with no preceding reduce compiles;
   only the pair trips it (a `1e-30` multiplier that underflows to fp16 zero also
