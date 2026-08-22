@@ -9,7 +9,7 @@ import pytest
 import aneforge as af
 import aneforge.models as models
 from aneforge._compile import _lower_fused_to_dir
-from aneforge.models import _gpt2_layers, _gelu_new, _lm_head_tiles, GPT2
+from aneforge.models import _lm_head_tiles, GPT2
 from aneforge.llm import _gpt2_adapter, LlamaConfig, LlamaPrefill, ModelType
 from _helpers import requires_ane
 
@@ -36,30 +36,6 @@ def _synthetic_sd(D=16, H=4, L=2, V=100):
     sd[p + "mlp.c_proj.weight"] = np.arange(Dff * D, dtype=np.float32).reshape(Dff, D)
     sd[p + "mlp.c_proj.bias"] = np.zeros(D, np.float32)
   return sd
-
-
-def test_gpt2_conv1d_mapping_orientation():
-  """Conv1D weights are `[in, out]`; the loader transposes to `[out, in]` for `.linear()` and
-  splits c_attn rows into q/k/v -- so Wq[0] must equal c_attn.weight[:, 0]."""
-  D = 16
-  layers = _gpt2_layers(_synthetic_sd(), L=2, D=D, Dff=64)
-  assert len(layers) == 2
-  w = layers[1]
-  c = _synthetic_sd()
-  i = 1
-  p = f"transformer.h.{i}."
-  # rows of the transposed c_attn weight, one [D, D] block per of q/k/v
-  assert w["Wq"].shape == (D, D) and w["Wk"].shape == (D, D) and w["Wv"].shape == (D, D)
-  assert np.array_equal(w["Wq"], c[p + "attn.c_attn.weight"].T[:D])
-  assert np.array_equal(w["Wk"], c[p + "attn.c_attn.weight"].T[D:2 * D])
-  assert np.array_equal(w["Wv"], c[p + "attn.c_attn.weight"].T[2 * D:3 * D])
-  assert np.array_equal(w["Wo"], c[p + "attn.c_proj.weight"].T)
-  assert w["Wi"].shape == (64, D) and np.array_equal(w["Wi"], c[p + "mlp.c_fc.weight"].T)
-  assert w["Wd"].shape == (D, 64) and np.array_equal(w["Wd"], c[p + "mlp.c_proj.weight"].T)
-  # biases are split, not transposed
-  assert np.array_equal(w["bq"], c[p + "attn.c_attn.bias"][:D])
-  assert np.array_equal(w["bk"], c[p + "attn.c_attn.bias"][D:2 * D])
-  assert np.array_equal(w["bv"], c[p + "attn.c_attn.bias"][2 * D:3 * D])
 
 
 def test_gpt2_lm_head_tiles_shapes(monkeypatch):
@@ -118,12 +94,6 @@ def test_gpt2_generate_text_decodes_generated_tokens():
   assert g.generate_text("prompt", max_new_tokens=2) == " generated text"
   g.generate.assert_called_once_with("prompt", 2)
   g.tok.decode.assert_called_once_with([17, 42])
-
-
-def test_gpt2_gelu_new_lowers():
-  """The gelu_new composition (mirror of the ONNX tanh handler) lowers with only native ops."""
-  x = af.input((4, 64))
-  _lower_fused_to_dir(_gelu_new(x), None)
 
 
 def test_gpt2_tiled_head_lowers():

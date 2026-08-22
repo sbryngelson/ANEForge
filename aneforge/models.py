@@ -8,7 +8,7 @@ import numpy as np
 
 from .graph import Tensor, concat, conv, input, mha, space_to_depth, _const
 from .autograd import conv2d, conv_param, parameter
-from ._compile import Model, SegmentedModel, MultiModel, compile, compile_multi
+from ._compile import Model, SegmentedModel, compile, compile_multi
 from . import _targets
 
 _NORM_CACHE: dict[int, Model | SegmentedModel] = {}
@@ -479,28 +479,6 @@ def load_gpt2(name: str, int8: bool = False, max_layers: int | None = None) -> "
   return GPT2(name, int8=int8, max_layers=max_layers)
 
 
-def _gpt2_layers(sd: dict, L: int, D: int, Dff: int) -> list[dict]:
-  """Per-layer weight maps from a HF GPT-2 state dict. GPT-2 projections are Conv1D
-  (`[in, out]`): transpose each so `.linear()` (x @ W.T with W `[out, in]`) consumes it,
-  and split the c_attn rows into q/k/v. LayerNorm and embedding tensors are NOT transposed."""
-  layers = []
-  for i in range(L):
-    p = f"transformer.h.{i}."
-    Wqkv = sd[p + "attn.c_attn.weight"].T                # [3D, D]
-    bqkv = sd[p + "attn.c_attn.bias"]
-    layers.append({
-      "ln1w": sd[p + "ln_1.weight"], "ln1b": sd[p + "ln_1.bias"],
-      "Wq": Wqkv[:D], "bq": bqkv[:D],
-      "Wk": Wqkv[D:2 * D], "bk": bqkv[D:2 * D],
-      "Wv": Wqkv[2 * D:3 * D], "bv": bqkv[2 * D:3 * D],
-      "Wo": sd[p + "attn.c_proj.weight"].T, "bo": sd[p + "attn.c_proj.bias"],
-      "ln2w": sd[p + "ln_2.weight"], "ln2b": sd[p + "ln_2.bias"],
-      "Wi": sd[p + "mlp.c_fc.weight"].T, "bi": sd[p + "mlp.c_fc.bias"],          # [Dff, D]
-      "Wd": sd[p + "mlp.c_proj.weight"].T, "bd": sd[p + "mlp.c_proj.bias"],      # [D, Dff]
-    })
-  return layers
-
-
 def _whisper_layers(sd: dict, prefix: str, n: int) -> list[dict]:
   """Per-layer numpy weights for the Whisper encoder/decoder graphs. HF linear weights are [out, in]
   and used as-is by `.linear()`. Whisper's k_proj carries no bias, so bk/Cbk are omitted. A decoder
@@ -526,31 +504,16 @@ def _whisper_layers(sd: dict, prefix: str, n: int) -> list[dict]:
   return out
 
 
-def _gelu_new(x: Tensor) -> Tensor:
-  """GPT-2's tanh-approximated GELU, composed from native ops (mirrors the ONNX
-  `approximate="tanh"` handler, aneforge/onnx.py:352-360)."""
-  inner = (x + x.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
-  return (x * 0.5) * inner.tanh().adds(1.0)
-
-
 def _lm_head_tiles(h: Tensor, wte: np.ndarray) -> list[Tensor]:
   """Tied lm_head logits = h @ wte.T, tiled along vocab so no matmul output dim exceeds the
   target family's max tensor dimension. Returns a LIST of tiles, never a concatenated [S, vocab]
   tensor: the concat itself exceeds the family-3 cap (the #183 lesson). The tiles are the head's
-  output ports; stitching is host-side via `_logits_from`."""
+  output ports; callers concatenate them host-side."""
   V = wte.shape[0]
   tile = _targets.limit("max_tensor_dim", _targets.detect_family())
   if V <= tile:
     return [h.linear(wte)]
   return [h.linear(wte[i:i + tile]) for i in range(0, V, tile)]
-
-
-def _logits_from(net: MultiModel | Model, out) -> np.ndarray:
-  """Reassemble a tiled lm_head result into [S, vocab] host-side (the tiles are what the
-  ANE produced; concatenating here does not change the numerics)."""
-  if not isinstance(net, MultiModel):
-    return np.asarray(out, np.float32)
-  return np.concatenate([np.asarray(out[name], np.float32) for _, name in net.output_ports], axis=1)
 
 
 class GPT2:

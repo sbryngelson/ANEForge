@@ -559,34 +559,6 @@ def tune(out, budget: int = 8, inputs=None, prune_factor: float = 1.5,
   return build_variant(out, best_cfg)
 
 
-def tune_report(out, budget: int = 8, inputs=None, reps: int = 20):
-  """Like tune() but returns a structured report dict instead of a Model (always measures, never caches)."""
-  input_shapes = _input_shapes(out)
-  if inputs is None: inputs = _gen_inputs(input_shapes)
-  configs = _variants(out)
-  ranked = ([c for c in configs if not c.get("lossy")] +
-            [c for c in configs if c.get("lossy")])
-
-  baseline_out = None
-  rows = []
-  for cfg in ranked:
-    est = _estimate_variant(out, cfg)
-    us, out_arr = measure(out, inputs, cfg, baseline_out=baseline_out, reps=reps)
-    if baseline_out is None and out_arr is not None: baseline_out = out_arr
-    rows.append({"config": cfg, "label": _config_label(cfg), "est_us": est,
-                 "meas_us": us, "correct": us != float("inf")})
-
-  correct = [r for r in rows if r["correct"]]
-  baseline = next((r for r in rows if not r["config"].get("lossy")), None)
-  winner = min(correct, key=lambda r: r["meas_us"]) if correct else baseline
-  speedup = None
-  if baseline and winner and baseline["meas_us"] not in (None, float("inf")) and \
-      winner["meas_us"] not in (None, float("inf")):
-    speedup = baseline["meas_us"] / winner["meas_us"]
-  return {"rows": rows, "n_variants": len(rows), "baseline": baseline,
-          "winner": winner, "speedup": speedup, "baseline_out": baseline_out}
-
-
 # precision-aware tune: given an explicit error budget, select the numerics-aware #
 # rewrite set that meets it at minimum cost (accuracy vs an fp32 reference).
 def _f16(x):  # fp16 rounding of operands/products, wide accum

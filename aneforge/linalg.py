@@ -17,16 +17,10 @@ f16 = np.float16
 def _ane_gemm(A16: np.ndarray, B16: np.ndarray, transpose_a: bool = False) -> np.ndarray:
   """C = A @ B (or A^T @ B) on the ANE; B folds in as a weight."""
   A16 = A16.astype(f16); B16 = B16.astype(f16)
-  if transpose_a:
-    m, n = A16.shape
-    At = af.input((m, n))
-    net = af.compile(At.transpose([1, 0]) @ B16)   # [n,m] @ [m,k]
-    C = net(A16)
-  else:
-    m, n = A16.shape
-    At = af.input((m, n))
-    net = af.compile(At @ B16)                     # [m,n] @ [n,k]
-    C = net(A16)
+  m, n = A16.shape
+  At = af.input((m, n))
+  net = af.compile(At.transpose([1, 0]) @ B16 if transpose_a else At @ B16)   # [n,m]@[m,k] or [m,n]@[n,k]
+  C = net(A16)
   net.release()
   return np.asarray(C, f16)
 

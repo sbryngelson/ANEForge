@@ -180,9 +180,7 @@ def _gelu_mlp(h: Tensor, w: dict, cfg: LlamaConfig, ls: LayerSpec) -> Tensor:
   hn = (h.layer_norm(w["mlp_norm_w"], w["mlp_norm_b"], cfg.norm_eps)
         if cfg.norm_type == "layer" else h.rms_norm(w["mlp_norm"], cfg.norm_eps))
   g = hn.linear(w["wfc"], w.get("fc_bias"))
-  inner = (g + g.pow(3.0) * 0.044715) * np.sqrt(2.0 / np.pi)
-  act = (g * 0.5) * inner.tanh().adds(1.0)
-  return h + act.linear(w["wproj"], w.get("proj_bias"))
+  return h + _gelu_tanh(g).linear(w["wproj"], w.get("proj_bias"))
 
 def _gelu_tanh(x: Tensor) -> Tensor:
   """PyTorch 'tanh' GELU (Gemma's `gelu_pytorch_tanh`), built out of primitive math ops rather than the
