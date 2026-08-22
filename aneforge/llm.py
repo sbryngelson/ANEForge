@@ -262,12 +262,12 @@ class LlamaPrefill:
   `prefill(token_ids)` returns next-token logits; `generate(...)` does resident-KV-cache decode. Weights are
   a dict of numpy arrays (see `from_pretrained`). The host `lm_head` keeps a cached fp32 transpose
   (`_lmT`): for large vocabularies this is the runner's biggest host allocation (GPT-2 ~206 MB, a
-  151936x4096 head ~2.5 GB), freed by `release()`. With `ane_lm_head=True`, the head runs on the ANE
-  as a tiled `compile_multi`; greedy stays exact via the `lmhead_tie_margin` host fallback (so `_lmT`
-  is built only if a near-tie fires), and a head tied to `embed` (GPT-2) bakes a second copy into the
-  program while `embed` stays on the host for the token gather."""
+  151936x4096 head ~2.5 GB), freed by `release()`. By default (`ane_lm_head`) the head runs on the ANE
+  as a tiled `compile_multi` instead; greedy stays exact via the `lmhead_tie_margin` host fallback (so
+  `_lmT` is built only if a near-tie fires), and a head tied to `embed` (GPT-2) bakes a second copy into
+  the program while `embed` stays on the host for the token gather. `ane_lm_head=False` forces the host."""
   def __init__(self, cfg: LlamaConfig, weights: dict, compress: str | None = None,
-               ane_lm_head: bool = False):
+               ane_lm_head: bool = True):
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None; self._pre = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
@@ -341,7 +341,11 @@ class LlamaPrefill:
     if self.ane_lm_head if ane is None else ane:      # per-call override wins, attribute otherwise
       lmh = self._lm_head_program()
       if lmh is not None:
-        return self._ane_logits(lmh, hidden_row)
+        try:
+          return self._ane_logits(lmh, hidden_row)
+        except Exception as e:                        # execute failed -> decline to host, never break generate
+          self._lmh_off = True; lmh["net"].release(); self._lmh = None
+          warnings.warn(f"ANE lm_head execute failed, using the host matmul: {e}")
     lm = self._lmT
     if lm is None:
       # Build once: NumPy has no fp16 BLAS, and a live `.T` view is strided, so a per-call
@@ -780,11 +784,11 @@ def _assert_dense_compatible(c) -> None:
       f"(model_type 'gemma'), and MoE. See docs/llm.md.")
 
 
-def from_pretrained(name: str, compress: str | None = None, ane_lm_head: bool = False) -> LlamaPrefill:
+def from_pretrained(name: str, compress: str | None = None, ane_lm_head: bool = True) -> LlamaPrefill:
   """Load a decoder LM from Hugging Face for ANE inference: dense Llama/Qwen/Mistral, Gemma, and MoE
   (an unsupported arch is rejected, not silently mis-loaded). `compress` ("int8"/"int4"/"blockwise")
-  quantizes the ANE weights. `ane_lm_head` runs the head on the ANE instead of the host (see
-  `LlamaPrefill`)."""
+  quantizes the ANE weights. `ane_lm_head` (default True) runs the head on the ANE; `False` forces the
+  host matmul (see `LlamaPrefill`)."""
   import torch
   from transformers import AutoModelForCausalLM
   hf = AutoModelForCausalLM.from_pretrained(name)
