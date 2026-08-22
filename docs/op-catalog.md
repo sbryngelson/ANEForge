@@ -2,7 +2,7 @@
 
 > Generated from `aneforge/_op_catalog.py` in the ANEForge repository (`python docs/gen_op_catalog.py`); do not hand-edit. Query the same data at runtime via `af.op_info`, `af.is_native(op, chip)`, `af.ops_on(chip)`, `af.min_native_family(op)`, `af.walled_everywhere()`.
 
-**187 native MIL ops.** Device ladder: m1=A13, m2=A14, m3=A15, m4_m5=A16/A17. Cells: Y native, ~ bridge/decompose, N walled. aneforge's higher-level ops (rms_norm/group_norm/mha/sdpa/fft/linalg/...) are composites that lower to these.
+187 native MIL ops. Device ladder: m1=A13, m2=A14, m3=A15, m4_m5=A16/A17. Cells: Y native, ~ bridge/decompose, N walled. aneforge's higher-level ops (rms_norm/group_norm/mha/sdpa/fft/linalg/...) are composites that lower to these.
 
 ## Activations (incl. LUT)
 | op | M1 | M2 | M3 | M4/M5 | kernel | note |
@@ -175,7 +175,7 @@
 | `reduce_min` | Y | Y | Y | Y | Reduce | F2 |
 | `reduce_prod` | N | N | N | N | Unsupported | `Unsupported` everywhere - decompose (log-sum-exp / scan) on host |
 | `reduce_sum` | Y | Y | Y | Y | Reduce | F2 (native A13+; decomposed on A11/A12). reduced-axis >=192 -> transpose route (>=384 on A15+) |
-| `reduce_sum_square` | Y | Y | Y | Y | Reduce | F2; the 0x494 `reduce->square` *fusion* is M2+ only - M1 emits an extra fp16 round (<=1-round numeric, not a wall) |
+| `reduce_sum_square` | Y | Y | Y | Y | Reduce | F2; the 0x494 `reduce->square` fusion is M2+ only - M1 emits an extra fp16 round (<=1-round numeric, not a wall) |
 
 ## Special / math
 | op | M1 | M2 | M3 | M4/M5 | kernel | note |

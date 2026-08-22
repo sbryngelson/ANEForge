@@ -2,7 +2,7 @@
 
 ANE programs use fp16, but the largest finite fp16 value is not a guarantee that
 every operator can produce or carry every value up to that limit. Some hardware
-paths have lower **correctness cliffs**: a mathematically finite result becomes
+paths have lower correctness cliffs: a mathematically finite result becomes
 infinite, or an integer result is rounded. These are correctness limits rather
 than performance limits.
 

@@ -1,15 +1,15 @@
 # Pretrained models
 
-ANEForge ships pretrained-model loaders that build an ANEForge graph from real weights and compile it to a fused ANE program, plus the trainable-graph builders used with the [on-ANE autograd](autograd.md). Heavy dependencies (transformers, torchvision) are imported lazily so the core stays light. This page covers the host↔ANE weight layout decisions and the sentence-transformers drop-in.
+ANEForge loads pretrained models as fused ANE programs from real weights, alongside the trainable-graph builders for the [on-ANE autograd](autograd.md). Heavy dependencies (transformers, torchvision) load lazily.
 
 ## The host / ANE split
 
-Not every operation belongs on the Neural Engine. The loaders split work deliberately:
+The loaders split work deliberately:
 
-- **Host:** tokenisation and the embedding lookup (`gather` is not an ANE op), plus pooling/normalise in some configurations.
-- **ANE:** the transformer layers, compiled as fused programs (a batch is padded to one length and shares a single program). Conv-heavy classifiers run entirely on the ANE.
+- Host: tokenisation and the embedding lookup (`gather` is not an ANE op), plus pooling/normalise in some configurations.
+- ANE: the transformer layers, compiled as fused programs (a batch is padded to one length and shares a single program). Conv-heavy classifiers run entirely on the ANE.
 
-## load() — BERT-family sentence encoders
+## load() - BERT-family sentence encoders
 
 `af.load("sentence-transformers/all-MiniLM-L6-v2")` returns a callable embedder:
 
@@ -26,11 +26,11 @@ The transformer layers run on the ANE: a batch is padded to its longest sequence
 |---|---|
 | `"mean"` (default) | MiniLM, E5 |
 | `"cls"` (first token) | BGE, GTE |
-| `"max"` | — |
+| `"max"` | - |
 
 A model's correct mode lives in its sentence-transformers config; `aneforge.sentence_transformers` reads it for you (see below).
 
-## CrossEncoder() — reranker
+## CrossEncoder() - reranker
 
 `aneforge.sentence_transformers.CrossEncoder` scores `(query, passage)` pairs, mirroring `sentence_transformers.CrossEncoder`:
 
@@ -40,9 +40,9 @@ ce = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 scores = ce.predict([(query, passage) for passage in passages])   # higher = more relevant
 ```
 
-It reuses the same encoder graph as `load()`, then applies the sequence-classification head host-side. It supports BERT-family, RoBERTa/XLM-R (e.g. bge-reranker), and DistilBERT (`pre_classifier -> ReLU -> classifier`) `AutoModelForSequenceClassification` heads, detected by head shape.
+It reuses `load()`'s encoder graph, then applies the sequence-classification head host-side. Supports BERT-family, RoBERTa/XLM-R (e.g. bge-reranker), and DistilBERT (`pre_classifier -> ReLU -> classifier`) `AutoModelForSequenceClassification` heads, detected by head shape.
 
-## load_resnet() — torchvision ImageNet classifier
+## load_resnet() - torchvision ImageNet classifier
 
 `af.load_resnet()` loads a torchvision ResNet as a fused ANE classifier. Depths 18, 34, 50 and 101 are supported; `af.load_resnet18()` stays as the shorthand for depth 18.
 
@@ -52,14 +52,14 @@ logits = clf(image)                          # [1,3,224,224] -> [1,1000]
 clf    = af.load_resnet(18, compress="int4") # 4-bit LUT weights
 ```
 
-**BatchNorm is folded into the preceding conv at load**, so the ANE graph is pure conv/relu/pool/add/fc — conv is the ANE's strongest workload. `compress` picks the weight encoding (see `af.compile`); `build_dir` keeps the packed program on disk (its `weights.bin` is the packed-model size).
+BatchNorm is folded into the preceding conv at load, so the ANE graph is pure conv/relu/pool/add/fc - conv is the ANE's strongest workload. `compress` picks the weight encoding (see `af.compile`); `build_dir` keeps the packed program on disk (its `weights.bin` is the packed-model size).
 
-18 and 34 are BasicBlock (3x3 -> 3x3); 50 and 101 are Bottleneck (1x1 -> 3x3 -> 1x1, 4x expansion). Two details are worth knowing if you touch this code:
+18 and 34 are BasicBlock (3x3 -> 3x3); 50 and 101 are Bottleneck (1x1 -> 3x3 -> 1x1, 4x expansion). Two details to know if you touch this code:
 
-- **The stride sits on the Bottleneck's 3x3, not on its first 1x1.** That is torchvision's ResNet V1.5 variant. Moving it keeps every tensor shape intact and still agrees on top-1, so shape checks will not catch the mistake.
-- **A block's shortcut is projected or not according to its weights**, never according to its stage index. Bottleneck projects stage 1 (64 -> 256 at stride 1) while BasicBlock does not.
+- The stride sits on the Bottleneck's 3x3, not its first 1x1 - torchvision's ResNet V1.5 variant. Moving it keeps every tensor shape intact and still agrees on top-1, so shape checks will not catch the mistake.
+- A block's shortcut is projected or not according to its weights, never its stage index. Bottleneck projects stage 1 (64 -> 256 at stride 1) while BasicBlock does not.
 
-## load_vit() — Hugging Face ViT image classifier
+## load_vit() - Hugging Face ViT image classifier
 
 `af.load_vit()` loads any HF `ViTForImageClassification` (and compatible DeiT/BEiT-style models with a CLS token) as a fused ANE classifier:
 
@@ -69,11 +69,11 @@ logits = vit(image)             # [1,3,H,W] -> [1,num_labels]
 top    = vit.classify(image)    # top-k (label, logit)
 ```
 
-A strided `PxP` patch conv is walled on the ANE, so patch embedding runs as `space_to_depth(P)` followed by a 1x1 conv; the CLS token's row is picked out of the encoder output via a one-hot picker matmul (a bare row slice is also walled). The loader auto-detects two HF layer namings: the modern one (`vit.layers.{i}.attention.q_proj`, `mlp.fc1/fc2`) and the legacy one (`vit.encoder.layer.{i}.attention.attention.query`, `intermediate.dense`).
+A strided `PxP` patch conv is walled on the ANE, so patch embedding runs as `space_to_depth(P)` followed by a 1x1 conv; the CLS token's row is picked out of the encoder output via a one-hot picker matmul (a bare row slice is also walled). The loader auto-detects two HF layer namings: modern (`vit.layers.{i}.attention.q_proj`, `mlp.fc1/fc2`) and legacy (`vit.encoder.layer.{i}.attention.attention.query`, `intermediate.dense`).
 
-## load_gpt2() — GPT-2 text generation
+## load_gpt2() - GPT-2 text generation
 
-`af.load_gpt2()` loads a GPT-2-family checkpoint — the pre-norm, pure-LayerNorm decoder — as a fused ANE program:
+`af.load_gpt2()` loads a GPT-2-family checkpoint - the pre-norm, pure-LayerNorm decoder - as a fused ANE program:
 
 ```python
 gpt2 = af.load_gpt2("gpt2-medium")
@@ -81,11 +81,11 @@ ids  = gpt2.generate("The future of artificial intelligence is", max_new_tokens=
 logits = gpt2(token_ids)                     # 1-D ids -> [S, vocab], for custom decoding
 ```
 
-GPT-2 loads through the unified LLM runner (`LlamaPrefill`): the same prefill + resident-KV-cache decode path as Llama/Qwen, adapted for GPT-2's pre-norm LayerNorm blocks and `gelu_new` MLP. It is the family that the LayerNorm-at-`D>=1024` fix unlocks (Llama/Qwen use RMSNorm, so `load_llm` never hit that wall). The **tied lm_head is tiled along the 50257 vocab** — a matmul that wide exceeds the ANE's per-op dimension cap on the A13-A15 families, so it is emitted as vocab-sized output-port tiles and stitched host-side (a single tile fits on A16/M-series). Token + positional embedding lookup runs on the host (`gather` is not an ANE op).
+GPT-2 loads through the unified LLM runner (`LlamaPrefill`): the same prefill + resident-KV-cache decode path as Llama/Qwen, adapted for GPT-2's pre-norm LayerNorm blocks and `gelu_new` MLP. It is the first family to need the LayerNorm-at-`D>=1024` fix (Llama/Qwen use RMSNorm, so `load_llm` never hit that wall). The tied lm_head is tiled along the 50257 vocab: a matmul that wide exceeds the ANE's per-op dimension cap on the A13-A15 families, so it is emitted as vocab-sized output-port tiles and stitched host-side (a single tile fits on A16/M-series). Token + positional embedding lookup runs on the host (`gather` is not an ANE op).
 
-Decode keeps a **resident KV cache** on the engine (via the shared runner), streaming tokens instead of recomputing the growing sequence — ~140 tok/s on `gpt2-medium` on an M5 Pro. `examples/gpt2.py` loads via `af.load_llm`, checks the prefill logits against Hugging Face fp32, runs resident-KV-cache greedy decode that is token-identical to HF, and includes a >512-token long-context test.
+Decode keeps a resident KV cache on the engine (via the shared runner), streaming tokens instead of recomputing the growing sequence - ~140 tok/s on `gpt2-medium` on an M5 Pro. `examples/gpt2.py` loads via `af.load_llm`, checks the prefill logits against Hugging Face fp32, runs a resident-KV-cache greedy decode token-identical to HF, and includes a >512-token long-context test.
 
-## load_clip() — CLIP zero-shot image/text classification
+## load_clip() - CLIP zero-shot image/text classification
 
 `af.load_clip()` loads any Hugging Face CLIP dual-encoder checkpoint (`CLIPModel`) to run both the Vision Transformer and the causal Text Transformer on the ANE:
 
@@ -97,14 +97,14 @@ ranked   = clip.classify(image, ["a photo of a cat", "a photo of a dog"]) # [(la
 ```
 
 Both towers compile as fused ANE programs:
-- **Vision:** Patch embedding via `space_to_depth(P)` + 1x1 conv, CLS token + positional embedding, pre-norm Transformer stack with `QuickGELU` (`x * sigmoid(1.702 * x)`), CLS pooling, visual projection, and in-graph L2 normalisation.
-- **Text:** Causal self-attention with precomputed triangular mask, QuickGELU MLP, EOT token extraction, text projection, and in-graph L2 normalisation.
+- Vision: Patch embedding via `space_to_depth(P)` + 1x1 conv, CLS token + positional embedding, pre-norm Transformer stack with `QuickGELU` (`x * sigmoid(1.702 * x)`), CLS pooling, visual projection, and in-graph L2 normalisation.
+- Text: Causal self-attention with precomputed triangular mask, QuickGELU MLP, EOT token extraction, text projection, and in-graph L2 normalisation.
 
 `examples/clip_zero_shot.py` demonstrates zero-shot image classification end-to-end on the ANE with ranking and probability comparison against Hugging Face PyTorch.
 
-## load_whisper() — speech to text
+## load_whisper() - speech to text
 
-`af.load_whisper()` loads a Hugging Face Whisper checkpoint (default `openai/whisper-base.en`) and runs both towers — the audio encoder and the autoregressive text decoder — on the ANE:
+`af.load_whisper()` loads a Hugging Face Whisper checkpoint (default `openai/whisper-base.en`) and runs both towers - the audio encoder and the autoregressive text decoder - on the ANE:
 
 ```python
 w = af.load_whisper("openai/whisper-base.en")
@@ -112,9 +112,9 @@ text = w.transcribe(audio)         # 16 kHz mono float32 waveform -> greedy Engl
 feats = w.encode(audio)            # audio features [1500, 512] (the encoder alone)
 ```
 
-- **Encoder** (one fused program, run once per clip): the two Whisper conv layers (the strided `conv2` runs directly on the ANE), sinusoidal positional embedding, six pre-norm blocks, final layer norm -> audio features `[1500, 512]`.
-- **Decoder** (one fused single-token program with a resident KV cache): token + learned positional embedding (host gather), six pre-norm blocks of causal self-attention against a resident `[H, M, dh]` cache (the one-hot positional write the LLM runner uses) + cross-attention to the audio features + a GELU MLP, then the tied `lm_head`. Each layer's cross-attention K/V over the audio is computed once per clip and held resident, so decode never re-projects the 1500 audio frames. Whisper's `k_proj` carries no bias.
-- Host-side only: the log-mel spectrogram (Whisper's `WhisperFeatureExtractor`) and tokenization, the same split as tokenization for the LLM loaders.
+- Encoder (one fused program, run once per clip): the two Whisper conv layers (the strided `conv2` runs directly on the ANE), sinusoidal positional embedding, six pre-norm blocks, final layer norm -> audio features `[1500, 512]`.
+- Decoder (one fused single-token program with a resident KV cache): token + learned positional embedding (host gather), six pre-norm blocks of causal self-attention against a resident `[H, M, dh]` cache (the one-hot positional write the LLM runner uses) + cross-attention to the audio features + a GELU MLP, then the tied `lm_head`. Each layer's cross-attention K/V over the audio is computed once per clip and held resident, so decode never re-projects the 1500 audio frames. Whisper's `k_proj` carries no bias.
+- Host-side only: the log-mel spectrogram (Whisper's `WhisperFeatureExtractor`) and tokenization, the same split as the LLM loaders.
 - Greedy decoding reads the start prompt and the logit suppressions (`suppress_tokens`, `begin_suppress_tokens`) from the checkpoint's generation config, so `transcribe` reproduces `generate` rather than assuming English ids. The resident cache holds up to `max_target_positions` (448) tokens, Whisper's own decode ceiling.
 
 Scope: greedy, no timestamps; the `.en` default is English. `examples/whisper.py` transcribes a sample clip and validates the encoder features (cosine) and the greedy transcript against Hugging Face.
@@ -132,11 +132,11 @@ Getting this wrong silently mis-scales the initial weights, so the layout depend
 
 ## Trainable-graph builders
 
-These build graphs whose parameters are real trainable leaves, every op carrying a VJP so input/affine gradients all run on the ANE.
+These build graphs whose parameters are real trainable leaves, every op carrying a VJP so input/affine gradients run on the ANE.
 
-- **`group_norm_train`** — GroupNorm built from primitives so it works at *any* batch N (the stock `Tensor.group_norm` op is batch-1 only) and so the affine `gamma`/`beta` are real trainable parameters. `x` is `[N,C,H,W]`; `gamma`/`beta` are `[1,C,1,1]` parameter Tensors. Normalizes per-(group, sample) over the `C/groups*H*W` elements, then applies the affine. Mirrors the `group_norm` VJP math.
-- **`conv_block`** — conv → GroupNorm → ReLU → optional max-pool.
-- **`cifar_cnn`** — the full CIFAR-10 CNN, returning `(x_input, logits, params)` where `params` is the trainable list in a fixed order:
+- `group_norm_train` - GroupNorm built from primitives so it works at any batch N (the stock `Tensor.group_norm` op is batch-1 only) and so the affine `gamma`/`beta` are real trainable parameters. `x` is `[N,C,H,W]`; `gamma`/`beta` are `[1,C,1,1]` parameter Tensors. Normalizes per-(group, sample) over the `C/groups*H*W` elements, then applies the affine. Mirrors the `group_norm` VJP math.
+- `conv_block` - conv -> GroupNorm -> ReLU -> optional max-pool.
+- `cifar_cnn` - the full CIFAR-10 CNN, returning `(x_input, logits, params)` where `params` is the trainable list in a fixed order:
 
   ```
   block1  conv 3->w0   GN ReLU maxpool2   (32x32 -> 16x16)
@@ -147,7 +147,7 @@ These build graphs whose parameters are real trainable leaves, every op carrying
 
 ## sentence-transformers drop-in
 
-`aneforge.sentence_transformers.SentenceTransformer` is a **drop-in** that runs the encoder on the Neural Engine:
+`aneforge.sentence_transformers.SentenceTransformer` is a drop-in that runs the encoder on the Neural Engine:
 
 ```python
 from aneforge.sentence_transformers import SentenceTransformer
@@ -158,16 +158,16 @@ emb   = model.encode(["a query", "a passage"])   # [2, D] on the ANE
 Design notes:
 
 - The transformer layers run on the ANE as one fused e5rt program (a batch is padded to one length and shares it).
-- **Only numpy + aneforge are needed** — the `sentence-transformers` package is *not* imported. This mirrors its `.encode` surface; it does not wrap it.
+- Only numpy + aneforge are needed - the `sentence-transformers` package is not imported. This mirrors its `.encode` surface; it does not wrap it.
 - Pooling mode and L2-normalise are read from the model's own config (below), so a mean-pooled model (MiniLM, E5) and a cls-pooled model (BGE, GTE) both come out correct.
-- The `device` argument is accepted for signature parity and ignored — the encoder always runs on the Neural Engine.
+- `device` is accepted for signature parity and ignored - the encoder always runs on the Neural Engine.
 - `encode()`'s `batch_size` is accepted for parity but does not change the result (the ANE path is fused per sequence length and cached).
 
 ### Parity claims
 
 | Mode | Cosine vs reference | Size |
 |---|---|---|
-| default (fp16) | **~1.0** | — |
+| default (fp16) | **~1.0** | - |
 | `int8=True` | **~0.9999** | half the weight size (int8 streamed) |
 
 Embeddings match the reference encoder at a fraction of the GPU's energy.
@@ -176,13 +176,13 @@ Embeddings match the reference encoder at a fraction of the GPU's energy.
 
 `_read_st_config` returns `(pooling_mode, has_normalize)` from the model's sentence-transformers config, defaulting to `("mean", False)` for a raw model with no such config:
 
-- **Pooling** comes from `1_Pooling/config.json` (`pooling_mode_cls_token` / `pooling_mode_max_tokens` / `pooling_mode_mean_tokens`).
-- **Normalize** is true if `modules.json` lists a `Normalize` module. A model that ships a Normalize module is L2-normalised regardless of `normalize_embeddings`, matching sentence-transformers.
+- Pooling comes from `1_Pooling/config.json` (`pooling_mode_cls_token` / `pooling_mode_max_tokens` / `pooling_mode_mean_tokens`).
+- Normalize is true if `modules.json` lists a `Normalize` module. A model that ships a Normalize module is L2-normalised regardless of `normalize_embeddings`, matching sentence-transformers.
 
 ## RAG on the ANE (examples/rag_chat.py)
 
-`examples/rag_chat.py` is a chat-with-your-docs demo where every stage runs on the
-Neural Engine: embedding, reranking, and generation. There is no host-side model, and no
+`examples/rag_chat.py` is a chat-with-your-docs demo where every stage - embedding,
+reranking, and generation - runs on the Neural Engine. There is no host-side model, and no
 GPU or CPU inference path in the loop.
 
 Run it against a folder of `.md`/`.txt` files:
@@ -216,11 +216,10 @@ immediately instead of paying a per-query compile cost.
 sudo python3 examples/rag_chat.py --energy
 ```
 
-It samples package power with `powermetrics` for the duration of one `Pipeline.answer`
-call and reports the query's energy as `~NNN mJ this query, 0 GPU` -- 0 GPU because the
-whole pipeline, including generation, never leaves the Neural Engine. Without `sudo` (or
-without `powermetrics` on the machine), the flag falls back to running the query with no
-energy figure rather than failing.
+It samples package power with `powermetrics` over one `Pipeline.answer` call and reports
+the query's energy as `~NNN mJ this query, 0 GPU` -- 0 GPU because the whole pipeline,
+generation included, never leaves the Neural Engine. Without `sudo` (or without
+`powermetrics`), the flag runs the query with no energy figure rather than failing.
 
 The demo works best on prose documents, but the corpus can be any mix of lengths: the ANE
 encoder pads each batch to one length and masks the padding, so a whole corpus -- long

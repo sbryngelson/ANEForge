@@ -13,16 +13,16 @@ M5 = H17), and the three silicon-measured chips (M1, M2, M5) carry these ANE cor
 | M2 / M3 / M4 | H14 / H15 / H16 | - | Ground-truth capability families |
 | M5 (incl. Pro) | H17 | 16 | Silicon-measured anchor; verified host |
 
-Op capability is per *family*, not per rail: Pro / Max / Ultra variants of a
+Op capability is per family, not per rail: Pro / Max / Ultra variants of a
 generation differ in core count and clock, not in which ops compile.
-`detect_family()` (in `aneforge._targets`) reports the host family, and the
-`ANEFORGE_TARGET` environment variable overrides it. `af.project_peak(arch)`
+`detect_family()` (in `aneforge._targets`) reports the host family, and
+`ANEFORGE_TARGET` overrides it. `af.project_peak(arch)`
 gives the per-chip fp16 peak projection; `af.estimate(out, target='hXX')` a
 measurement-free latency estimate.
 
-ANEForge always compiles **in-process**, so compiled-bundle portability across
+ANEForge always compiles in-process, so compiled-bundle portability across
 chip generations only matters if you copy build artifacts between machines. To
-compile a graph *for* another family from one host, see
+compile a graph for another family from one host, see
 [`cross-chip.md`](cross-chip.md).
 
 ## "Can I compile for a different chip than the one I'm on?"
@@ -30,14 +30,15 @@ compile a graph *for* another family from one host, see
 Yes. `af.compile(out, target='h16s')` gates a graph's ops and shapes for another ANE
 family before lowering, and `cross_compile_check(out, target)` (in `aneforge._compile`)
 checks from this host whether the graph compiles for that family's `TargetArchitecture`.
-There are 28 compiler targets spanning M1 through M5. This is compile-level validation - numeric correctness still requires the real silicon. `detect_family()` reports the
-host's family, and the `ANEFORGE_TARGET` environment variable overrides detection. See
+There are 28 compiler targets spanning M1 through M5. This is compile-level validation;
+numeric correctness still requires the real silicon. `detect_family()` reports the
+host's family, and `ANEFORGE_TARGET` overrides detection. See
 [cross-chip.md](cross-chip.md).
 
 ## "Why did a compile suddenly pause for ~15 seconds?"
 
-ANEForge paces a compile when a recent compile **failed**, a defensive backstop for the
-autotuner's burst of variant compiles. The backoff guard keeps consecutive failures a
+ANEForge paces a compile when a recent compile failed, a backstop for the
+autotuner's burst of variant compiles that keeps consecutive failures a
 short interval apart. It is tunable: `ANEFORGE_COMPILE_BACKOFF`
 (seconds, default `15.0`; `0` disables pacing), `ANEFORGE_COMPILE_BREAKER_STRICT=1`
 (raise `af.CompileBackoffError` instead of sleeping), `ANEFORGE_DISABLE_COMPILE_BREAKER=1`
@@ -52,7 +53,7 @@ float-convert + repack. It is byte-identical to converting on the host.
 ## "Can I train on the ANE?"
 
 Yes, for small models. ANEForge has a reverse-mode autograd that runs the forward
-*and* backward passes on the engine, with an optional on-engine optimizer step
+and backward passes on the engine, with an optional on-engine optimizer step
 (`Trainer(device_optimizer=True)`) and resident on-engine optimizer state
 (`Trainer(resident_state=True)`). See [training.md](training.md).
 
@@ -89,11 +90,9 @@ Probably not yet, with caveats:
   from `aned`.
 - No threadsafety guarantees. e5rt's `Program` is single-threaded.
 
-For research, prototyping, and exploratory ML work - yes, it's used. The
-streaming demos run reliably. The validator catches most invalid programs
-before they hit the slow XPC compile.
-
-If you're building a production system, prefer CoreML for now.
+For research, prototyping, and exploratory ML work, yes, it's used. The
+streaming demos run reliably, and the validator catches most invalid programs
+before the slow XPC compile. For a production system, prefer CoreML for now.
 
 ## "Why fp16?"
 
@@ -105,12 +104,12 @@ The ANE's dataplane is fp16-native - that's the hardware. fp16 is:
 
 ANEForge accepts int8 / uint8 / int16 / uint16 as I/O dtypes (for
 quantized weights, indices, pixel data), but computation is always fp16.
-fp32 is allowed as an intermediate inside the program via `cast(x,
+fp32 is allowed as an intermediate via `cast(x,
 dtype="fp32") -> compute -> cast(result, dtype="fp16")`.
 
 There's no bf16. There's no fp32 dataplane. ANE is fp16-only.
 
-Weights can still be *stored* compressed and dequantised during the tile DMA:
+Weights can still be stored compressed and dequantised during the tile DMA:
 `compile(out, compress=...)` supports per-channel int8, 4-bit LUT (`int4`),
 unstructured `sparse`, `blockwise` int8, and a family-aware `auto`. See
 [weight compression](aneforge-api.md#weight-compression).
@@ -128,15 +127,15 @@ NaN. Some specific cases:
 - `gelu(0.0) -> -0.000754` (polynomial bias leak)
 
 If your model produces NaN through any op, the result is not IEEE-754
-compliant. Train without producing inf/NaN intermediates. If you must
-detect overflow, do it on CPU before dispatching.
+compliant. Train without producing inf/NaN intermediates. Detect overflow
+on CPU before dispatching if you must.
 
 Full details in [capabilities.md](capabilities.md#datatypes).
 
 ## "Why is my first call slow, and how do I run a single op?"
 
 Most of the cost in a one-shot call is the one-time compile, not the eval. The
-ANE eval itself is ~80-110 us once the program is resident. Compile once and
+ANE eval is ~80-110 us once the program is resident. Compile once and
 reuse the returned `net` across calls:
 
 ```python
@@ -151,9 +150,8 @@ out = net(np.zeros((1, 4), np.float16))   # ~80 us per call thereafter
 
 A single op is just a one-op graph. The mistake that makes every call slow is
 recompiling per call: hoist `af.compile` out of your hot loop, keep the `net`
-handle, and feed it new inputs. Call `net.release()` when you are done. For the
-per-call cost breakdown and the underlying dispatch paths, see
-[dispatch.md](dispatch.md).
+handle, and feed it new inputs. Call `net.release()` when done. For the
+per-call cost breakdown and dispatch paths, see [dispatch.md](dispatch.md).
 
 ## "What macOS versions are supported?"
 
@@ -169,7 +167,7 @@ Bug reports with `sw_vers` output appreciated.
 
 ## "What if Apple changes the private API?"
 
-It happens. The framework symbols ANEForge calls are private and can be
+The framework symbols ANEForge calls are private and can be
 renamed or reordered across macOS releases (the ABI usually stays the
 same). When something breaks:
 
@@ -186,18 +184,18 @@ welcome.
 ## "Why isn't this in tinygrad / pytorch?"
 
 The ANE is a private accelerator. tinygrad's `extra/accel/ane` is the
-historical precedent that ANEForge picks up from. Generic ML frameworks
+precedent that ANEForge picks up from. Generic ML frameworks
 hesitate to depend on private APIs that can change without notice.
 
-If you want to use ANEForge from a higher-level framework, the `import
+To use ANEForge from a higher-level framework, the `import
 aneforge as af` API (build a graph, `af.compile`, call the returned `net`) is
 small and self-contained - easy to integrate as a custom backend.
 
 ## "How does this compare to ANE-LM / johnmai-dev?"
 
 [`johnmai-dev/ANE-LM`](https://github.com/johnmai-dev/ANE-LM) is the
-closest precedent - a small LLM runtime over `AppleNeuralEngine.framework`.
-It uses the same `_ANEInMemoryModel` path A as ANEForge.
+closest precedent - a small LLM runtime over `AppleNeuralEngine.framework`,
+using the same `_ANEInMemoryModel` path A as ANEForge.
 
 Differences:
 
@@ -211,12 +209,12 @@ production stacks.
 ## "Why is the validator's 'Scale is expected to be constant' a single bit?"
 
 Because Apple's compile pipeline tracks tensor provenance internally. The
-`is_constant` bit on `ANECTensorDesc` flags tensors that were produced
-by a `const(...)` op (or `constexpr_*` chain). When the SDPA validator
-runs, it just checks this flag - it doesn't re-derive constness from
+`is_constant` bit on `ANECTensorDesc` flags tensors produced
+by a `const(...)` op (or `constexpr_*` chain). The SDPA validator
+checks this flag rather than re-deriving constness from
 the producer chain.
 
-In practice this means: from user-space, you set the flag manually on the
+So from user-space, you set the flag manually on the
 descriptor before calling the validator. The compiler trusts you. (The
 kernel-side signature check on HWX still enforces signing, so this
 trust isn't a security boundary.)
@@ -224,7 +222,7 @@ trust isn't a security boundary.)
 ## "Why does compiling take 750 ms?"
 
 That's `aned` running the full MIL -> MLIR -> LLIR -> ANECIR -> HWX pipeline,
-plus weight encoding, plus the kernel signature pass. It's a one-time cost
+plus weight encoding and the kernel signature pass. It's a one-time cost
 per shape - the compiled program then runs at ~80 us per call.
 
 For shapes you'll use many times, compile once at startup and reuse.
@@ -234,12 +232,12 @@ symbol exists but ANEForge doesn't yet expose it; an open follow-up.
 
 ## "Does this work in a Docker container?"
 
-No. Containers don't have access to `aned` or the kernel ANE driver.
-ANEForge needs to run on the macOS host directly.
+No. Containers don't have access to `aned` or the kernel ANE driver;
+ANEForge runs on the macOS host directly.
 
 For Linux + Apple silicon (Asahi), ANEForge does not run: it dispatches
-through macOS `aned`, which Asahi does not have. The ANE itself is reachable
-on Asahi though, through the open kernel driver ([eiln/ane](https://github.com/eiln/ane))
+through macOS `aned`, which Asahi lacks. The ANE itself is reachable
+on Asahi through the open kernel driver ([eiln/ane](https://github.com/eiln/ane))
 and pure register programming with no CoreML or `aned`
 ([allbilly/ane](https://github.com/allbilly/ane)).
 
@@ -248,15 +246,15 @@ and pure register programming with no CoreML or `aned`
 You can copy the on-disk compile artifacts, but they won't load in a
 different process. `aned` keys its HWX cache by PID; a fresh process
 sees only `model.anehash` (a content hash) on disk and refuses to
-load the cached HWX. Either re-compile in the new process, or use
+load the cached HWX. Either re-compile in the new process or use
 shared-process semantics (open question).
 
 ## "What's the licensing situation?"
 
 The code in this repository is yours to use. The Apple Neural Engine is
 Apple's private hardware; the framework symbols ANEForge calls are
-private, undocumented, and may change at any time. Nothing in this
-project constitutes an API contract from Apple.
+private, undocumented, and may change at any time. Nothing here
+constitutes an API contract from Apple.
 
 If you ship something built on ANEForge and Apple changes the underlying
 API in a future macOS, your software will break. Plan accordingly.

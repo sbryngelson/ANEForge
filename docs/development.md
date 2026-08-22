@@ -6,7 +6,7 @@ How to build, test, and extend the `aneforge` package.
 
 The package is an editable install with a numpy-only core. The one native
 artifact it needs at runtime is the e5rt dispatch shim, compiled with
-`xcrun clang++` from the source that ships in the package.
+`xcrun clang++` from source shipped in the package.
 
 ```sh
 pip install -e .                 # core: numpy only
@@ -19,8 +19,8 @@ dispatch to the ANE (cached next to the source, or in `~/.cache/aneforge/<versio
 if the package tree is read-only); `python -m aneforge.build` does it ahead of time,
 and `sh aneforge/_lib/build.sh` still works for an in-tree build. The resulting
 `.dylib` is a build artifact (not tracked); it rebuilds after a pull that touches
-`ane_e5rt_dispatch.mm`. The dylib loads lazily, so `import aneforge` works without
-it; only compiling or dispatching to the ANE needs it. Set `ANEFORGE_NO_AUTOBUILD=1`
+`ane_e5rt_dispatch.mm`. It loads lazily, so `import aneforge` works without it;
+only compiling or dispatching to the ANE needs it. Set `ANEFORGE_NO_AUTOBUILD=1`
 to require an explicit build.
 
 ## Python environment
@@ -38,7 +38,7 @@ python3.12 -m venv .venv                     # .venv/ is gitignored
 ### Pre-commit hook (enable once per clone)
 
 A committed hook at `.githooks/pre-commit` runs the off-hardware checks
-(`ruff check` + `compileall aneforge`) before every commit. It is dependency-free.
+(`ruff check` + `compileall aneforge`) before every commit; it is dependency-free.
 Git does not auto-trust committed hooks, so enable it once after cloning:
 
 ```sh
@@ -46,13 +46,13 @@ git config core.hooksPath .githooks
 ```
 
 The hook does not run the corpus or pytest (those need ANE hardware and gate
-separately). Bypass a single commit with `git commit --no-verify`.
+separately). Bypass one commit with `git commit --no-verify`.
 
 ## Tests
 
-`tests/run_corpus.py` is the standing correctness gate: a corpus of operator
-graphs compiled and run on the ANE and compared against numpy references at
-fp16. It must be green before a release.
+`tests/run_corpus.py` is the standing correctness gate: operator graphs
+compiled and run on the ANE and compared against numpy references at fp16.
+It must be green before a release.
 
 ```sh
 PYTHONPATH=. .venv/bin/python tests/run_corpus.py   # the corpus gate
@@ -62,29 +62,29 @@ PYTHONPATH=. .venv/bin/python -m pytest tests/ -q   # full suite
 
 The pytest suite runs each test in its own forked subprocess. Every `compile`
 allocates an ANE program, and a single long-lived process accumulates them
-across the whole suite, which approaches the per-process program limit and can
-cause sporadic failures late in a run; a fresh process per test
-avoids that. `tests/conftest.py` sets the environment the forked path needs, so
-a plain `pytest tests/` works.
+across the whole suite, approaching the per-process program limit and causing
+sporadic failures late in a run; a fresh process per test avoids that.
+`tests/conftest.py` sets the environment the forked path needs, so a plain
+`pytest tests/` works.
 
 ## Adding an operator
 
 Operator coverage grows by mapping a MIL spelling to a Python op. The path:
 
-1. **Catalog it.** Add the op to `aneforge/_op_catalog.py` (the single source of
+1. Catalog it. Add the op to `aneforge/_op_catalog.py` (the single source of
    truth for per-device availability), then regenerate the reference table with
    `python docs/gen_op_catalog.py > docs/op-catalog.md`.
-2. **Lower it.** Add the fused-MIL emitter in `aneforge/_compile.py`, or, for an
-   op that MIL rejects but the hardware supports, add a netplist bridge under
+2. Lower it. Add the fused-MIL emitter in `aneforge/_compile.py`, or, for an
+   op MIL rejects but the hardware supports, add a netplist bridge under
    `aneforge/_bridges/`.
-3. **Expose it.** Add the method on the graph type in `aneforge/graph.py`.
-4. **Test it.** Mirror an existing case: compile, run on the ANE, and compare
+3. Expose it. Add the method on the graph type in `aneforge/graph.py`.
+4. Test it. Mirror an existing case: compile, run on the ANE, compare
    against a numpy reference at fp16. Add it to the corpus.
 
 ## Code style
 
 The package targets Python 3.10+ and is linted with `ruff` (the pre-commit hook
-runs `ruff check`); match the surrounding style.
+runs `ruff check`). Match the surrounding style.
 
 ## Contributing
 
@@ -99,6 +99,5 @@ Propose larger architectural changes in an issue first.
 
 ## License
 
-MIT. The framework symbols `aneforge` calls are Apple's private API and not under
-any license; they may change without notice, and nothing here constitutes an API
-contract.
+MIT. The framework symbols `aneforge` calls are Apple's private API, under no
+license; they may change without notice, and nothing here is an API contract.

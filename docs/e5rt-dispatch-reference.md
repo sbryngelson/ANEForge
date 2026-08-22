@@ -3,14 +3,14 @@
 The complete reference for the `e5rt` dispatch path: the unentitled, CoreML-free
 route that compiles a MIL program and runs it on the ANE through
 `Espresso.framework`'s `e5rt_*` C API. This is the fast path `aneforge` uses for
-every fused program. It is reachable from an ordinary user process with only
+every fused program, reachable from an ordinary user process with only
 `dlopen` + `dlsym` (no entitlement, no `.tbd` linkage).
 
 Two surfaces are documented here:
 
-1. The **underlying `e5rt_*` symbols** in `Espresso.framework` and the exact
+1. The underlying `e5rt_*` symbols in `Espresso.framework` and the exact
    ordered sequence to drive them (the "what Apple exposes" layer).
-2. The project's **stable C ABI** (`ane_e5rt_*` in
+2. The project's stable C ABI (`ane_e5rt_*` in
    `aneforge/_lib/ane_e5rt_dispatch.mm`, built into
    `libane_e5rt_dispatch.dylib`) that wraps those symbols into a
    compile-once/eval-many object - the layer `aneforge/_runtime.py` calls.
@@ -28,19 +28,19 @@ For the dispatch-path matrix (e5rt vs Path A vs Path B vs MPSGraph vs CoreML), s
 
 ## 1. What the path is
 
-- **Unentitled.** Everything below resolves via `dlopen` of
+- Unentitled. Everything below resolves via `dlopen` of
   `/System/Library/PrivateFrameworks/Espresso.framework/Espresso` + `dlsym`. The
   system log shows the dispatch going through `aned` -> `ANECompilerService`
   (MIL -> HWX) -> `ANEDriver` -> `H11ANEIn` with `csIdentity =
-  ThirdPartyAppUsingANE`, i.e. no entitlement, a real assigned `programHandle`,
+  ThirdPartyAppUsingANE`: no entitlement, a real assigned `programHandle`,
   ~48 KiB wired memory per model, on the `qos=21` lane.
-- **Compile-once / eval-many.** The single `compile` call is where the whole
+- Compile-once / eval-many. The single `compile` call is where the whole
   4-IR pipeline (`MIL -> MLIR -> LLIR -> ANECIR -> HWX`) and HWX signing happen
   inside `aned` (~27 ms on this host). Every subsequent eval is bind -> encode ->
   `execute_sync`, ~80 us.
-- **Device selection** is a bitmask: `0x1` = BNNS/CPU, `0x2` = MPSGraph/GPU,
+- Device selection is a bitmask: `0x1` = BNNS/CPU, `0x2` = MPSGraph/GPU,
   `0x4` = ANE. `aneforge` sets `0x4`. With multiple bits the runtime auto-selects
-  (and falls back to BNNS if the ANE compile fails); verify the choice via
+  (falling back to BNNS if the ANE compile fails); verify the choice via
   `SelectedBackend = string("ane")` in the produced bundle's `analytics.mil`.
 
 ---
@@ -52,8 +52,8 @@ encode/execute helpers in `ane_e5rt_dispatch.mm`). About 30 of the 235 exported
 `e5rt_*` symbols are used; their function-pointer typedefs are in
 `aneforge/_lib/e5rt_api.h`.
 
-The shape of one call: a single one-time compile (where the 4-IR pipeline and
-HWX signing happen inside `aned`), then a cheap per-inference eval loop.
+One call is a single one-time compile (the 4-IR pipeline and HWX signing inside
+`aned`), then a cheap per-inference eval loop.
 
 ```mermaid
 sequenceDiagram
@@ -155,10 +155,10 @@ e5rt_io_port_bind_buffer_object(dst_port, src_buffer);                     // sh
 
 #### 2.5.1 Persistent on-device state via output->input buffer aliasing
 
-`share_buffer` can alias an op's *output* port onto its own (or a downstream op's)
-*input* port before the first `execute`. With that alias in place, a single
-`execute_sync` call per step reads from and writes back to the *same* resident
-buffer, with **no host round-trip between steps**. The sequence is:
+`share_buffer` can alias an op's output port onto its own (or a downstream op's)
+input port before the first `execute`. With that alias in place, one
+`execute_sync` per step reads from and writes back to the same resident
+buffer, with no host round-trip between steps. The sequence is:
 
 1. Compile the op and bind ports as usual.
 2. Call `e5rt_io_port_bind_buffer_object` (or `ane_e5rt_program_share_buffer` at
@@ -182,21 +182,21 @@ This technique is reachable without an entitlement and is wired into the fronten
   ANE across steps; the host supplies only the minibatch (`x`, `target`) and the
   scalar `lr_t` per step, and reads weights back only at epoch checkpoints.
 
-**Demonstrated result:** a 784->256->10 GELU MLP (Adam) trained to **97.79% test
-accuracy** on full MNIST with all 12 state tensors (4 params x {w, m, v}) resident
+Demonstrated result: a 784->256->10 GELU MLP (Adam) trained to 97.79% test
+accuracy on full MNIST with all 12 state tensors (4 params x {w, m, v}) resident
 across ~2340 steps, in ~1.0 s (the prior host-shuttle path was ~4 s). No compile
 wall at this scale. Example: `examples/train_mnist_mlp.py`. Tests:
 `test_compile_multi_two_outputs`, `test_resident_sgd_matches_host_reference`,
 `test_resident_adam_trains_subset_and_state_stays_resident` in
 `tests/test_autograd.py`.
 
-**Caveats.** fp16 storage means exact integer values are only representable to
+Caveats. fp16 storage means exact integer values are only representable to
 ~2048; the device is a single lane (latency/bandwidth, not parallelism). Trainable op
-coverage now spans MLP, CNN, and transformer-block models - matmul-family plus
+coverage spans MLP, CNN, and transformer-block models - matmul-family plus
 structural VJPs (transpose/reshape/concat/slice), conv grad-wrt-input, and
 avg_pool/max_pool - with the resident-state path demonstrated on all three.
 
-**Multi-step host-free dispatch - reachable without an entitlement, and not a bottleneck.**
+Multi-step host-free dispatch - reachable without an entitlement, and not a bottleneck.
 `execute_multi` encodes K ops into one stream and runs them
 under a single `execute_sync`, so one host dispatch drives K on-engine steps:
 K copies of an aliased step, chained `op_i.out -> op_{i+1}.in` by `share_buffer`,
@@ -205,10 +205,10 @@ seeded once, advance the accumulator to exactly K for K up to 100 (ceiling
 entitlement. It is also performance-neutral: one `execute_multi` over 64 ops
 (66 ms median) is no faster than 64 separate `execute` calls (60 ms) - on the
 resident-buffer path `execute_sync` over already-bound buffers is nearly free,
-so the per-step host dispatch is not a measurable cost (~0.93 ms/step intrinsic,
-single lane). The only remaining inaccessible case is *unbounded* zero-host
+so per-step host dispatch is not a measurable cost (~0.93 ms/step intrinsic,
+single lane). The only remaining inaccessible case is unbounded zero-host
 autonomy (the engine self-looping with no host call ever), which is
-entitlement-gated; by this measurement it would not run the workloads here
+entitlement-gated; by this measurement it would not run these workloads
 any faster.
 
 ### 2.6 Release (reverse order)
@@ -220,22 +220,22 @@ any faster.
 
 ## 3. ABI discoveries (the non-obvious calling conventions)
 
-These were recovered empirically; getting them wrong returns specific errors:
+Recovered empirically; getting them wrong returns specific errors:
 
-- **Every `create` entry point is out-pointer-first:** `(void **out,
+- Every `create` entry point is out-pointer-first: `(void out,
   payload...)`. Reversed args give `Invalid E5 path specified. @
   GetE5PathFromCompositeBundle` or `Cannot provide program function as nullptr. @
   Create`.
-- **`e5rt_async_event_create` takes three args** `(out, name, initial_value)`.
+- `e5rt_async_event_create` takes three args `(out, name, initial_value)`.
   A NULL name returns `Invalid Function Argument: eventName is NULL`.
-- **`e5rt_execution_stream_submit_async` takes two args**, the second an
+- `e5rt_execution_stream_submit_async` takes two args, the second an
   Objective-C completion block that is `objc_retain`'d unconditionally; passing
   NULL crashes in `objc_retain`. (The dylib provides
   `ane_e5rt_make_completion_block` to build one from a C callback.)
-- **`e5rt_buffer_object_alloc(out, size, type)` is out-first**; types `0/1/2`
+- `e5rt_buffer_object_alloc(out, size, type)` is out-first; types `0/1/2`
   are valid (anything else: `Invalid BufferType @ AllocMemory`). Type `0` gives a
   buffer whose `get_data_ptr` is a plain CPU virtual address.
-- **`compute_device_types_mask`:** `0x1` bnns / `0x2` mps_graph / `0x4` ane;
+- `compute_device_types_mask`: `0x1` bnns / `0x2` mps_graph / `0x4` ane;
   `0x3` -> bnns wins; `0x5`/`0x6`/`0x7` -> ane (with `0x7` falling back to bnns if
   the ANE compile fails).
 
@@ -247,7 +247,7 @@ These were recovered empirically; getting them wrong returns specific errors:
 compile-once/eval-many `ane_e5rt_program_t`, built into
 `aneforge/_lib/libane_e5rt_dispatch.dylib`. `aneforge/_runtime.py` binds the
 subset the package uses (compile / set_input / execute / get_output / release);
-the full ABI is documented below.
+the full ABI follows.
 
 ### 4.1 Single-op (the lean, production subset)
 
@@ -293,32 +293,32 @@ void  ane_e5rt_free_completion_block(void *block);
 ### 4.4 Cross-process tensor hand-off (IOSurface)
 
 In-process zero-copy between ops is `ane_e5rt_program_share_buffer` (section 4.2).
-**Cross-process** tensor hand-off uses an IOSurface passed by Mach port
+Cross-process tensor hand-off uses an IOSurface passed by Mach port
 (`bootstrap_register`), ~70 us. It exists because a compiled program is not loadable in a
-fresh process (section 5), so a persistent compiled worker is fed inputs and returns outputs by
-IOSurface.
+fresh process (section 5), so a persistent compiled worker is fed inputs and returns outputs
+by IOSurface.
 
 ---
 
 ## 5. Operational constraints (the ones that bite)
 
-1. **Compile and dispatch must be in the same process.** The signed HWX lives
+1. Compile and dispatch must be in the same process. The signed HWX lives
    only in `aned`'s per-PID cache; loading a previously compiled bundle in a
    fresh process fails with `ANE model load has failed ... Must re-compile the
    E5 bundle`. Cross-process reuse needs same-codesign-identity `posix_spawn`'d
    children; `fork()` SIGSEGVs (Espresso/libdispatch is fork-unsafe).
-2. **`execute_sync` serializes** all encoded ops in a stream, regardless of
+2. `execute_sync` serializes all encoded ops in a stream, regardless of
    `bind_dependent_events`. Multiple `encode_operation` calls before one
    `execute_sync` run in submission order.
-3. **Completion events only increment on `submit_async`.** `bind_completion_event`
+3. Completion events only increment on `submit_async`. `bind_completion_event`
    / `bind_dependent_events` accept correct parameters, but a `last_signaled_value`
    does not advance under `execute_sync`. The dependency-graph machinery is wired
    and confirmed via the async path; full happens-before enforcement under
-   `execute_sync` is therefore partly inferred, not observed.
-4. **~128 loaded programs per PID** (the 129th load fails; `release()` frees a
-   slot), and the in-flight depth is capped at **127**
+   `execute_sync` is thus partly inferred, not observed.
+4. ~128 loaded programs per PID (the 129th load fails; `release()` frees a
+   slot), and the in-flight depth is capped at 127
    (`dispatch_semaphore_create(127)` in the runtime).
-5. **The two locks still apply.** You can only submit MIL or single-procedure
+5. The two locks still apply. You can only submit MIL or single-procedure
    ANECIR netplist (the parser gate), and only `aned`-signed HWX loads (the
    kernel signature gate, error `0xe00002e2`). e5rt does not change either.
 

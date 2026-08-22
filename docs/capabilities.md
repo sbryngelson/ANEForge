@@ -5,9 +5,9 @@ table see [op-catalog.md](op-catalog.md).
 
 ## Coverage summary
 
-ANEForge classifies the full **166-op MIL vocabulary** against a machine-checkable
+ANEForge classifies the full 166-op MIL vocabulary against a machine-checkable
 registry (`aneforge/_capabilities.py`, serialized to `capabilities.json` and
-CI-gated). Each op falls into one of a few practical buckets:
+CI-gated). Each op falls into one of a few buckets:
 
 | status | meaning |
 | --- | --- |
@@ -41,15 +41,14 @@ and boolean tensor I/O have no path.
 
 ## Dimension bounds
 
-Tensor dimension caps are **per-family and per-op-class** - the limit rides the
-op's lowering, not the tensor, so a graph that fits an M5 may overflow an M1.
-Practical caps:
+Tensor dimension caps are per-family and per-op-class - the limit rides the
+op's lowering, not the tensor, so a graph that fits an M5 may overflow an M1:
 
-- **Spatial / contraction** extents (flat W/H, matmul-K, conv spatial): 16384
+- Spatial / contraction extents (flat W/H, matmul-K, conv spatial): 16384
   through A15, 65536 at A16.
-- **Channel** axis: 65536 on both A14 and A16.
-- **Transpose** extent: very large (offset-field width), effectively unbounded.
-- **Conv kernel width**: `kW <= 13` on M1, `<= 15` on M5 (route wider kernels via
+- Channel axis: 65536 on both A14 and A16.
+- Transpose extent: very large (offset-field width), effectively unbounded.
+- Conv kernel width: `kW <= 13` on M1, `<= 15` on M5 (route wider kernels via
   `space_to_depth`).
 
 `tg.limit("max_tensor_dim" | "channel_extent" | "transpose_extent", family)`
@@ -60,20 +59,20 @@ are generation-monotone (A13 == A14 <= A16). See [cross-chip.md](cross-chip.md).
 
 ## Shapes (static only)
 
-Every program compiles for a **concrete** shape. Variable-shape (symbolic) programs
+Every program compiles for a concrete shape. Variable-shape (symbolic) programs
 are not reachable through the e5rt path ANEForge uses: a symbolic dim
-parses but fails to compile. For variable-length (for example LLM sequence)
+parses but fails to compile. For variable-length (e.g. LLM sequence)
 inference, either pad to a fixed maximum and compile once, or bucket a small set of
 lengths and dispatch the nearest (the compile cache makes repeat lengths free).
 
-This is shape polymorphism only - a separate axis from data-dependent *values*,
+This is shape polymorphism only - a separate axis from data-dependent values,
 which remain unreachable (no on-engine gather / index-by-tensor-data), so a
 dynamic-slice KV-cache is likewise off the e5rt path.
 
 ## Operator surface
 
 For the complete native MIL op x device (M1-M5) table, see
-[op-catalog.md](op-catalog.md). The notes below cover the practical details that
+[op-catalog.md](op-catalog.md). The notes below cover what that
 table does not carry: per-family floors, the quantized / compressed / dynamic-kernel
 paths, group-norm, and the attention routes.
 
@@ -112,11 +111,11 @@ ANEForge adds fused composites (`conv1x1`, `conv1x1_chain`, `conv_relu`,
 `conv1x1_add_relu`, `conv1x1_project_add`) and a quantized chain
 `conv1x1_int8_chain`.
 
-**Dynamic-kernel conv** (`af.dynamic_conv`): a conv whose weight is a runtime
-**input tensor** rather than a baked constant, enabling hypernetwork /
-weight-generating inference. Reachable and correct at **batch 1** only;
-**batch >= 2** does not compile, so `af.dynamic_conv` rejects `B >= 2`
-at build time. A constant-weight conv at any batch is unaffected. (This is why the
+Dynamic-kernel conv (`af.dynamic_conv`): a conv whose weight is a runtime
+input tensor rather than a baked constant, enabling hypernetwork /
+weight-generating inference. Reachable and correct at batch 1 only;
+batch >= 2 does not compile, so `af.dynamic_conv` rejects `B >= 2`
+at build time. A constant-weight conv at any batch is unaffected. (Hence the
 trainable conv uses an im2col path rather than a native dynamic-weight conv.)
 
 ### Normalization
@@ -128,7 +127,7 @@ as a fused "transpose -> instancenorm_1d -> transpose" route.
 `group_norm` lowers at rank 4 (`[1, G, C/groups, H*W]`) with a chained reduce, so
 every axis stays under the per-axis cap. This removes the former large-feature-map
 wall: the Stable Diffusion 1.5 wall shapes (640ch@64, 512ch@128) now compile and
-run (relerr ~ 0.002 vs fp32), and the unblock is family-wide.
+run (relerr ~ 0.002 vs fp32), family-wide.
 
 `layer_norm` applies its affine at rank 2 after the reshape back, not inside the
 rank-4 normalization body. A non-uniform affine in that inner position failed
@@ -148,17 +147,17 @@ Three routes to attention, with different tradeoffs:
 `af.sdpa` is the recommended route. Causal masking is native end-to-end
 (`is_causal=True`), validated at cos 1.0 versus a masked-softmax reference. It is
 reliable for sequence length `S <= 2048` (`SDPA_NATIVE_MAX_SEQ`); above that the op
-decomposes (which carries no mask). Because it also handles the decode shape, a full
+decomposes (carrying no mask). Because it also handles the decode shape, a full
 autoregressive GPT/LLaMA generation loop (causal-SDPA prefill, then per-step
 decode-shape SDPA) runs on the engine token-for-token matching numpy
 (`examples/gpt_generate_ane.py`).
 
-**Resident KV-cache decode.** The decode KV-cache can stay resident on the engine
+Resident KV-cache decode. The decode KV-cache can stay resident on the engine
 across steps so it never round-trips to the host: the masked positional write runs
 in the graph, `compile_multi` emits the hidden state plus every cache output, and
 `Program.share_buffer` aliases each cache output onto its own input. Works for a
 single layer (`TinyDecoderANE.generate_resident`) and for a full L-layer decoder
-with all `2L` caches resident (`examples/gpt_multilayer_resident.py`). On this path
+with all `2L` caches resident (`examples/gpt_multilayer_resident.py`). Here
 the decode attention is decomposed (cheap at `seq_q=1`) since `compile_multi` cannot
 take the native-SDPA graph cut; the resident-cache bandwidth saving is the goal.
 
@@ -195,19 +194,19 @@ byte-identical to a host-side convert and saving the host conversion latency
 (~2 ms/frame at 1080p). This is the terminal image-input form.
 
 Direct 4CC interchange input (a pixel buffer fed straight from a camera or video
-surface with no host RGB convert) is a **no-go on the e5rt path** - it needs
-the entitled CoreML route. Use `af.image_input(uint8)` instead.
+surface with no host RGB convert) is a no-go on the e5rt path - it needs
+the entitled CoreML route. Use `af.image_input(uint8)`.
 
 ## Compressed weight streaming
 
 `af.compile(out, compress=None | "int8" | "int4" | "sparse" | "blockwise" | "auto")`
-emits compressed weights that **stream** (dequant-during-DMA) rather than fold to
+emits compressed weights that stream (dequant-during-DMA) rather than fold to
 dense fp16, so a weight-bandwidth-bound op gets a real eval-latency win, not just a
 smaller file. `compress=None` (the default) is byte-identical to fp16. int4-LUT and
 sparse are accuracy-gated (int4 falls back int4->int8->fp16 within `compress_atol`).
 All `constexpr_*` quant forms, including blockwise-affine, are reachable on the e5rt path.
 
-Which formats stream natively is **per-family** (`tg.native_streams(family)`, with
+Which formats stream natively is per-family (`tg.native_streams(family)`, with
 `from aneforge import _targets as tg`):
 
 | family / chip | int4-LUT | int8-affine | sparse | blockwise |
@@ -220,14 +219,14 @@ So `compress="auto"` is family-aware: on M1 it considers int4-LUT and sparse (th
 native streams there) and skips int8/blockwise, while a budget-rejected int4 falls
 back to fp16 rather than a folding encoding (which costs accuracy for zero bandwidth
 win). Explicit single-mode knobs are never filtered. End to end, compression is
-primarily a **footprint/capacity** lever (~4x smaller weights); the per-matmul win
+mainly a footprint/capacity lever (~4x smaller weights); the per-matmul win
 dilutes through norms, attention, and dispatch in full models.
 
 ## Training (on-engine autograd)
 
 ANEForge trains on the ANE: `aneforge/autograd.py` runs forward, backward, and the
 optimizer update as ANE graph ops through the same e5rt path.
-`af.parameter` makes a weight a graph *input* (no recompile per step); a VJP
+`af.parameter` makes a weight a graph input (no recompile per step); a VJP
 registry builds the backward graph. `Trainer` (with `device_optimizer`,
 `resident_state`) and `UnrolledTrainer` (K steps in one fused program, resident by
 default) drive training; full MNIST reaches 97.79% with optimizer state resident
@@ -252,7 +251,7 @@ measured typical latency speedup is 2.3-3.3x.
 
 ## Operators with no hardware backing
 
-Some operators have no ANE hardware support and either reject outright or require
+Some operators have no ANE hardware support and either reject outright or need
 algebraic decomposition over supported atoms:
 
 | Op | Status | Notes |
@@ -284,5 +283,4 @@ not-implemented-on-ANE.
 
 To confirm ANE placement rather than a silent CPU fallback, watch the ANE power rail
 under `powermetrics` while a compiled model runs: a genuine dispatch draws ~1.4 W on
-that rail (a CPU fallback does not), which is the same check the verification suite
-uses.
+that rail (a CPU fallback does not), the same check the verification suite uses.

@@ -4,8 +4,8 @@ ANEForge runs decoder LLMs on the Apple Neural Engine - prefill and KV-cache dec
 Face weights or GGUF, as fused ANE programs. Beyond dense Llama/Qwen, it runs sparse Mixture-of-Experts
 and hybrid DeltaNet+attention models, with quantization and exact speculative decoding (sections below).
 
-Prefill (processing the prompt) is compute-bound: a stack of matmuls over all prompt tokens at
-once, which is the ANE's efficient regime. Decode (one token at a time) is memory-bound; it
+Prefill (the prompt) is compute-bound: a stack of matmuls over all prompt tokens at
+once, the ANE's efficient regime. Decode (one token at a time) is memory-bound; it
 works, but the energy advantage is in prefill.
 
 ## API
@@ -38,16 +38,15 @@ call as `generate(..., ane_lm_head=False)`, to force the host matmul. Measured o
 | Qwen3-0.6B (vocab 151936, 10 tiles) | 30.1 ms/tok | 8.2 ms/tok | 17.8 tok/s | 29.3 tok/s |
 
 It also drops the `_lmT` host allocation (GPT-2: 206 MB, Qwen3-0.6B: 622 MB). The head runs fp16, so a
-greedy argmax could flip against the host fp32 on a close tie; a tie-margin fallback keeps greedy exact
-by recomputing a step on the host fp32 head when the top-2 gap is under `lmhead_tie_margin` (default
-`3e-3`) times the max logit magnitude -- about 6x the measured fp16-head error, firing on ~2-3% of
-tokens. So greedy matches the host (and Hugging Face) exactly while the rest keep ANE speed; the
-recompute builds `_lmT` only if a tie fires, and sampling stays on the ANE (softmax shifts by ~2e-3, so
-sampling is unaffected). If the head compiles but fails to execute -- e.g. `ANEFORGE_TARGET` set above
-the host family -- it declines to the host matmul rather than breaking `generate`. When the head is tied
-to `embed` (GPT-2), the ANE program bakes a second copy of those weights. The head compiles on first use
-(0.4 s GPT-2, 1.8 s Qwen3-0.6B, ~15% of the decode-program compile that first token already pays);
-`warmup(max_len)` moves it off the first token.
+greedy argmax could flip against the host fp32 on a close tie. A tie-margin fallback recomputes a step on
+the host fp32 head when the top-2 gap is under `lmhead_tie_margin` (default `3e-3`) times the max logit
+magnitude -- about 6x the measured fp16-head error, firing on ~2-3% of tokens. Greedy then matches the
+host (and Hugging Face) exactly while the rest keep ANE speed; the recompute builds `_lmT` only if a tie
+fires, and sampling stays on the ANE (softmax shifts by ~2e-3, unaffected). If the head compiles but
+fails to execute -- e.g. `ANEFORGE_TARGET` set above the host family -- it declines to the host matmul
+rather than breaking `generate`. When the head is tied to `embed` (GPT-2), the ANE program bakes a second
+copy of those weights. The head compiles on first use (0.4 s GPT-2, 1.8 s Qwen3-0.6B, ~15% of the
+decode-program compile that first token already pays); `warmup(max_len)` moves it off the first token.
 
 ## Prefill and decode
 
@@ -55,7 +54,7 @@ to `embed` (GPT-2), the ANE program bakes a second copy of those weights. The he
 layer's K/V stays on the ANE across steps via `share_buffer`, so a decode step feeds only the new
 token's embedding and a position one-hot. The decode program compiles once and is reused.
 
-A single ANE program holds ~2 GB of baked weights, so for larger models the layers are split into
+A single ANE program holds ~2 GB of baked weights, so larger models split their layers into
 chunks under that ceiling; each chunk keeps its KV resident and the hidden state chains chunk ->
 chunk (a `[1, dim]` round-trip). This is automatic - Qwen3-0.6B is one chunk; Qwen3-8B is nine.
 
@@ -68,9 +67,9 @@ On Qwen3-0.6B: ~8,600 prompt-tok/s prefill, ~75 tok/s decode. On Qwen3-8B (36 la
 
 ## Speculative decoding
 
-A small *draft* model proposes K tokens; the large *target* verifies all K in a single forward. This
-is a natural fit for the ANE: decode is latency-bound, so `verify(K) ~ verify(1)` - measured 1.05x for
-K=5 on Qwen3-8B - and the draft's proposals are checked almost for free. The output is **exact**: the
+A small draft model proposes K tokens; the large target verifies all K in a single forward. This
+fits the ANE: decode is latency-bound, so `verify(K) ~ verify(1)` - measured 1.05x for
+K=5 on Qwen3-8B - and the draft's proposals are checked almost for free. The output is exact: the
 same tokens plain greedy decode would produce.
 
 ```python
@@ -85,17 +84,16 @@ draft, and ~0 orchestration overhead. `examples/spec_chat.py` is an interactive 
 ## Quantized weights
 
 `compress="int8"` quantizes the ANE matmul weights to per-channel int8 (`"int4"` = 4-bit LUT),
-dequantized on the ANE - halving (int8) or quartering (int4) the weight bytes. Measured honestly,
-the tradeoffs are narrow:
+dequantized on the ANE - halving (int8) or quartering (int4) the weight bytes. The tradeoffs are narrow:
 
 - Speed: roughly neutral. Decode is latency-bound (the ANE's array is idle at one token/step), not
   weight-bandwidth-bound, so fewer weight bytes barely move tok/s - Qwen3-8B was 7.9 (int8) vs 7.5
-  (fp16) tok/s, with *fewer* chunks.
+  (fp16) tok/s, with fewer chunks.
 - Accuracy: faithful on small models (Qwen3-0.6B int8 is byte-identical to fp16) but per-channel
   int8 degrades deep models - Qwen3-8B int8 collapses into repetition. Run large models in fp16.
 - Memory: the one real win (half the weight bytes). But fp16 + segmented decode already fits models
   up to RAM, so int8 only matters for weights that exceed RAM in fp16 - and the accuracy has to be
-  solved first. The robust path is quantized *storage* dequantized to fp16 *compute* (not int8
+  solved first. The robust path is quantized storage dequantized to fp16 compute (not int8
   compute), which this option does not yet do.
 
 Pass `--int8` to the examples to try it (best on small models).
@@ -109,28 +107,28 @@ from aneforge.moe import load_gguf
 model = load_gguf("Qwen1.5-MoE-A2.7B-Chat.Q4_K_M.gguf", compress="int8")
 ```
 
-The router and *every* expert run on the ANE: a softmax over the experts, a top-k mask, then one
+The router and every expert run on the ANE: a softmax over the experts, a top-k mask, then one
 batched matmul over all experts weighted by the top-k (non-selected experts contribute 0). The top-k
-mask is built from `amax` + `select` rather than the native `topk` op, which is a graph cut that won't
+mask is built from `amax` + `select` rather than the native `topk` op, a graph cut that won't
 compose across layers. Qwen2-MoE's shared expert and QKV biases are detected from the weights. The
 math matches HF `Qwen3MoeForCausalLM` (cosine >0.99), and the full 24-layer Qwen1.5-MoE-A2.7B decodes
 coherently end-to-end on the ANE at int8 (~2 tok/s). `examples/moe_chat.py` is an interactive MoE chat.
 
-Unlike the dense 8B, MoE decode at 30B scale is **weight-bandwidth-bound**: ~13.5 ms per MoE layer
-(~89 GB/s), because each token reads all of the experts' weights. So here int8 *does* help (~1.3x), and
+Unlike the dense 8B, MoE decode at 30B scale is weight-bandwidth-bound: ~13.5 ms per MoE layer
+(~89 GB/s), because each token reads all of the experts' weights. Here int8 does help (~1.3x), and
 the experts' sparsity (4-8 of 60-128 active) is the real lever - but exploiting it needs a host-side
-FFN split (measured ~4.6x in a prototype), not the dense on-ANE path. The 30B-A3B is currently gated
+FFN split (measured ~4.6x in a prototype), not the dense on-ANE path. The 30B-A3B is gated
 only by compile-time RAM on a 52 GB machine (it fits and runs on more).
 
 ## Hybrid models (Qwen3.5)
 
-Qwen3.5 / Qwen3-Next interleave gated **DeltaNet** (linear-attention) layers with gated full-attention
+Qwen3.5 / Qwen3-Next interleave gated DeltaNet (linear-attention) layers with gated full-attention
 layers. Both mixers run on the ANE: DeltaNet carries a resident causal-conv state and a recurrent
 `[heads, dk, dv]` state across decode steps (a decay-first recurrence); attention carries the usual
-resident KV cache. A per-layer plan (`LayerSpec`) names the mixer for each layer, so the runner stays
-architecture-agnostic - it dispatches on the plan, not the weight shapes.
+resident KV cache. A per-layer plan (`LayerSpec`) names the mixer for each layer, so the runner
+dispatches on the plan, not the weight shapes.
 
-The real **Qwen3.5-27B** (64 layers, 48 DeltaNet + 16 attention) decodes coherently end-to-end on a pure
+The real Qwen3.5-27B (64 layers, 48 DeltaNet + 16 attention) decodes coherently end-to-end on a pure
 ANE from its GGUF at int8 - no host fallback:
 
 ```python
@@ -151,7 +149,7 @@ but the on-device int8-weight/fp16-compute decode is coherent yet lower-fidelity
 fp32-accumulated Q4 - harder prompts come out shallower. The cost is the fp16 compute, not the weights:
 per-channel int8 weights alone move the logit correlation by ~0.0001, but this model's large deep-layer
 activation outliers leave it fp16-bound at this depth. `compress="blockwise"` adds per-block scales but
-helps little and compiles much slower.
+helps little and compiles slower.
 
 ## What's inside
 
@@ -163,6 +161,7 @@ A pre-norm Llama/Qwen decoder block on the ANE:
 - Causal attention: decomposed `softmax(Q@K^T*scale + mask)@V` in one fused program. The native
   fused-attention op is avoided for prefill - its per-layer graph cut dominates, and the
   big-matmul path is ~170x faster.
+
 
 ## Correctness
 
@@ -176,10 +175,10 @@ before RoPE), and a large vocab - the layers run on the ANE; the lm_head project
 
 ## Scope
 
-Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), **Mistral**
-(GQA + sliding window), **Gemma** (scaled embeddings + GeGLU + `(1+w)` RMSNorm), **GPT-2** (pre-norm
-LayerNorm decoder, learned positions, tiled tied lm_head), sparse **Mixture-of-Experts**
-(Qwen3-MoE, Qwen2-MoE), and **hybrid** DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
+Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), Mistral
+(GQA + sliding window), Gemma (scaled embeddings + GeGLU + `(1+w)` RMSNorm), GPT-2 (pre-norm
+LayerNorm decoder, learned positions, tiled tied lm_head), sparse Mixture-of-Experts
+(Qwen3-MoE, Qwen2-MoE), and hybrid DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
 KV-cache decode, automatic segmentation past the ~2 GB program ceiling, int8/int4 weights, and exact
 speculative decoding. Static prompt length per compiled graph; the lm_head projection runs on host by
 default, or on the ANE with `ane_lm_head` (above).
