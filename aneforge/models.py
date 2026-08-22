@@ -784,11 +784,9 @@ def load_whisper(name: str = "openai/whisper-base.en") -> "Whisper":
 
 
 class Whisper:
-  """OpenAI Whisper (encoder-decoder ASR) on the ANE. The audio encoder is one fused program run once per
-  clip; the text decoder is one fused single-token program run per greedy step against a resident KV cache
-  (self-attention caches grow on the ANE; each layer's cross-attention K/V over the audio is computed once per
-  clip and held resident). Greedy decoding replicates Hugging Face's forced-prompt and logit-suppression rules,
-  so it matches `generate`. Host-side log-mel and tokenization only. Default `whisper-base.en`.
+  """OpenAI Whisper (encoder-decoder ASR) on the ANE: one fused encoder program per clip, and a single-token
+  decoder program per greedy step against a resident KV cache. Greedy matches HF `generate`. Host-side log-mel
+  and tokenization only. Default `whisper-base.en`. See docs/developer/models.md.
   `.transcribe(audio)` -> str; `.encode(audio)` -> audio features [1500, 512]."""
 
   def __init__(self, name: str = "openai/whisper-base.en") -> None:
@@ -804,8 +802,7 @@ class Whisper:
     self.dec_heads = cfg.decoder_attention_heads
     self.n_mels, self.vocab = cfg.num_mel_bins, cfg.vocab_size
     self.max_dec = cfg.max_target_positions                   # resident KV-cache length (== HF's max decode length)
-    # The decode prompt and logit rules come from the checkpoint's generation config, so a non-.en Whisper gets
-    # the right start tokens and suppressions rather than hardcoded English ids.
+    # decode prompt + logit rules from the generation config, so a non-.en checkpoint gets the right ids
     forced = getattr(gen, "forced_decoder_ids", None) or []
     self.sot = [cfg.decoder_start_token_id] + [int(t) for _, t in sorted(forced)]      # e.g. [sot, notimestamps]
     self.suppress = np.asarray(gen.suppress_tokens or [], dtype=np.int64)              # forced to -inf every step
@@ -851,10 +848,8 @@ class Whisper:
     return np.asarray(self._encoder(mel), np.float32)
 
   def _build_decode_step(self) -> dict:
-    """One fused single-token decode program with a resident KV cache (built once, cached). Self-attention
-    reads/writes a resident `[H, M, dh]` cache via a one-hot positional write (`Kout = Kin*inv + k*oh`, the
-    `_attn_decode` pattern); cross-attention reads resident audio K/V set once per clip; each cache output is
-    aliased back to its input with `share_buffer` so it stays on the ANE across steps. Returns the port map."""
+    """Single-token decode program with a resident KV cache (built once): self-attn one-hot cache write
+    (`Kout = Kin*inv + k*oh`), cross-attn to per-clip audio K/V, caches aliased resident via `share_buffer`."""
     M, D, H, dh = self.max_dec, self.D, self.dec_heads, self.D // self.dec_heads
     scale = 1.0 / dh ** 0.5
     x = input((1, D))                                          # this step's token+position embedding
@@ -895,10 +890,7 @@ class Whisper:
             "cross": [(inm[id(ck)], inm[id(cv)]) for ck, cv in cross]}
 
   def transcribe(self, audio: np.ndarray) -> str:
-    """Greedy transcript of a 16 kHz mono clip, both towers on the ANE. The decoder runs one token per step
-    against a resident KV cache: self-attention caches grow on the ANE, and each layer's cross-attention K/V
-    over the audio is computed once per clip and held resident. Greedy selection applies Hugging Face's forced
-    prompt and logit suppressions, so the transcript matches `generate` (up to `max_dec` tokens)."""
+    """Greedy transcript of a 16 kHz mono clip, both towers on the ANE. Matches HF `generate` up to `max_dec` tokens."""
     if self._decoder is None:
       self._decoder = self._build_decode_step()
     d = self._decoder; prog = d["net"].prog
