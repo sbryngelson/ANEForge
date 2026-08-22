@@ -1,0 +1,35 @@
+# Refresh the lines-of-code badge (.github/badges/loc.json, a shields.io endpoint).
+# Recounts with cloc on each push to main and commits the JSON only when the rounded
+# number changes. Best-effort: if the push is blocked, the badge stays at its last value.
+name: LOC badge
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: [".github/badges/loc.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  loc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Count and write the badge JSON
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq cloc
+          code=$(cloc --quiet --json --include-lang=Python,"C/C++ Header","C++",Objective-C,"Objective-C++" \
+                   aneforge | python3 -c "import sys,json; print(json.load(sys.stdin)['SUM']['code'])")
+          msg=$(awk "BEGIN{printf \"%.1fk\", $code/1000}")
+          printf '{"schemaVersion":1,"label":"lines of code","message":"%s","color":"2e6b69"}\n' "$msg" \
+            > .github/badges/loc.json
+          echo "lines of code: $code -> $msg"
+      - name: Commit if changed
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/badges/loc.json
+          git diff --cached --quiet || { git commit -m "chore: update lines-of-code badge [skip ci]"; git push; }
