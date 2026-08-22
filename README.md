@@ -30,14 +30,14 @@ CPU or GPU, and it gives you no way to train there. ANEForge skips it: it compil
 a tensor graph into one ANE program and dispatches that program through the same
 private `aned` stack CoreML, MPSGraph, and Espresso use internally. From there:
 
-- **Training runs on the engine.** The forward pass, the backward pass, and the Adam update all compile to ANE programs.
+- Training runs on the engine. The forward pass, the backward pass, and the Adam update all compile to ANE programs.
 - A CNN trains from scratch on CIFAR-10 to 71%, on a chip Apple ships for inference only.
-- **Hardware layers CoreML can't reach.** `af.sdpa` drives the engine's fused-attention layer directly, the one Apple's compiler decomposes and never emits; 18 other native layers (`argmax`, `topk`, `sort`, geometry) come the same way.
-- **The engine, never a fallback.** A pretrained ResNet-18 runs end-to-end in 0.33 ms, matching the reference to cosine 1.0000, at a fraction of the GPU's energy (table below).
-- **MLPerf, on the engine.** The MLPerf reference ResNet-50 runs pure-ANE and passes the upstream MLCommons `submission_checker` (v5.1, all three edge scenarios VALID) at the reference accuracy (fp16 76.44%, equal to fp32); [one command reproduces it](bench/mlperf).
-- **LLMs run on the engine.** Prefill and KV-cache decode for Llama/Qwen, exact speculative decoding, Mixture-of-Experts from GGUF, and the hybrid Qwen3.5-27B (DeltaNet + attention), decoding end to end on a pure ANE.
-- **Speech-to-text on the engine.** Whisper's audio encoder and its autoregressive text decoder both run on the ANE with resident-KV-cache decode, matching Hugging Face's greedy transcript.
-- **Cross-compilation for chips you don't own.** Lower and gate a graph for any of 28 ANE targets (M1-M5) from one machine, and estimate its latency without running it.
+- Hardware layers CoreML can't reach. `af.sdpa` drives the engine's fused-attention layer directly, the one Apple's compiler decomposes and never emits; 18 other native layers (`argmax`, `topk`, `sort`, geometry) come the same way.
+- The engine, never a fallback. A pretrained ResNet-18 runs end-to-end in 0.33 ms, matching the reference to cosine 1.0000, at a fraction of the GPU's energy (table below).
+- MLPerf, on the engine. The MLPerf reference ResNet-50 runs pure-ANE and passes the upstream MLCommons `submission_checker` (v5.1, all three edge scenarios VALID) at the reference accuracy (fp16 76.44%, equal to fp32); [one command reproduces it](bench/mlperf).
+- LLMs run on the engine. Prefill and KV-cache decode for Llama/Qwen, exact speculative decoding, Mixture-of-Experts from GGUF, and the hybrid Qwen3.5-27B (DeltaNet + attention), decoding end to end on a pure ANE.
+- Speech-to-text on the engine. Whisper's audio encoder and its autoregressive text decoder both run on the ANE with resident-KV-cache decode, matching Hugging Face's greedy transcript.
+- Cross-compilation for chips you don't own. Lower and gate a graph for any of 28 ANE targets (M1-M5) from one machine, and estimate its latency without running it.
 
 ```python
 import aneforge as af
@@ -188,12 +188,12 @@ Reproduce with [`python examples/train_neural_ca.py`](examples/train_neural_ca.p
 
 ## What it does
 
-- **Graph -> compile -> run.** 58 fused operators (conv/pool, `matmul`/`bmm`/`einsum`, activations, reductions, norms, softmax, attention, shape/geometry) into one program with int8/int4/fp16 weights, plus a bridge route for 19 native ops the public toolchain never emits.
-- **Streaming weight compression.** int8, int4-LUT, or sparse weights streamed from the engine's dequant path (~4x smaller for int4), accuracy-gated.
-- **On-device uint8 image input,** dequantized in-graph, so raw camera or video bytes feed the model directly.
-- **Resident state.** KV-cache and optimizer state kept on the engine across steps via buffer aliasing (`share_buffer`).
-- **Accuracy-preserving optimizer.** `af.tune` measures equivalent lowerings on the engine and returns the lossless pick.
-- **Linear algebra and spectral methods.** `aneforge.linalg` and `aneforge.fft` as static-dataflow graphs.
+- Graph -> compile -> run. 58 fused operators (conv/pool, `matmul`/`bmm`/`einsum`, activations, reductions, norms, softmax, attention, shape/geometry) into one program with int8/int4/fp16 weights, plus a bridge route for 19 native ops the public toolchain never emits.
+- Streaming weight compression. int8, int4-LUT, or sparse weights streamed from the engine's dequant path (~4x smaller for int4), accuracy-gated.
+- On-device uint8 image input, dequantized in-graph, so raw camera or video bytes feed the model directly.
+- Resident state. KV-cache and optimizer state kept on the engine across steps via buffer aliasing (`share_buffer`).
+- Accuracy-preserving optimizer. `af.tune` measures equivalent lowerings on the engine and returns the lossless pick.
+- Linear algebra and spectral methods. `aneforge.linalg` and `aneforge.fft` as static-dataflow graphs.
 
 ## What runs
 
