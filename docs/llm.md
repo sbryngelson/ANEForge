@@ -36,11 +36,15 @@ as `generate(..., ane_lm_head=True)`. Measured on an M2 Pro (macOS 26.5.2, fp16)
 | gpt2-medium (vocab 50257, 4 tiles) | 10.8 ms/tok | 3.4 ms/tok | 39.6 tok/s | 59.4 tok/s |
 | Qwen3-0.6B (vocab 151936, 10 tiles) | 30.1 ms/tok | 8.2 ms/tok | 17.8 tok/s | 29.3 tok/s |
 
-It also drops the `_lmT` host allocation (GPT-2: 206 MB, Qwen3-0.6B: 622 MB). The trade-off is fp16
-matmul numerics instead of fp32, so greedy argmax can differ on close ties (it did not on either
-model above, 64/64 tokens); and when the head is tied to `embed`, the ANE program bakes a second
-copy of those weights. The default stays `False` for that reason. `warmup(max_len)` compiles the
-head too when the flag is set on the model, keeping the compile out of the first token.
+It also drops the `_lmT` host allocation (GPT-2: 206 MB, Qwen3-0.6B: 622 MB). The head runs fp16, so a
+greedy argmax could flip against the host fp32 on a close tie; a tie-margin fallback keeps greedy exact
+by recomputing a step on the host fp32 head when the top-2 gap is under `lmhead_tie_margin` (default
+`3e-3`) times the max logit magnitude -- about 6x the measured fp16-head error, firing on ~2-3% of
+tokens. So greedy matches the host (and Hugging Face) exactly while the rest keep ANE speed; the
+recompute builds `_lmT` only if a tie fires, and sampling stays on the ANE. When the head is tied to
+`embed` (GPT-2), the ANE program bakes a second copy of those weights. The default stays `False`,
+mainly because the head compiles on first use (0.4 s GPT-2, 1.8 s Qwen3-0.6B); `warmup(max_len)` moves
+that off the first token.
 
 ## Prefill and decode
 
@@ -174,4 +178,5 @@ Decoder LLMs that run today: dense Llama/Qwen (RMSNorm + RoPE + GQA + SwiGLU), *
 LayerNorm decoder, learned positions, tiled tied lm_head), sparse **Mixture-of-Experts**
 (Qwen3-MoE, Qwen2-MoE), and **hybrid** DeltaNet+attention (Qwen3.5). Runtime features: prefill + resident
 KV-cache decode, automatic segmentation past the ~2 GB program ceiling, int8/int4 weights, and exact
-speculative decoding. Static prompt length per compiled graph; the lm_head projection runs on host.
+speculative decoding. Static prompt length per compiled graph; the lm_head projection runs on host by
+default, or on the ANE with `ane_lm_head` (above).
