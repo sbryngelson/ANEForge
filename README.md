@@ -98,6 +98,24 @@ reranker, and LLM on one engine: `python3 examples/rag_chat.py`. For speech,
 towers -- audio encoder and text decoder -- on the ANE, matching Hugging Face's
 greedy transcript.
 
+## Run a Hub model on the Neural Engine
+
+ANEForge loads models straight from the Hugging Face Hub by repo id and compiles them for the ANE --
+no CoreML, no conversion step. The same pattern works across tasks:
+
+```python
+import aneforge as af
+from aneforge.sentence_transformers import SentenceTransformer
+
+emb = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2").encode(["hello"])  # embeddings
+txt = af.load_gpt2("gpt2").generate_text("The Neural Engine is", 20)                   # text generation
+lab = af.load_vit("google/vit-base-patch16-224").classify(image)                      # image classification
+asr = af.load_whisper("openai/whisper-base.en").transcribe(audio)                     # speech to text
+```
+
+Representative model duplicates tagged for ANEForge live under the
+[`aneforge`](https://huggingface.co/aneforge) org on the Hub.
+
 ## How it compares
 
 |                       | On the ANE        | No CoreML | Trains on it |
