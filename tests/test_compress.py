@@ -499,3 +499,85 @@ def test_blockwise_compress_none_unaffected(mkdir):
   af.compile(af.input((1, 128)) @ W, compress=None, build_dir=db).release()
   assert Path(da, "weights.bin").read_bytes() == Path(db, "weights.bin").read_bytes()
   assert Path(da, "model.mil").read_text() == Path(db, "model.mil").read_text()
+
+
+# CompressionFallbackWarning
+
+import warnings
+import aneforge as af
+
+
+def test_compress_int4_fallback_warns():
+  """compress='int4' that rejects weights emits CompressionFallbackWarning."""
+  rng = np.random.default_rng(42)
+  # random weights are hard to compress to 16 LUT levels: high rel error -> rejected
+  W = (rng.standard_normal((128, 128)) * 0.5).astype(np.float32)
+  em = _compile._Emitter(int8=False, compress="int4", compress_atol=1e-6)
+  em.weight("w", W.astype(np.float16), allow_int8=True, allow_int4=True)
+  with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    _compile._compression_fallback_signal(em)
+    hits = [x for x in w if issubclass(x.category, af.CompressionFallbackWarning)]
+    assert len(hits) == 1
+    msg = str(hits[0].message)
+    assert "compress='int4'" in msg
+    assert "1/1" in msg
+    assert "int4: 1" in msg
+    assert "applied int8" in msg
+
+
+def test_compress_int4_accepted_no_warning():
+  """compress='int4' that accepts all weights emits no warning."""
+  # constant weights compress perfectly to LUT
+  W = np.full((64, 64), 0.5, dtype=np.float16)
+  em = _compile._Emitter(int8=False, compress="int4", compress_atol=0.05)
+  em.weight("w", W, allow_int8=True, allow_int4=True)
+  with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    _compile._compression_fallback_signal(em)
+    assert not any(issubclass(x.category, af.CompressionFallbackWarning) for x in w)
+
+
+def test_compress_none_no_warning():
+  """compress=None emits no CompressionFallbackWarning."""
+  rng = np.random.default_rng(44)
+  W = (rng.standard_normal((64, 64)) * 0.5).astype(np.float16)
+  em = _compile._Emitter(int8=False, compress=None)
+  em.weight("w", W, allow_int8=True)
+  with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    _compile._compression_fallback_signal(em)
+    assert not any(issubclass(x.category, af.CompressionFallbackWarning) for x in w)
+
+
+def test_compress_warning_is_filterable():
+  """CompressionFallbackWarning can be silenced with filterwarnings."""
+  rng = np.random.default_rng(45)
+  W = (rng.standard_normal((128, 128)) * 0.5).astype(np.float32)
+  em = _compile._Emitter(int8=False, compress="int4", compress_atol=1e-6)
+  em.weight("w", W.astype(np.float16), allow_int8=True, allow_int4=True)
+  with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    warnings.filterwarnings("ignore", category=af.CompressionFallbackWarning)
+    _compile._compression_fallback_signal(em)
+    assert not any(issubclass(x.category, af.CompressionFallbackWarning) for x in w)
+
+
+def test_compress_mixed_accept_reject_counts():
+  """Warning reports correct counts when some weights accept and some reject int4."""
+  rng = np.random.default_rng(46)
+  # constant weight -> accepted by int4
+  W_good = np.full((64, 64), 0.5, dtype=np.float16)
+  # random weight -> rejected by int4
+  W_bad = (rng.standard_normal((64, 64)) * 0.5).astype(np.float32).astype(np.float16)
+  em = _compile._Emitter(int8=False, compress="int4", compress_atol=1e-6)
+  em.weight("good", W_good, allow_int8=True, allow_int4=True)
+  em.weight("bad", W_bad, allow_int8=True, allow_int4=True)
+  with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    _compile._compression_fallback_signal(em)
+    hits = [x for x in w if issubclass(x.category, af.CompressionFallbackWarning)]
+    assert len(hits) == 1
+    msg = str(hits[0].message)
+    assert "1/2" in msg
+    assert "int4: 1" in msg

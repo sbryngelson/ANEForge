@@ -22,7 +22,7 @@ from .graph import (Tensor, affine, batch_norm, batch_to_space, channel_to_space
                     space_to_channel, space_to_depth, split, sort, stack, topk,
                     upsample_bilinear, where)
 from ._compile import (Model, SegmentedModel, compile, PrecisionWarning,
-                       CrossChipFP16Warning, DispatchFloorWarning)
+                       CrossChipFP16Warning, DispatchFloorWarning, CompressionFallbackWarning)
 from ._paired import Paired, paired
 from ._optimize import tune, tune_precision, tune_attention, attention_tiles
 from ._cost import estimate, estimate_provenance, precision_risk, project_peak
@@ -39,7 +39,7 @@ from . import moe as moe   # registers the "moe" MLP + Qwen3-MoE adapter into th
 
 __all__ = [
     "Tensor", "Model", "SegmentedModel", "PrecisionWarning", "CrossChipFP16Warning",
-    "DispatchFloorWarning",
+    "DispatchFloorWarning", "CompressionFallbackWarning",
     "input", "image_input", "conv", "conv_transpose", "dynamic_conv", "concat",
     "batch_norm", "maximum", "minimum", "mha", "cross_attention", "geglu", "sdpa",
     "pixel_shuffle", "pixel_unshuffle", "topk", "sort", "cross_product",
