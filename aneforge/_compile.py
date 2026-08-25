@@ -1051,13 +1051,18 @@ class CompressionFallbackWarning(UserWarning):
 
 
 def _compression_fallback_signal(em: _Emitter) -> None:
-  """Warn if any requested-compression weights were rejected and fell through."""
-  if not em._n_rejected: return
+  """Warn if an explicit compress= rejected weights and fell through to a wider encoding.
+
+  Only fires for a single requested encoding. compress="auto" falls through by design
+  (it picks the best encoding per weight), and its multi-stream fallthrough would double-
+  count one weight across buckets -- so it is not a rejection worth reporting.
+  """
+  if not em._n_rejected or em.compress not in ("sparse", "int4", "blockwise"): return
   import warnings
   requested = em.compress
   total_rejected = sum(em._n_rejected.values())
   detail = ", ".join(f"{enc}: {n}" for enc, n in sorted(em._n_rejected.items()))
-  applied = "int8" if em.int8 or requested == "int4" else "fp16"
+  applied = "int8" if em.int8 or requested == "int4" else "fp16"   # summary; weights with allow_int8=False land on fp16
   msg = (f"aneforge.compile: compress={requested!r} rejected {total_rejected}/{em._n_weights} "
      f"weights ({detail}); applied {applied}. "
      f"To widen the tolerance, raise compress_atol (currently {em.compress_atol}). "

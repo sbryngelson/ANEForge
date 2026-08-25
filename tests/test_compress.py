@@ -581,3 +581,15 @@ def test_compress_mixed_accept_reject_counts():
     msg = str(hits[0].message)
     assert "1/2" in msg
     assert "int4: 1" in msg
+
+
+def test_compress_auto_no_warning():
+  """compress='auto' falls through by design, so it never warns (and never double-counts)."""
+  rng = np.random.default_rng(47)
+  W = (rng.standard_normal((128, 128)) * 0.5).astype(np.float32)   # neither sparse nor int4-clean
+  em = _compile._Emitter(int8=False, compress="auto", compress_atol=1e-6)
+  em.weight("w", W.astype(np.float16), allow_int8=True, allow_int4=True, allow_sparse=True)
+  with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    _compile._compression_fallback_signal(em)
+    assert not any(issubclass(x.category, af.CompressionFallbackWarning) for x in w)
