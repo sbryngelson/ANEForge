@@ -76,6 +76,8 @@ class _Emitter:
     self.blob = BlobWriter()
     self.lines: list[str] = []
     self._split_cache: dict = {}       # (src, num_splits, axis) -> emitted part names, so split is emitted once
+    self._n_weights = 0
+    self._n_rejected: dict[str, int] = {}   # encoding -> count of weights that fell through
 
   def line(self, text: str) -> None:
     self.lines.append("        " + text)
@@ -113,6 +115,7 @@ class _Emitter:
     """Declare a constant weight; precedence sparse -> int4-LUT -> per-channel int8 -> fp16."""
     path = '@model_path/weights.bin'
     W2 = W.reshape(W.shape[0], -1)
+    self._n_weights += 1
     _auto = self.compress == "auto"
     if (self.compress == "sparse" or (_auto and "sparse" in self._auto_streams)) and allow_sparse:
       mask, vals = sparsify(W2)
@@ -128,6 +131,7 @@ class _Emitter:
              f'nonzero_data = {name}_nz, mask = {name}_mask)[name = string("{name}")];')
         return name
       # else: fall through to int8/fp16
+      self._n_rejected["sparse"] = self._n_rejected.get("sparse", 0) + 1
     if (self.compress == "int4" or (_auto and "int4" in self._auto_streams)) \
         and allow_int4 and W2.shape[1] % 2 == 0:
       packed, lut = palettize_lut4(W2)
@@ -146,6 +150,7 @@ class _Emitter:
              f'indices = {name}_idx, lut = {name}_lut)[name = string("{name}")];')
         return name
       # else: fall through to int8/fp16
+      self._n_rejected["int4"] = self._n_rejected.get("int4", 0) + 1
     if self.compress == "blockwise" and allow_int8:
       data, scale, nblocks = quantize_blockwise(W2, self.block_size)
       if self._blockwise_rel_error(W2, data, scale, nblocks) <= self.compress_atol:
@@ -162,6 +167,7 @@ class _Emitter:
         self.line(f'{self.ty(W.shape)} {name} = add(x = {name}_bw, y = {name}_bz)[name = string("{name}")];')
         return name
       # else: fall through to int8/fp16
+      self._n_rejected["blockwise"] = self._n_rejected.get("blockwise", 0) + 1
     use_int8 = int8 if int8 is not None else (
       self.int8 or self.compress == "int4" or (_auto and "int8" in self._auto_streams))
     if use_int8 and allow_int8:
@@ -996,6 +1002,7 @@ def compile_multi(outs, build_dir=None, int8: bool = False, compress: str | None
   em = _Emitter(int8, compress=compress, compress_atol=compress_atol, block_size=block_size)
   for t in order:
     if t.op != "input": _EMIT[t.op](em, t, t._name, [src._name for src in t.srcs])
+  _compression_fallback_signal(em)
 
   out_vars = ", ".join(o._name for o in outs)
   d = _emit_program_dir(em, inputs, out_vars, None, build_dir)
@@ -1037,6 +1044,30 @@ def _dispatch_floor_signal(out: Tensor) -> None:
      "toward the compute rate) or chain more ops into one program (share_buffer keeps state "
      "resident). Silence: filter aneforge.DispatchFloorWarning.")
   warnings.warn(msg, DispatchFloorWarning, stacklevel=3)
+
+
+class CompressionFallbackWarning(UserWarning):
+  """Emitted by `compile` when `compress=` rejects weights and falls back to a wider encoding."""
+
+
+def _compression_fallback_signal(em: _Emitter) -> None:
+  """Warn if an explicit compress= rejected weights and fell through to a wider encoding.
+
+  Only fires for a single requested encoding. compress="auto" falls through by design
+  (it picks the best encoding per weight), and its multi-stream fallthrough would double-
+  count one weight across buckets -- so it is not a rejection worth reporting.
+  """
+  if not em._n_rejected or em.compress not in ("sparse", "int4", "blockwise"): return
+  import warnings
+  requested = em.compress
+  total_rejected = sum(em._n_rejected.values())
+  detail = ", ".join(f"{enc}: {n}" for enc, n in sorted(em._n_rejected.items()))
+  applied = "int8" if em.int8 or requested == "int4" else "fp16"   # summary; weights with allow_int8=False land on fp16
+  msg = (f"aneforge.compile: compress={requested!r} rejected {total_rejected}/{em._n_weights} "
+     f"weights ({detail}); applied {applied}. "
+     f"To widen the tolerance, raise compress_atol (currently {em.compress_atol}). "
+     "Silence: filter aneforge.CompressionFallbackWarning.")
+  warnings.warn(msg, CompressionFallbackWarning, stacklevel=3)
 
 
 def _precision_signal(out: Tensor, strict: bool) -> None:
@@ -1340,6 +1371,7 @@ def compile(out: Tensor, int8: bool = False, build_dir=None, opt: "str | int | N
   em = _Emitter(int8, compress=compress, compress_atol=compress_atol, block_size=block_size, family=family)
   for t in order:
     if t.op != "input": _EMIT[t.op](em, t, t._name, [src._name for src in t.srcs])
+  _compression_fallback_signal(em)
 
   prog = _assemble_and_compile(em, inputs, out._name, out.shape, build_dir)
   n_ops = sum(1 for t in order if t.op != "input")
@@ -1650,6 +1682,7 @@ def _compile_segmented(out: Tensor, int8: bool, build_dir,
     emit_order, inputs_r = _subgraph(target, source_ids)
     em = _Emitter(int8, compress=compress, compress_atol=compress_atol, block_size=block_size, family=family)
     for t in emit_order: _EMIT[t.op](em, t, t._name, [s._name for s in t.srcs])
+    _compression_fallback_signal(em)
     out_var = target._name  # captured post-emit (bias-adding emitters rename in place)
     prog = _assemble_and_compile(em, inputs_r, out_var, target.shape, None)
     stages.append({"kind": "region", "prog": prog, "tid": id(target), "out_var": out_var,
