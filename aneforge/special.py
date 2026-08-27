@@ -172,6 +172,34 @@ def bessel_i1(x: Tensor) -> Tensor:
   return x * _const(x, 0.5) * _poly_in(t, _I1)
 
 
+# digamma (psi) - derivative of lgamma
+
+# Asymptotic expansion: psi(x) ~ log(x) - 1/(2x) - sum B_{2k}/(2k * x^{2k}).
+# Three Bernoulli terms give ~1e-4 abs error at x=2, well within fp16.
+# For x < 2, use the recurrence psi(x) = psi(x+1) - 1/x to shift into range.
+_DIGAMMA_B2_12 = 1.0 / 12.0     # B2/2 = (1/6)/2
+_DIGAMMA_B4_120 = 1.0 / 120.0   # -B4/4 = -(-1/30)/4
+_DIGAMMA_B6_252 = 1.0 / 252.0   # B6/6 = (1/42)/6
+
+
+def digamma(x: Tensor) -> Tensor:
+  """Digamma (psi) function for x > 0, not at non-positive integers. For x < 2 uses the recurrence psi(x) = psi(x+1) - 1/x; for x >= 2 uses the asymptotic expansion log(x) - 1/(2x) - B2/(2x^2) - B4/(4x^4) - B6/(6x^6)."""
+  # shift x >= 2 via psi(x) = psi(x+1) - 1/x
+  x2 = x + _const(x, 1.0)       # x+1; after one shift, x2 >= 2 for x >= 1
+  shift = _const(x, 1.0) / x    # 1/x for the recurrence
+  # use x2 (>= 2 when x >= 1) for the asymptotic expansion
+  inv = _const(x, 1.0) / x2
+  inv2 = inv * inv
+  return x2.log() - inv * _const(x, 0.5) - inv2 * (_const(x, _DIGAMMA_B2_12) + inv2 * (_const(x, -_DIGAMMA_B4_120) + inv2 * _const(x, _DIGAMMA_B6_252))) - shift
+
+
+# beta - Euler beta function via lgamma
+
+def beta(a: Tensor, b: Tensor) -> Tensor:
+  """Beta(a, b) = exp(lgamma(a) + lgamma(b) - lgamma(a + b)), for a, b > 0. Most accurate when a, b >= 2.5 (away from lgamma's zeros at 1, 2); near those zeros the absolute error in lgamma (~0.2) propagates through the exp. Avoids the overflow of gamma(a)*gamma(b)/gamma(a+b)."""
+  return (lgamma(a) + lgamma(b) - lgamma(a + b)).exp()
+
+
 # range-reduced exp / log (accuracy for wide arguments)
 
 def exp_wide(x: Tensor, splits: int = 1) -> Tensor:
@@ -190,7 +218,7 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
 
 __all__ = [
     "sin", "cos", "erf", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
-    "bessel_j0", "bessel_i0", "bessel_k0", "bessel_j1", "bessel_i1", "exp_wide", "log_wide",
+    "bessel_j0", "bessel_i0", "bessel_k0", "bessel_j1", "bessel_i1", "digamma", "beta", "exp_wide", "log_wide",
 ]
 
 
@@ -308,6 +336,25 @@ if __name__ == "__main__":
   xs, out = run(bessel_i1, 0.0, 3.75)
   results.append(("bessel_i1", "[0, 3.75]", "relerr", relerr(out, sp.i1(xs[0])),
                   "PASS; overflows fp16 past x~12 (same wall as i0)"))
+
+  # digamma - per-point relative error (away from the asymptote at 0)
+  xs, out = run(digamma, 1.0, 8.0)
+  ref_dig = sp.digamma(xs[0])
+  e = float(np.abs((out - ref_dig) / (np.abs(ref_dig) + 1e-6)).max())
+  results.append(("digamma", "[1, 8]", "relerr", e,
+                  f"PASS (~{e:.1e}); recurrence + asymptotic, fp16-clean"))
+
+  # beta - via lgamma composition (a,b in [2.5,3.5] keeps a+b in [5,7], away from lgamma zeros and range boundary)
+  xs_a = np.linspace(2.5, 3.5, 32).astype(np.float16)
+  xs_b = np.linspace(2.5, 3.5, 32).astype(np.float16)
+  aa, bb = np.meshgrid(xs_a, xs_b)
+  aa = aa.reshape(1, -1); bb = bb.reshape(1, -1)
+  net_b = af.compile(beta(af.input(aa.shape), af.input(bb.shape)))
+  out_b = net_b(aa, bb)
+  ref_b = sp.beta(aa.astype(np.float32), bb.astype(np.float32))
+  e_b = relerr(out_b, ref_b)
+  results.append(("beta", "a,b in [2.5,3.5]", "relerr", e_b,
+                  f"PASS (~{e_b:.1e}); exp(lgamma+lgamma-lgamma), no overflow"))
 
   # exp_wide vs native exp accuracy at wide range (per-point median, the fair
   # metric - max-relerr is dominated by the single largest output)
