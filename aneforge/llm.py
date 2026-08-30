@@ -644,6 +644,9 @@ def _weights_from_state_dict(sd, cfg: LlamaConfig) -> dict:
       "mlp_norm": sd[p + "post_attention_layernorm.weight"]}
     if p + "self_attn.q_norm.weight" in sd:         # Qwen3 QK-norm
       lw["q_norm"] = sd[p + "self_attn.q_norm.weight"]; lw["k_norm"] = sd[p + "self_attn.k_norm.weight"]
+    for proj, key in (("q_proj", "q_bias"), ("k_proj", "k_bias"), ("v_proj", "v_bias"), ("o_proj", "o_bias")):
+      b = sd.get(p + f"self_attn.{proj}.bias")       # Qwen2/2.5 carry q/k/v proj biases; Llama/Mistral do not
+      if b is not None: lw[key] = b
     w["layers"].append(lw)
   return w
 
