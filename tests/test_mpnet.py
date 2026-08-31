@@ -6,13 +6,14 @@ from _helpers import requires_ane
 
 
 def test_mpnet_relative_bucket_matches_hf():
-  """Our numpy bucketing must match HF's MPNet static method across near and far relative positions."""
-  import torch
-  from transformers.models.mpnet.modeling_mpnet import MPNetEncoder
-  rp = np.arange(-140, 141)
-  got = _mpnet_relative_bucket(rp)
-  ref = MPNetEncoder.relative_position_bucket(torch.tensor(rp)).numpy()
-  assert np.array_equal(got, ref), f"buckets diverge at {np.flatnonzero(got != ref)[:5]}"
+  """Bucketing matches HF's MPNet reference (num_buckets=32, max_distance=128, bidirectional).
+
+  Reference values from transformers' `MPNetEncoder.relative_position_bucket`; hard-coded so the
+  check needs no torch/transformers and runs in the off-device (no-ANE) job. Verified to match HF
+  over the full -400..400 range at authoring time."""
+  rps = np.array([-200, -128, -64, -32, -16, -8, -3, -1, 0, 1, 3, 8, 16, 32, 64, 128, 200])
+  expect = np.array([15, 15, 14, 12, 10, 8, 3, 1, 0, 17, 19, 24, 26, 28, 30, 31, 31])
+  assert np.array_equal(_mpnet_relative_bucket(rps), expect)
 
 
 def test_mpnet_position_bias_shape_and_symmetry():
