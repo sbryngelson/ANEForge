@@ -541,3 +541,69 @@ def test_polar_rectangular(m, n):
 def test_polar_rejects():
   with pytest.raises(ValueError): L.polar(np.zeros(4, f16))              # not 2-D
   with pytest.raises(ValueError): L.polar(np.zeros((2, 2, 2), f16))
+# ----------------------------- matrix_rank / cond ----------------------------- #
+
+def test_matrix_rank_full_rank():
+  A = f16(_square(8, 1e1, 90))
+  assert L.matrix_rank(A) == 8
+
+
+def test_matrix_rank_deficient():
+  # rank-1 matrix (outer product) -> clear gap in singular values
+  r = np.random.default_rng(91)
+  v = r.standard_normal(8).astype(f16)
+  A = np.outer(v, v)  # rank 1, sigma_1 >> sigma_2..8 = 0 (in fp16 noise)
+  assert L.matrix_rank(A) == 1
+
+
+def test_matrix_rank_zero():
+  assert L.matrix_rank(np.zeros((5, 5), f16)) == 0
+
+
+def test_matrix_rank_matches_numpy():
+  A = f16(_square(8, 1e1, 92))
+  assert L.matrix_rank(A) == np.linalg.matrix_rank(A.astype(np.float64))
+
+
+def test_matrix_rank_custom_tol():
+  A = f16(_square(8, 1e1, 93))
+  # very high tol -> low rank
+  assert L.matrix_rank(A, tol=100.0) == 0
+  # zero tol -> full rank
+  assert L.matrix_rank(A, tol=0.0) == 8
+
+
+def test_matrix_rank_rejects():
+  with pytest.raises(ValueError): L.matrix_rank(np.zeros(4, f16))         # not 2-D
+  with pytest.raises(ValueError): L.matrix_rank(np.zeros((2, 2, 2), f16))
+
+
+def test_cond_well_conditioned():
+  A = f16(_square(8, 3.0, 94))
+  c = L.cond(A)
+  ref = np.linalg.cond(A.astype(np.float64))
+  assert abs(c - ref) / ref <= 5e-2
+
+
+def test_cond_matches_numpy():
+  # cond~1e2 is at the fp16 SVD floor: sigma_min can round to 0, giving inf.
+  # Use cond~5 (well within fp16 range) for the oracle comparison.
+  for cond_target in (2.0, 5.0):
+    A = f16(_square(8, cond_target, int(cond_target * 10) + 95))
+    c = L.cond(A)
+    ref = np.linalg.cond(A.astype(np.float64))
+    assert abs(c - ref) / ref <= 5e-2, f"cond={c} vs numpy={ref}"
+
+
+def test_cond_singular():
+  # zero matrix -> inf
+  assert L.cond(np.zeros((4, 4), f16)) == float("inf")
+  # rank-deficient -> inf (fp16 outer product has tiny but nonzero trailing sv,
+  # but a literal zero column makes it exactly singular)
+  A = f16(np.array([[1.0, 0.0], [0.0, 0.0]]))
+  assert L.cond(A) == float("inf")
+
+
+def test_cond_rejects():
+  with pytest.raises(ValueError): L.cond(np.zeros(4, f16))               # not 2-D
+  with pytest.raises(ValueError): L.cond(np.zeros((2, 2, 2), f16))
