@@ -176,18 +176,20 @@ def bessel_i1(x: Tensor) -> Tensor:
 
 # Asymptotic expansion: psi(x) ~ log(x) - 1/(2x) - sum B_{2k}/(2k * x^{2k}).
 # Three Bernoulli terms give ~1e-4 abs error at x=2, well within fp16.
-# For x < 2, use the recurrence psi(x) = psi(x+1) - 1/x to shift into range.
+# Shift by one via the exact recurrence psi(x) = psi(x+1) - 1/x, then apply
+# the asymptotic expansion at x+1. For 0 < x < 1 the -1/x term dominates and
+# the result is still accurate.
 _DIGAMMA_B2_12 = 1.0 / 12.0     # B2/2 = (1/6)/2
 _DIGAMMA_B4_120 = 1.0 / 120.0   # -B4/4 = -(-1/30)/4
 _DIGAMMA_B6_252 = 1.0 / 252.0   # B6/6 = (1/42)/6
 
 
 def digamma(x: Tensor) -> Tensor:
-  """Digamma (psi) function for x > 0, not at non-positive integers. For x < 2 uses the recurrence psi(x) = psi(x+1) - 1/x; for x >= 2 uses the asymptotic expansion log(x) - 1/(2x) - B2/(2x^2) - B4/(4x^4) - B6/(6x^6)."""
-  # shift x >= 2 via psi(x) = psi(x+1) - 1/x
-  x2 = x + _const(x, 1.0)       # x+1; after one shift, x2 >= 2 for x >= 1
-  shift = _const(x, 1.0) / x    # 1/x for the recurrence
-  # use x2 (>= 2 when x >= 1) for the asymptotic expansion
+  """Digamma (psi) function for x > 0. Shifts by one via the exact recurrence psi(x) = psi(x+1) - 1/x, then applies the asymptotic expansion log(x+1) - 1/(2(x+1)) - B2/(2*(x+1)^2) - B4/(4*(x+1)^4) - B6/(6*(x+1)^6). For 0 < x < 1 the -1/x term dominates and the result is still accurate."""
+  # shift x by one via psi(x) = psi(x+1) - 1/x
+  x2 = x + _const(x, 1.0)       # x+1; for x >= 1 this puts x2 in the asymptotic range
+  shift = _const(x, 1.0) / x    # 1/x term from the recurrence
+  # asymptotic expansion at x2 = x+1
   inv = _const(x, 1.0) / x2
   inv2 = inv * inv
   return x2.log() - inv * _const(x, 0.5) - inv2 * (_const(x, _DIGAMMA_B2_12) + inv2 * (_const(x, -_DIGAMMA_B4_120) + inv2 * _const(x, _DIGAMMA_B6_252))) - shift
