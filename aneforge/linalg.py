@@ -529,6 +529,7 @@ __all__ = [
   "eigh", "eigvals", "generalized_eigh", "dominant_eig",
   "svd", "dominant_svd", "svdvals_topk", "randomized_svd", "pca",
   "kron",
+  "polar",
 ]
 
 
@@ -791,6 +792,24 @@ def matrix_power(A, n: int):
   return np.asarray(acc, np.float32)
 
 
+def polar(A):
+  """Polar decomposition A = U @ P, on the ANE.
+
+  U is orthogonal (or semi-orthogonal for wide A), P is symmetric positive-semidefinite.
+  Composed from the on-ANE SVD: U_ S V^T -> U = U_ V^T, P = V diag(S) V^T.
+  Oracle: scipy.linalg.polar(A, side='right')."""
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2: raise ValueError(f"polar: expected 2-D; got shape {A16.shape}")
+  m, n = A16.shape
+  U_svd, S, Vt = randomized_svd(A16, k=min(m, n), oversample=5, power_iters=2)
+  V = Vt.T.astype(f16)
+  Umat = _ane_gemm(U_svd.astype(f16), Vt)                        # U_ @ V^T -> [m,n]
+  # P = V diag(S) V^T  via V @ diag(S) @ V^T, but stays symmetric PSD
+  Sdiag = np.diag(S).astype(f16)
+  P = _ane_gemm(_ane_gemm(V, Sdiag), Vt)                         # V diag(S) V^T -> [n,n]
+  return np.asarray(Umat, np.float32), np.asarray(P, np.float32)
+
+
 def main():
   print("=" * 90)
   print("aneforge.linalg - ITERATIVE linear algebra on the ANE  (matmuls=ANE, RNG/QR/SVD/loop=HOST)")
@@ -901,6 +920,22 @@ def main():
   host_flops = m3 * l * l + l * n3 * min(l, n3)                 # QR + small SVD
   print(f"  FLOP split: ANE matmuls ~{ane_flops/1e6:.1f} MFLOP  vs  host QR/SVD ~{host_flops/1e6:.2f} MFLOP "
         f"(~{ane_flops/host_flops:.0f}x on ANE)")
+  print()
+
+  # ---------------- polar decomposition ------------------------------- #
+  print("-" * 90)
+  print("POLAR DECOMPOSITION  (A = U P, U orthogonal, P SPD)  -  vs scipy.linalg.polar")
+  print("-" * 90)
+  scipy_linalg = __import__("scipy.linalg")
+  for n in (6, 8):
+    A_pol = _make_spd(n, 1e1, 80 + n)[0]
+    U, P = polar(A_pol)
+    ref_U, ref_P = scipy_linalg.polar(A_pol, side="right")
+    recon_err = _relerr(U @ P, A_pol)
+    orth_err = _relerr(U.T @ U, np.eye(n))
+    spd_err = _relerr(P, ref_P)
+    print(f"  n={n}:  recon relerr={recon_err:.3e}  U^T U ~ I relerr={orth_err:.3e}  "
+          f"P vs scipy relerr={spd_err:.3e}")
   print()
 
   # ---------------- verdict ---------------------------------------------- #

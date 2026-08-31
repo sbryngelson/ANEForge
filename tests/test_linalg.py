@@ -492,3 +492,41 @@ def test_kron():
     max_err = max(max_err, err)
     assert np.allclose(got16, ref16, atol=5e-4, rtol=0), f"kron({m},{n},{p},{q}) max abs err {err}"
   assert max_err <= 5e-4
+# ----------------------------- polar decomposition ----------------------------- #
+
+@pytest.mark.parametrize("n", [6, 8])
+def test_polar_reconstruction(n):
+  A = f16(_square(n, 1e1, 100 + n))
+  U, P = L.polar(A)
+  assert relerr(U @ P, A) <= 5e-2, f"polar recon: relerr {relerr(U @ P, A)}"
+
+
+@pytest.mark.parametrize("n", [6, 8])
+def test_polar_orthogonality(n):
+  A = f16(_square(n, 1e1, 110 + n))
+  U, _ = L.polar(A)
+  assert relerr(U.T @ U, np.eye(n)) <= 5e-2, f"U^T U ~ I: relerr {relerr(U.T @ U, np.eye(n))}"
+
+
+@pytest.mark.parametrize("n", [6, 8])
+def test_polar_psd(n):
+  A = f16(_square(n, 1e1, 120 + n))
+  _, P = L.polar(A)
+  # P should be symmetric (fp16 randomized SVD introduces ~1e-4 asymmetry)
+  assert relerr(P, P.T) <= 1e-3, f"P not symmetric: relerr {relerr(P, P.T)}"
+  # P should be PSD (all eigenvalues >= 0)
+  eig = np.linalg.eigvalsh(P)
+  assert eig.min() >= -1e-3, f"P has negative eigenvalue: {eig.min()}"
+
+
+def test_polar_matches_scipy():
+  scipy_linalg = pytest.importorskip("scipy.linalg")
+  A = f16(_square(8, 1e1, 130))
+  U, P = L.polar(A)
+  ref_U, ref_P = scipy_linalg.polar(A, side="right")
+  assert relerr(P, ref_P) <= 5e-2, f"P vs scipy: relerr {relerr(P, ref_P)}"
+
+
+def test_polar_rejects():
+  with pytest.raises(ValueError): L.polar(np.zeros(4, f16))              # not 2-D
+  with pytest.raises(ValueError): L.polar(np.zeros((2, 2, 2), f16))
