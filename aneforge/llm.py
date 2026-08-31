@@ -269,6 +269,8 @@ class LlamaPrefill:
     self.cfg = cfg; self.w = weights; self._net = None; self._seq = 0; self._dec = None; self._pre = None
     self.compress = compress       # None=fp16, or "int8"/"int4"/"blockwise" to quantize the ANE weights
     self._chunk_bytes = 1.6e9      # max fp16 weight bytes per decode program (under the ~2GB ANE ceiling)
+    self._chunk_max_layers = 24    # max layers per decode program: deep small-dim models stay under the byte
+                                   # cap but hit an op-count ceiling (~31 layers, e.g. SmolLM2's 32) -> rc=-1
     self._lmT = None               # cached contiguous fp32 lm_head^T (host matmul); built on first use
     self.ane_lm_head = ane_lm_head  # run lm_head on the ANE (tiled compile_multi) instead of host matmul
     self._lmh: dict | None = None  # cached ANE lm_head program (built once, shape-independent of max_len)
@@ -421,12 +423,13 @@ class LlamaPrefill:
     return self._logits(self._hidden(token_ids)[-1])[None]
 
   def _layer_chunks(self):
-    """Group layers into contiguous chunks whose baked weights stay under the ANE single-program ceiling
-    (~2GB; measured ~1.5GB OK, ~3.4GB fails). int8/int4 weights are smaller, so more layers fit per chunk."""
+    """Group layers into contiguous chunks under two ANE single-program ceilings: baked weight bytes
+    (~2GB; measured ~1.5GB OK, ~3.4GB fails; int8/int4 are smaller, so more layers fit) and an op-count
+    ceiling that a deep small-dim model hits well under the byte cap (`_chunk_max_layers`)."""
     per = sum(int(np.asarray(v).size) for v in self.w["layers"][0].values() if isinstance(v, (np.ndarray, list, tuple))) * 2   # fp16 bytes / layer
     if self.compress in ("int8", "blockwise"): per //= 2
     elif self.compress == "int4": per //= 4
-    n = max(1, min(self.cfg.n_layers, int(self._chunk_bytes // max(per, 1))))
+    n = max(1, min(self.cfg.n_layers, self._chunk_max_layers, int(self._chunk_bytes // max(per, 1))))
     return [range(i, min(i + n, self.cfg.n_layers)) for i in range(0, self.cfg.n_layers, n)]
 
   def _decoder(self, M):
