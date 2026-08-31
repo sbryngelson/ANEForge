@@ -38,8 +38,9 @@ _RESNETS: dict[int, tuple[str, tuple[int, int, int, int]]] = {
 def load_resnet(name_or_depth: int | str = 18, int8: bool = False, compress: str | None = None,
                 compress_atol: float = 0.05, build_dir: str | None = None,
                 weights: str = "IMAGENET1K_V1") -> "Vision":
-  """Load a torchvision ResNet (18/34/50/101, ImageNet) as a fused ANE classifier; BatchNorm folded
-  into the preceding conv at load. `name_or_depth` takes 50, "50" or "resnet50"."""
+  """Load a ResNet as a fused ANE classifier; BatchNorm folded into the preceding conv at load.
+  `name_or_depth` takes a torchvision depth (50, "50", "resnet50" -> 18/34/50/101 ImageNet weights)
+  or a Hugging Face ResNet repo id (contains "/", e.g. "microsoft/resnet-50")."""
   return Vision(name_or_depth, int8=int8, compress=compress, compress_atol=compress_atol,
                 build_dir=build_dir, weights=weights)
 
@@ -59,15 +60,60 @@ def _resnet_depth(name_or_depth: int | str) -> int:
   return int(s)
 
 
+def _hf_resnet_to_tv(hf: dict, layer_type: str, depths) -> tuple[dict, str, list[int]]:
+  """Remap a HF ResNet state_dict (numpy arrays) into torchvision key names -- a pure rename.
+
+  HF's ResNet is architecturally identical to torchvision's, so only the names differ: the stem is
+  `embedder.embedder`, each block is `encoder.stages.{s}.layers.{l}` with conv+BN sub-layers under
+  `layer.{0..}` (and a `shortcut` projection), and the head is `classifier.1`. Rewriting these to
+  conv1/bn1, layerX.i.conv{1,2,3}/bn{1,2,3}, downsample.0/1 and fc lets `Vision._build` run unchanged."""
+  block = "bottleneck" if layer_type == "bottleneck" else "basic"
+  convs = (("conv1", "bn1"), ("conv2", "bn2"), ("conv3", "bn3")) if block == "bottleneck" else (("conv1", "bn1"), ("conv2", "bn2"))
+  sd: dict = {}
+
+  def bn(dst: str, src: str) -> None:
+    for s in ("weight", "bias", "running_mean", "running_var"):
+      sd[f"{dst}.{s}"] = hf[f"{src}.{s}"]
+
+  sd["conv1.weight"] = hf["resnet.embedder.embedder.convolution.weight"]
+  bn("bn1", "resnet.embedder.embedder.normalization")
+  for s, n in enumerate(depths):
+    for li in range(n):
+      hp, tp = f"resnet.encoder.stages.{s}.layers.{li}", f"layer{s + 1}.{li}"
+      for hi, (tc, tb) in enumerate(convs):
+        sd[f"{tp}.{tc}.weight"] = hf[f"{hp}.layer.{hi}.convolution.weight"]
+        bn(f"{tp}.{tb}", f"{hp}.layer.{hi}.normalization")
+      if f"{hp}.shortcut.convolution.weight" in hf:
+        sd[f"{tp}.downsample.0.weight"] = hf[f"{hp}.shortcut.convolution.weight"]
+        bn(f"{tp}.downsample.1", f"{hp}.shortcut.normalization")
+  sd["fc.weight"], sd["fc.bias"] = hf["classifier.1.weight"], hf["classifier.1.bias"]
+  return sd, block, list(depths)
+
+
+def _load_hf_resnet(name: str) -> tuple[dict, str, list[int]]:
+  """Load a Hugging Face ResNet checkpoint (e.g. microsoft/resnet-50) as a torchvision-named state_dict."""
+  from transformers import AutoConfig, AutoModelForImageClassification  # lazy
+  cfg = AutoConfig.from_pretrained(name)
+  if getattr(cfg, "model_type", None) != "resnet":
+    raise ValueError(f"load_resnet: {name!r} is not a ResNet (model_type={getattr(cfg, 'model_type', None)!r})")
+  hf = {k: v.detach().numpy().astype(np.float32)
+        for k, v in AutoModelForImageClassification.from_pretrained(name).state_dict().items()}
+  return _hf_resnet_to_tv(hf, cfg.layer_type, cfg.depths)
+
+
 class Vision:
   def __init__(self, name_or_depth: int | str = 18, int8: bool = False, compress: str | None = None,
                compress_atol: float = 0.05, build_dir: str | None = None,
                weights: str = "IMAGENET1K_V1") -> None:
-    import torchvision  # lazy
-    self.depth = _resnet_depth(name_or_depth)
-    self.block, self.stages = _RESNETS[self.depth]
-    m = getattr(torchvision.models, f"resnet{self.depth}")(weights=weights).eval()
-    self.sd = {k: v.detach().numpy().astype(np.float32) for k, v in m.state_dict().items()}
+    if isinstance(name_or_depth, str) and "/" in name_or_depth:   # a Hugging Face repo id, not a depth
+      self.depth = None
+      self.sd, self.block, self.stages = _load_hf_resnet(name_or_depth)
+    else:
+      import torchvision  # lazy
+      self.depth = _resnet_depth(name_or_depth)
+      self.block, self.stages = _RESNETS[self.depth]
+      m = getattr(torchvision.models, f"resnet{self.depth}")(weights=weights).eval()
+      self.sd = {k: v.detach().numpy().astype(np.float32) for k, v in m.state_dict().items()}
     self.int8 = int8
     self.compress = compress
     self.compress_atol = compress_atol
