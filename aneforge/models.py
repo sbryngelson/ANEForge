@@ -161,6 +161,35 @@ _DISTILBERT_KEYS = {
   "ln2w": "output_layer_norm.weight", "ln2b": "output_layer_norm.bias",
 }
 
+_MPNET_KEYS = {
+  "Wq": "attention.attn.q.weight", "bq": "attention.attn.q.bias",
+  "Wk": "attention.attn.k.weight", "bk": "attention.attn.k.bias",
+  "Wv": "attention.attn.v.weight", "bv": "attention.attn.v.bias",
+  "Wo": "attention.attn.o.weight", "bo": "attention.attn.o.bias",
+  "ln1w": "attention.LayerNorm.weight", "ln1b": "attention.LayerNorm.bias",
+  "Wi": "intermediate.dense.weight", "bi": "intermediate.dense.bias",
+  "Wd": "output.dense.weight", "bd": "output.dense.bias",
+  "ln2w": "output.LayerNorm.weight", "ln2b": "output.LayerNorm.bias",
+}
+
+
+def _mpnet_relative_bucket(rp: np.ndarray, num_buckets: int = 32, max_distance: int = 128) -> np.ndarray:
+  """MPNet's bidirectional T5-style relative-position bucketing (numpy port of HF's static method)."""
+  n = -rp
+  nb = num_buckets // 2
+  ret = (n < 0).astype(np.int64) * nb
+  n = np.abs(n)
+  max_exact = nb // 2
+  large = max_exact + (np.log(np.maximum(n, 1) / max_exact) / np.log(max_distance / max_exact) * (nb - max_exact)).astype(np.int64)
+  return ret + np.where(n < max_exact, n, np.minimum(large, nb - 1))
+
+
+def _mpnet_position_bias(rel_bias: np.ndarray, S: int, num_buckets: int = 32) -> np.ndarray:
+  """Additive attention bias [H, S, S] from MPNet's relative_attention_bias table [num_buckets, H]."""
+  rp = np.arange(S)[None, :] - np.arange(S)[:, None]              # memory - context
+  vals = rel_bias[_mpnet_relative_bucket(rp, num_buckets)]        # [S, S, H]
+  return np.transpose(vals, (2, 0, 1)).astype(np.float32)         # [H, S, S]
+
 
 def _encoder_layer_spec(model_type: str) -> tuple[str, dict[str, str]]:
   """Return the layer prefix and weight-key map for a supported encoder family."""
@@ -183,17 +212,25 @@ class Encoder:
     g = lambda k: sd[k].detach().numpy().astype(np.float32)
     self.D, self.H = cfg.hidden_size, cfg.num_attention_heads
     self.L, self.eps, self.int8 = cfg.num_hidden_layers, cfg.layer_norm_eps, int8
+    mpnet = cfg.model_type == "mpnet"
+    keys = _MPNET_KEYS if mpnet else _BERT_KEYS
     self.word = g("embeddings.word_embeddings.weight")
     self.pos = g("embeddings.position_embeddings.weight")
-    self.typ = g("embeddings.token_type_embeddings.weight")
+    self.typ = g("embeddings.token_type_embeddings.weight") if "embeddings.token_type_embeddings.weight" in sd else None
     self.eln_w, self.eln_b = g("embeddings.LayerNorm.weight"), g("embeddings.LayerNorm.bias")
-    self.layers = [{k: g(f"encoder.layer.{i}." + v) for k, v in _BERT_KEYS.items()}
+    self.layers = [{k: g(f"encoder.layer.{i}." + v) for k, v in keys.items()}
                    for i in range(self.L)]
+    # MPNet adds a T5-style relative-position bias to the attention scores and offsets positions by pad_id+1.
+    self.rel_bias = g("encoder.relative_attention_bias.weight") if mpnet else None
+    self.n_buckets = int(getattr(cfg, "relative_attention_num_buckets", 32))
+    self.pos_offset = int(cfg.pad_token_id) + 1 if mpnet else 0
+    self._bias_cache: dict[int, np.ndarray] = {}
     self._cache: dict[int, Model | SegmentedModel] = {}
 
   def _build(self, S: int) -> Model | SegmentedModel:
     h = input((S, self.D))
-    m = input((1, S, S))                     # additive key-padding mask: 0 on real keys, -1e4 on padded ones
+    mh = self.H if self.rel_bias is not None else 1   # MPNet folds a per-head relative bias into the mask
+    m = input((mh, S, S))                    # additive key-padding mask: 0 on real keys, -1e4 on padded ones
     for w in self.layers:
       attn = mha(h, w["Wq"], w["bq"], w["Wk"], w["bk"], w["Wv"], w["bv"], w["Wo"], w["bo"], self.H, mask=m)
       h = (h + attn).layer_norm(w["ln1w"], w["ln1b"], self.eps)
@@ -203,7 +240,8 @@ class Encoder:
 
   def _embed(self, ids: np.ndarray) -> np.ndarray:
     """Host-side token + position + type embedding lookup, then LayerNorm."""  # gather is not an ANE op
-    e = self.word[ids] + self.pos[np.arange(len(ids))] + self.typ[0]
+    e = self.word[ids] + self.pos[self.pos_offset + np.arange(len(ids))]
+    if self.typ is not None: e = e + self.typ[0]         # MPNet has no token-type embedding
     m = e.mean(-1, keepdims=True)
     v = ((e - m) ** 2).mean(-1, keepdims=True)
     return ((e - m) / np.sqrt(v + self.eps) * self.eln_w + self.eln_b).astype(np.float32)
@@ -221,6 +259,10 @@ class Encoder:
       n = len(ids)
       padded = np.full(S, pad_id, dtype=np.int64); padded[:n] = ids
       mask = np.zeros((1, S, S), dtype=np.float32); mask[0, :, n:] = -1e4   # mask the padded key columns
+      if self.rel_bias is not None:                       # MPNet: add the per-head relative-position bias
+        if S not in self._bias_cache:
+          self._bias_cache[S] = _mpnet_position_bias(self.rel_bias, S, self.n_buckets)
+        mask = mask + self._bias_cache[S]
       states = net(self._embed(padded), mask)[:n]  # real-token states on the ANE (pads masked + dropped)
       if self.pooling == "cls":
         v = states[0]
