@@ -154,6 +154,24 @@ def bessel_k0(x: Tensor) -> Tensor:
   return half.log() * (i0 * -1.0) + _poly_in(t_k0, _K0)
 
 
+# J1, |x| <= 3 : poly in t = (x/3)^2, then * x/2  (A&S 9.4.3)
+_J1 = [1.0, -1.1249997, 0.4218748, -0.07910028, 0.008895087, -0.0006614990, 0.00003119]
+# I1, |x| <= 3.75 : poly in t = (x/3.75)^2, then * x/2  (A&S 9.8.3)
+_I1 = [1.0, 1.7578121, 1.0299743, 0.30171059, 0.053153772, 0.0060476948, 0.00064291520]
+
+
+def bessel_j1(x: Tensor) -> Tensor:
+  """Bessel J1(x) for |x| <= 3 (A&S 9.4.3): x/2 * poly((x/3)^2)."""
+  t = (x * x) * (1.0 / 9.0)
+  return x * _const(x, 0.5) * _poly_in(t, _J1)
+
+
+def bessel_i1(x: Tensor) -> Tensor:
+  """Modified Bessel I1(x) for |x| <= 3.75 (A&S 9.8.3): x/2 * poly((x/3.75)^2). Overflows fp16 past x~12."""
+  t = (x * x) * (1.0 / (3.75 * 3.75))
+  return x * _const(x, 0.5) * _poly_in(t, _I1)
+
+
 # range-reduced exp / log (accuracy for wide arguments)
 
 def exp_wide(x: Tensor, splits: int = 1) -> Tensor:
@@ -172,7 +190,7 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
 
 __all__ = [
     "sin", "cos", "erf", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
-    "bessel_j0", "bessel_i0", "bessel_k0", "exp_wide", "log_wide",
+    "bessel_j0", "bessel_i0", "bessel_k0", "bessel_j1", "bessel_i1", "exp_wide", "log_wide",
 ]
 
 
@@ -280,6 +298,16 @@ if __name__ == "__main__":
   xs, out = run(bessel_k0, 0.1, 2.0)
   results.append(("bessel_k0", "(0, 2]", "relerr", relerr(out, sp.k0(xs[0])),
                   "PASS; -ln singularity at 0 (x must be > 0)"))
+
+  # Bessel J1
+  xs, out = run(bessel_j1, 0.0, 3.0)
+  results.append(("bessel_j1", "[0, 3]", "relerr", relerr(out, sp.j1(xs[0])),
+                  "PASS; first zero (3.832) outside range; odd x*poly form"))
+
+  # Bessel I1
+  xs, out = run(bessel_i1, 0.0, 3.75)
+  results.append(("bessel_i1", "[0, 3.75]", "relerr", relerr(out, sp.i1(xs[0])),
+                  "PASS; overflows fp16 past x~12 (same wall as i0)"))
 
   # exp_wide vs native exp accuracy at wide range (per-point median, the fair
   # metric - max-relerr is dominated by the single largest output)
