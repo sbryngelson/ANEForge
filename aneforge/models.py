@@ -266,10 +266,12 @@ class Encoder:
     self.eln_w, self.eln_b = g("embeddings.LayerNorm.weight"), g("embeddings.LayerNorm.bias")
     self.layers = [{k: g(f"encoder.layer.{i}." + v) for k, v in keys.items()}
                    for i in range(self.L)]
-    # MPNet adds a T5-style relative-position bias to the attention scores and offsets positions by pad_id+1.
+    # MPNet adds a T5-style relative-position bias to the attention scores; MPNet and the RoBERTa family
+    # count positions from pad_id+1 (HF create_position_ids_from_input_ids), unlike BERT's 0-based.
     self.rel_bias = g("encoder.relative_attention_bias.weight") if mpnet else None
     self.n_buckets = int(getattr(cfg, "relative_attention_num_buckets", 32))
-    self.pos_offset = int(cfg.pad_token_id) + 1 if mpnet else 0
+    offset_pos = cfg.model_type in ("mpnet", "roberta", "xlm-roberta", "camembert")
+    self.pos_offset = int(cfg.pad_token_id) + 1 if offset_pos else 0
     self._bias_cache: dict[int, np.ndarray] = {}
     self._cache: dict[int, Model | SegmentedModel] = {}
 
