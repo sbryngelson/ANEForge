@@ -1465,3 +1465,58 @@ def test_negative_axis_matches_positive_equivalent():
     a, b = _neg_axis_pair(mk, feeds, neg, pos)
     assert a.shape == b.shape, f"{label}: axis {neg} shape {a.shape} != axis {pos} shape {b.shape}"
     assert np.allclose(a, b, atol=1e-3), f"{label}: axis {neg} output differs from axis {pos}"
+
+
+# -- hyperbolic ops, MeanVarianceNormalization, Hardmax --------------------- #
+
+def test_hyperbolic_ops_build():
+  for op, want in [("Sinh", "muls"), ("Cosh", "muls"), ("Asinh", "log"), ("Acosh", "log"), ("Atanh", "muls")]:
+    m = _model([helper.make_node(op, ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
+    _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4) and out.op == want, f"{op} -> {out.op}"
+
+def test_mvn_build():
+  m = _model([helper.make_node("MeanVarianceNormalization", ["x"], ["y"])], [_vi("x", [1, 3, 4, 4])], [_vi("y", [1, 3, 4, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3, 4, 4) and out.op == "real_div"
+  m = _model([helper.make_node("MeanVarianceNormalization", ["x"], ["y"], axes=[0, 1])], [_vi("x", [1, 3, 4, 4])], [_vi("y", [1, 3, 4, 4])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (1, 3, 4, 4) and out.op == "real_div"
+
+def test_hardmax_build():
+  m = _model([helper.make_node("Hardmax", ["x"], ["y"], axis=-1)], [_vi("x", [2, 3])], [_vi("y", [2, 3])])
+  _, out = af.onnx_to_tensor(m); assert out.shape == (2, 3) and out.op == "select"
+  m = _model([helper.make_node("Hardmax", ["x"], ["y"], axis=-1)], [_vi("x", [2, 3, 4])], [_vi("y", [2, 3, 4])])
+  with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
+
+@requires_ane
+def test_mvn_numeric():
+  pytest.importorskip("onnxruntime")
+  rng = np.random.default_rng(40); x = rng.standard_normal((1, 3, 4, 4)).astype(np.float32)
+  m = _model([helper.make_node("MeanVarianceNormalization", ["x"], ["y"])], [_vi("x", [1, 3, 4, 4])], [_vi("y", [1, 3, 4, 4])])
+  got, ref = _run_vs_ort(m, x)
+  assert np.abs(got - ref).max() < 1e-2
+
+@requires_ane
+def test_hardmax_numeric():
+  pytest.importorskip("onnxruntime")
+  x = np.array([[1.0, 1.0, 0.5, 0.2, 0.2], [0.1, 0.3, 0.3, 0.1, 0.1], [0.0, 0.0, 1.0, 0.0, 1.0]], np.float32)
+  m = _model([helper.make_node("Hardmax", ["x"], ["y"], axis=-1)], [_vi("x", [3, 5])], [_vi("y", [3, 5])])
+  got, ref = _run_vs_ort(m, x)
+  assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-3
+  m = _model([helper.make_node("Hardmax", ["x"], ["y"], axis=0)], [_vi("x", [3, 5])], [_vi("y", [3, 5])])
+  got, ref = _run_vs_ort(m, x)
+  assert got.shape == ref.shape and np.abs(got - ref).max() < 1e-3
+
+@requires_ane
+def test_hyperbolic_numeric():
+  pytest.importorskip("onnxruntime")
+  cases = [
+    ("Sinh", np.linspace(-10.0, 10.0, 16, dtype=np.float32).reshape(1, 16), 5e-3),
+    ("Cosh", np.linspace(-10.0, 10.0, 16, dtype=np.float32).reshape(1, 16), 5e-3),
+    ("Asinh", np.linspace(-10.0, 10.0, 16, dtype=np.float32).reshape(1, 16), 3e-2),
+    ("Acosh", np.linspace(1.0001, 10.0, 16, dtype=np.float32).reshape(1, 16), 5e-3),
+    ("Atanh", np.linspace(-0.99, 0.99, 16, dtype=np.float32).reshape(1, 16), 6e-3),
+  ]
+  for op, x, tol in cases:
+    m = _model([helper.make_node(op, ["x"], ["y"])], [_vi("x", list(x.shape))], [_vi("y", list(x.shape))])
+    got, ref = _run_vs_ort(m, x)
+    err = np.abs(got - ref).max() / (np.abs(ref).max() + 1e-6)
+    assert err < tol, f"{op}: relerr {err:.2e}"

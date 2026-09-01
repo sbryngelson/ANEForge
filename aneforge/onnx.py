@@ -289,6 +289,31 @@ def _sign(node, ins, a, i): return ins[0].sign()
 def _sin(node, ins, a, i): return ins[0].sin()
 @onnx_op("Cos")
 def _cos(node, ins, a, i): return ins[0].cos()
+@onnx_op("Sinh")
+def _sinh(node, ins, a, i):
+  if _isc(ins[0]): return np.sinh(np.asarray(ins[0]))
+  from . import special as _special
+  return _special.sinh(ins[0])
+@onnx_op("Cosh")
+def _cosh(node, ins, a, i):
+  if _isc(ins[0]): return np.cosh(np.asarray(ins[0]))
+  from . import special as _special
+  return _special.cosh(ins[0])
+@onnx_op("Asinh")
+def _asinh(node, ins, a, i):
+  if _isc(ins[0]): return np.arcsinh(np.asarray(ins[0]))
+  from . import special as _special
+  return _special.asinh(ins[0])
+@onnx_op("Acosh")
+def _acosh(node, ins, a, i):
+  if _isc(ins[0]): return np.arccosh(np.asarray(ins[0]))
+  from . import special as _special
+  return _special.acosh(ins[0])
+@onnx_op("Atanh")
+def _atanh(node, ins, a, i):
+  if _isc(ins[0]): return np.arctanh(np.asarray(ins[0]))
+  from . import special as _special
+  return _special.atanh(ins[0])
 @onnx_op("Softplus")
 def _softplus(node, ins, a, i): return ins[0].softplus()
 @onnx_op("Floor")
@@ -858,6 +883,44 @@ def _logsoftmax(node, ins, a, i):
   """log_softmax = x - logsumexp(x, axis): the native stable reduce, where log(softmax(x)) underflows fp16."""
   x = ins[0]; ax = int(a.get("axis", -1)) % len(x.shape)
   return x - x.reduce_log_sum_exp((ax,))
+@onnx_op("MeanVarianceNormalization")
+def _mvn(node, ins, a, i):
+  """MeanVarianceNormalization: (x - mean) / sqrt(var + 1e-9) over `axes` (default [0,2,3])."""
+  x = ins[0]
+  if _isc(x):
+    x = np.asarray(x)
+    axes = tuple(int(v) % x.ndim for v in a.get("axes", [0, 2, 3]))
+    mean = x.mean(axis=axes, keepdims=True)
+    var = (x * x).mean(axis=axes, keepdims=True) - mean * mean
+    return (x - mean) / np.sqrt(var + 1e-9)
+  axes = tuple(int(v) % len(x.shape) for v in a.get("axes", [0, 2, 3]))
+  mean = x.mean(axes)
+  var = (x * x).mean(axes) - mean * mean
+  return (x - mean) / var.adds(1e-9).sqrt()
+@onnx_op("Hardmax")
+def _hardmax(node, ins, a, i):
+  """Hardmax: one-hot of the argmax (lowest index on ties); 2D [C,W] only, axis in {-2,-1,0,1}."""
+  x = ins[0]
+  if _isc(x):
+    x = np.asarray(x)
+    if x.ndim != 2: raise NotImplementedError("ONNX Hardmax: only 2D [C, W] inputs supported on the ANE")
+    ax = int(a.get("axis", -1)) % 2
+    idx = np.argmax(x, axis=ax)
+    out = np.zeros_like(x)
+    np.put_along_axis(out, np.expand_dims(idx, ax), 1.0, ax)
+    return out
+  if len(x.shape) != 2: raise NotImplementedError("ONNX Hardmax: only 2D [C, W] inputs supported on the ANE")
+  ax = int(a.get("axis", -1)) % 2
+  from .graph import select as _select
+  idx = x.argmax(ax).squeeze(ax)
+  r = len(idx.shape); pos = ax % (r + 1)
+  xe = idx.expand_dims((pos,))
+  depth = x.shape[ax]
+  rng_shape = [1] * (r + 1); rng_shape[pos] = depth
+  rng = _baked(np.arange(depth, dtype=np.float16).reshape(rng_shape))
+  out_shape = tuple(depth if k == pos else d for k, d in enumerate(xe.shape))
+  on = _baked(np.ones(out_shape, np.float16)); off = _baked(np.zeros(out_shape, np.float16))
+  return _select(xe.equal(rng), on, off)
 @onnx_op("Constant")
 def _const(node, ins, a, i):
   from onnx import numpy_helper

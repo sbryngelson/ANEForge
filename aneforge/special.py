@@ -218,8 +218,36 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
   return r.log() * float(1 << sqrts)
 
 
+# hyperbolic trig
+
+def sinh(x: Tensor) -> Tensor:
+  """sinh(x) for |x| <= ~10; overflows fp16 near ln(65504) ~ 11 (same wall as softplus)."""
+  return (x.exp() - (x * -1.0).exp()) * 0.5
+
+
+def cosh(x: Tensor) -> Tensor:
+  """cosh(x) for |x| <= ~10; overflows fp16 near ln(65504) ~ 11 (same wall as softplus)."""
+  return (x.exp() + (x * -1.0).exp()) * 0.5
+
+
+def asinh(x: Tensor) -> Tensor:
+  """asinh(x) for |x| <= ~10; domain is all real x, but fp16 overflows for large |x|."""
+  return (x + (x * x).adds(1.0).sqrt()).log()
+
+
+def acosh(x: Tensor) -> Tensor:
+  """acosh(x) for x >= 1; fp16 overflows for large x."""
+  return (x + (x * x).adds(-1.0).sqrt()).log()
+
+
+def atanh(x: Tensor) -> Tensor:
+  """atanh(x) for |x| < 1; singular at |x| == 1."""
+  return ((x.adds(1.0)) / (x * -1.0).adds(1.0)).log() * 0.5
+
+
 __all__ = [
-    "sin", "cos", "erf", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
+    "sin", "cos", "sinh", "cosh", "asinh", "acosh", "atanh",
+    "erf", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
     "bessel_j0", "bessel_i0", "bessel_k0", "bessel_j1", "bessel_i1", "digamma", "beta", "exp_wide", "log_wide",
 ]
 
