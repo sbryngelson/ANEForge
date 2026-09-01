@@ -475,3 +475,20 @@ def test_lstsq_rejects():
   with pytest.raises(ValueError): L.lstsq(np.zeros(4, f16), np.zeros(4, f16))          # not 2-D
   with pytest.raises(ValueError): L.lstsq(np.zeros((10, 4), f16), np.zeros(9, f16))    # b rows != m
   with pytest.raises(np.linalg.LinAlgError): L.lstsq(np.zeros((10, 4), f16), np.zeros(10, f16))
+
+
+def test_kron():
+  r = np.random.default_rng(0)
+  max_err = 0.0
+  for m, n, p, q in [(2, 3, 4, 5), (3, 2, 2, 4)]:
+    A16 = r.standard_normal((m, n)).astype(np.float16)
+    B16 = r.standard_normal((p, q)).astype(np.float16)
+    got = L.kron(A16, B16)
+    ref = np.kron(A16.astype(np.float64), B16.astype(np.float64))
+    assert got.shape == (m * p, n * q)
+    got16 = got.astype(np.float16)
+    ref16 = ref.astype(np.float16)
+    err = np.abs(got16.astype(np.float64) - ref16.astype(np.float64)).max()
+    max_err = max(max_err, err)
+    assert np.allclose(got16, ref16, atol=5e-4, rtol=0), f"kron({m},{n},{p},{q}) max abs err {err}"
+  assert max_err <= 5e-4
