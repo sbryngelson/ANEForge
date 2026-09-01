@@ -804,10 +804,11 @@ def polar(A):
   U_svd, S, Vt = randomized_svd(A16, k=min(m, n), oversample=5, power_iters=2)
   V = Vt.T.astype(f16)
   Umat = _ane_gemm(U_svd.astype(f16), Vt)                        # U_ @ V^T -> [m,n]
-  # P = V diag(S) V^T  via V @ diag(S) @ V^T, but stays symmetric PSD
   Sdiag = np.diag(S).astype(f16)
-  P = _ane_gemm(_ane_gemm(V, Sdiag), Vt)                         # V diag(S) V^T -> [n,n]
-  return np.asarray(Umat, np.float32), np.asarray(P, np.float32)
+  Pmat = _ane_gemm(_ane_gemm(V, Sdiag), Vt)                      # V diag(S) V^T -> [n,n]
+  P = np.asarray(Pmat, np.float32)
+  P = 0.5 * (P + P.T)                                            # fp16 GEMMs leave ~1e-4 asymmetry; sym kills it
+  return np.asarray(Umat, np.float32), P
 
 
 def main():
@@ -926,11 +927,11 @@ def main():
   print("-" * 90)
   print("POLAR DECOMPOSITION  (A = U P, U orthogonal, P SPD)  -  vs scipy.linalg.polar")
   print("-" * 90)
-  scipy_linalg = __import__("scipy.linalg")
+  import scipy.linalg
   for n in (6, 8):
     A_pol = _make_spd(n, 1e1, 80 + n)[0]
     U, P = polar(A_pol)
-    ref_U, ref_P = scipy_linalg.polar(A_pol, side="right")
+    ref_P = scipy.linalg.polar(A_pol, side="right")[1]
     recon_err = _relerr(U @ P, A_pol)
     orth_err = _relerr(U.T @ U, np.eye(n))
     spd_err = _relerr(P, ref_P)
