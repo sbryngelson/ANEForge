@@ -289,6 +289,14 @@ def rfft(x_real, N: int):
   return rfft_plan(N)(x_real, None)
 
 
+def irfft(X_re, X_im, N: int):
+  """Inverse real FFT of a Hermitian-symmetric spectrum on the ANE; returns the real time-domain
+  signal of length N (the imag part is ~0 by Hermitian symmetry, and numpy.fft.irfft also
+  returns only the real part)."""
+  x_re, _ = ifft_plan(N)(X_re, X_im)
+  return x_re
+
+
 def fft2(x_re, x_im=None):
   """2-D FFT of an [M,N] complex field on the ANE (x_im=None means a real field); returns (X_re, X_im)."""
   x_re = np.asarray(x_re)
@@ -314,7 +322,7 @@ def power(X_re, X_im):
 
 
 __all__ = [
-    "fft", "ifft", "rfft", "fft2", "ifft2", "magnitude", "power",
+    "fft", "ifft", "rfft", "irfft", "fft2", "ifft2", "magnitude", "power",
     "Plan", "Plan2", "fft_plan", "ifft_plan", "rfft_plan", "fft2_plan", "ifft2_plan",
 ]
 
@@ -394,6 +402,18 @@ def _selftest():
   rt_err = _relerr(br + 1j * bi, xr + 1j * xi)
   print(f"ifft  N={N}: round-trip fft->ifft relerr {rt_err:.3e}")
   all_ok &= (rfft_err < 0.02 and rt_err < 0.05)
+
+  # ---- irfft round-trip + numpy oracle ----
+  for N in (128, 512):
+    sig = rng.standard_normal(N).astype(np.float32)
+    Xr, Xi = rfft(sig, N)
+    back = irfft(Xr, Xi, N)
+    rt_err = _relerr(back, sig)
+    # numpy oracle:the half spectrum X[:N//2+1] is the same array numpy.fft.rfft produces
+    ref = np.fft.irfft(np.asarray(Xr, np.float32)[: N // 2 + 1] + 1j * np.asarray(Xi, np.float32)[: N // 2 + 1], n=N)
+    np_err = _relerr(back, ref)
+    print(f"irfft N={N}: rfft->irfft round-trip {rt_err:.3e}   vs numpy.irfft {np_err:.3e}")
+    all_ok &= (rt_err < 0.05 and np_err < 0.05)
 
   # ---- complexity / accuracy verdict ----
   print("\n" + "=" * 110)
