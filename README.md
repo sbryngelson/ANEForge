@@ -111,11 +111,14 @@ from aneforge.sentence_transformers import SentenceTransformer
 emb = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2").encode(["hello"])  # embeddings
 txt = af.load_gpt2("gpt2").generate_text("The Neural Engine is", 20)                   # text generation
 lab = af.load_vit("google/vit-base-patch16-224").classify(image)                      # image classification
+cls = af.load_resnet("microsoft/resnet-50")(pixels)                                   # image classification (ResNet)
 asr = af.load_whisper("openai/whisper-base.en").transcribe(audio)                     # speech to text
 ```
 
-Representative model duplicates tagged for ANEForge live under the
-[`aneforge`](https://huggingface.co/aneforge) org on the Hub.
+Model duplicates tagged for ANEForge live under the
+[`aneforge`](https://huggingface.co/aneforge) org on the Hub -- embedders
+(BERT/RoBERTa/MPNet), vision (ViT, ResNet), Whisper, and decoder LLMs -- each
+with a "Use this model" button that loads it onto the engine.
 
 ## How it compares
 
