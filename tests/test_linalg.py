@@ -548,16 +548,26 @@ def test_matrix_rank_full_rank():
   assert L.matrix_rank(A) == 8
 
 
-def test_matrix_rank_deficient():
-  # rank-1 matrix (outer product) -> clear gap in singular values
-  r = np.random.default_rng(91)
-  v = r.standard_normal(8).astype(f16)
-  A = np.outer(v, v)  # rank 1, sigma_1 >> sigma_2..8 = 0 (in fp16 noise)
-  assert L.matrix_rank(A) == 1
+@pytest.mark.parametrize("n,rank", [(6, 2), (6, 3), (8, 3)])
+def test_matrix_rank_deficient(n, rank):
+  """Duplicated rows are exactly rank-deficient in fp16, so the true rank is unambiguous.
+
+  np.outer(v, v) is NOT: rounding the outer product to fp16 makes it genuinely full rank, and
+  np.linalg.matrix_rank on the same array agrees (8, not 1)."""
+  base = np.random.default_rng(7).standard_normal((rank, n)).astype(f16)
+  A = np.asarray(np.vstack([base] + [base[i % rank] for i in range(n - rank)]), f16)
+  assert np.linalg.matrix_rank(A.astype(np.float64)) == rank, "test input is not exactly rank-deficient"
+  assert L.matrix_rank(A) == rank
 
 
 def test_matrix_rank_zero():
   assert L.matrix_rank(np.zeros((5, 5), f16)) == 0
+
+
+def test_matrix_rank_full_rank_ill_conditioned():
+  """cond=1e3 is full rank, not rank-deficient: the default tol must not eat sigma_min."""
+  A = f16(_square(8, 1e3, 96))
+  assert L.matrix_rank(A) == 8
 
 
 def test_matrix_rank_matches_numpy():
@@ -585,14 +595,13 @@ def test_cond_well_conditioned():
   assert abs(c - ref) / ref <= 5e-2
 
 
-def test_cond_matches_numpy():
-  # cond~1e2 is at the fp16 SVD floor: sigma_min can round to 0, giving inf.
-  # Use cond~5 (well within fp16 range) for the oracle comparison.
-  for cond_target in (2.0, 5.0):
-    A = f16(_square(8, cond_target, int(cond_target * 10) + 95))
-    c = L.cond(A)
-    ref = np.linalg.cond(A.astype(np.float64))
-    assert abs(c - ref) / ref <= 5e-2, f"cond={c} vs numpy={ref}"
+@pytest.mark.parametrize("cond_target", [2.0, 5.0, 1e1, 1e2, 1e3])
+def test_cond_matches_numpy(cond_target):
+  """Through cond~1e3. The Gram+Jacobi svd() path silently returned 2.03 here for a true 99.79."""
+  A = f16(_square(8, cond_target, int(cond_target * 10) + 95))
+  c = L.cond(A)
+  ref = np.linalg.cond(A.astype(np.float64))
+  assert abs(c - ref) / ref <= 5e-2, f"cond={c} vs numpy={ref}"
 
 
 def test_cond_singular():

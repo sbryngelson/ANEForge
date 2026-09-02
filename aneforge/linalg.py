@@ -818,30 +818,49 @@ def polar(A):
   P = np.asarray(Pmat, np.float32)
   P = 0.5 * (P + P.T)                                            # fp16 GEMMs leave ~1e-4 asymmetry; sym kills it
   return np.asarray(Umat, np.float32), P
+# Rank and conditioning both hinge on the SMALLEST singular values, which is exactly where the
+# pure-ANE svd() (Gram matrix + fp16 cyclic-Jacobi eigh) is weakest: on an exactly rank-deficient
+# matrix it leaves the null space at 1e-2..1e-1 of sigma_max, indistinguishable from a real
+# singular value, and no tolerance or sweep count separates them (more sweeps make it worse).
+# The sketch path keeps its matmuls on the ANE but does the QR and the small SVD on the host in
+# float64, which puts that null space at ~1e-5 instead -- a usable gap.  Measured, n=6..8:
+#   exactly rank-3 input   svd() trailing 1.1e-1 / 5.7e-2      randomized_svd() trailing 1.2e-5
+#   cond(A) = 99.8         svd() says 2.03 (silently wrong)    randomized_svd() says 99.81
+_RANK_FLOOR = 1e-5  # measured trailing-sv floor of the sketch path on fp16 input; NOT a machine eps
+
+
+def _svals(A16):
+  """Singular values of A (descending) via the sketch path: ANE matmuls, host float64 QR/SVD."""
+  return randomized_svd(A16, k=min(A16.shape), oversample=5, power_iters=2)[1]
+
+
 def matrix_rank(A, tol=None):
   """Numerical rank of A by counting singular values above `tol`, on the ANE.
 
-  Default `tol` follows numpy: max(m, n) * float32_eps * sigma_max.  Returns 0 for
-  a zero matrix (no positive singular values).  Oracle: np.linalg.matrix_rank."""
+  Default `tol` is max(m, n) * 1e-5 * sigma_max, mirroring numpy's max(m, n) * eps * sigma_max but
+  with the measured floor of this backend in place of a machine epsilon -- the input is fp16, so
+  nothing here resolves a singular value below ~1e-5 of sigma_max.  Pass `tol` explicitly if you
+  know your spectrum.  Returns 0 for a zero matrix.  Oracle: np.linalg.matrix_rank."""
   A16 = np.asarray(A, f16)
   if A16.ndim != 2: raise ValueError(f"matrix_rank: expected 2-D; got shape {A16.shape}")
   m, n = A16.shape
-  S = svd(A16)                                        # descending, float32
+  S = _svals(A16)
   if S.size == 0: return 0
   if tol is None:
-    tol = max(m, n) * np.finfo(np.float32).eps * float(S[0])
+    tol = max(m, n) * _RANK_FLOOR * float(S[0])
   return int(np.sum(S > tol))
 
 
 def cond(A):
   """2-norm condition number sigma_max / sigma_min via SVD, on the ANE.
 
-  Works for square and rectangular A.  Returns inf for a zero matrix.
+  Works for square and rectangular A.  Accurate to cond ~1e3, past which the fp16 input itself
+  stops resolving sigma_min.  Returns inf for a zero or exactly singular matrix.
   Oracle: np.linalg.cond(A)."""
   A16 = np.asarray(A, f16)
   if A16.ndim != 2: raise ValueError(f"cond: expected 2-D; got shape {A16.shape}")
-  S = svd(A16)
-  if S.size == 0 or float(S[-1]) == 0.0: return float("inf")
+  S = _svals(A16)
+  if S.size == 0 or float(S[-1]) <= 0.0: return float("inf")
   return float(S[0]) / float(S[-1])
 
 
