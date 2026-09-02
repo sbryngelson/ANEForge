@@ -528,6 +528,7 @@ __all__ = [
   "qr", "cholesky", "lu", "lu_pivoted", "solve", "solve_triangular", "inv", "lstsq", "expm",
   "eigh", "eigvals", "generalized_eigh", "dominant_eig",
   "svd", "dominant_svd", "svdvals_topk", "randomized_svd", "pca",
+  "kron",
 ]
 
 
@@ -717,6 +718,23 @@ def norm(A, order="fro"):
   v = float(np.ravel(np.asarray(net(A16), np.float64))[0])
   net.release()
   return v
+
+
+def kron(A, B):
+  """Kronecker product A (x) B by broadcast-multiply of expanded views; result [m*p, n*q]."""
+  A16 = np.asarray(A, f16); B16 = np.asarray(B, f16)
+  if A16.ndim != 2 or B16.ndim != 2:
+    raise ValueError(f"linalg.kron: expected 2-D matrices; got {A16.shape} and {B16.shape}")
+  m, n = A16.shape; p, q = B16.shape
+  At = af.input((m, n)); Bt = af.input((p, q))
+  A4 = At.expand_dims((1, 3))
+  B4 = Bt.expand_dims((0, 2))
+  C = A4 * B4
+  out = C.reshape(m * p, n * q)
+  net = af.compile(out, _check_precision=False)
+  Y = net(A16, B16)
+  net.release()
+  return np.asarray(Y, np.float32)
 
 
 def expm(A, order: int = 8):
