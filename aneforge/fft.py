@@ -292,7 +292,10 @@ def rfft(x_real, N: int):
 def irfft(X_re, X_im, N: int):
   """Inverse real FFT of a Hermitian-symmetric spectrum on the ANE; returns the real time-domain
   signal of length N (the imag part is ~0 by Hermitian symmetry, and numpy.fft.irfft also
-  returns only the real part)."""
+  returns only the real part).
+
+  Takes the FULL length-N spectrum, as `rfft` returns it -- not the N//2+1 half spectrum that
+  numpy.fft.irfft expects."""
   x_re, _ = ifft_plan(N)(X_re, X_im)
   return x_re
 
