@@ -535,6 +535,13 @@ __all__ = [
 
 # __main__ - self-test / validation vs numpy/scipy
 
+def _general_square(n, cond, seed):
+  """A general (non-symmetric) n x n matrix with the target condition number: U diag(s) V^T."""
+  rng = np.random.default_rng(seed)
+  U = np.linalg.qr(rng.standard_normal((n, n)))[0]; V = np.linalg.qr(rng.standard_normal((n, n)))[0]
+  return (U * np.geomspace(1.0, cond, n)) @ V.T
+
+
 def _make_spd(n, cond, seed):
   """SPD A with target condition number, fp16-stored (reference solves the fp16-rounded system)."""
   rng = np.random.default_rng(seed)
@@ -795,7 +802,8 @@ def matrix_power(A, n: int):
 def polar(A):
   """Polar decomposition A = U @ P, on the ANE.
 
-  U is orthogonal (or semi-orthogonal for wide A), P is symmetric positive-semidefinite.
+  U is orthogonal for square A and semi-orthogonal for either rectangular shape (U^T U = I for
+  tall A, U U^T = I for wide A); P is symmetric positive-semidefinite [n,n].
   Composed from the on-ANE SVD: U_ S V^T -> U = U_ V^T, P = V diag(S) V^T.
   Oracle: scipy.linalg.polar(A, side='right')."""
   A16 = np.asarray(A, f16)
@@ -929,7 +937,8 @@ def main():
   print("-" * 90)
   import scipy.linalg
   for n in (6, 8):
-    A_pol = _make_spd(n, 1e1, 80 + n)[0]
+    # a GENERAL matrix: for symmetric positive-definite input polar is the trivial case (U = I, P = A)
+    A_pol = f16(_general_square(n, 1e1, 80 + n))
     U, P = polar(A_pol)
     ref_P = scipy.linalg.polar(A_pol, side="right")[1]
     recon_err = _relerr(U @ P, A_pol)

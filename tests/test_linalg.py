@@ -527,6 +527,17 @@ def test_polar_matches_scipy():
   assert relerr(P, ref_P) <= 5e-2, f"P vs scipy: relerr {relerr(P, ref_P)}"
 
 
+@pytest.mark.parametrize("m,n", [(8, 5), (5, 8)])
+def test_polar_rectangular(m, n):
+  """Both rectangular shapes: U is [m,n] semi-orthogonal, P is [n,n], and U P reconstructs A."""
+  A = np.asarray(np.random.default_rng(3).standard_normal((m, n)), f16)
+  U, P = L.polar(A)
+  assert U.shape == (m, n) and P.shape == (n, n)
+  assert relerr(U @ P, A) <= 5e-2, f"polar recon [{m},{n}]: relerr {relerr(U @ P, A)}"
+  I = U.T @ U if m >= n else U @ U.T
+  assert relerr(I, np.eye(I.shape[0])) <= 5e-2, f"U not semi-orthogonal: relerr {relerr(I, np.eye(I.shape[0]))}"
+
+
 def test_polar_rejects():
   with pytest.raises(ValueError): L.polar(np.zeros(4, f16))              # not 2-D
   with pytest.raises(ValueError): L.polar(np.zeros((2, 2, 2), f16))
