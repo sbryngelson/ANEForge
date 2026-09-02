@@ -895,8 +895,9 @@ def _mvn(node, ins, a, i):
     return (x - mean) / np.sqrt(var + 1e-9)
   axes = tuple(int(v) % len(x.shape) for v in a.get("axes", [0, 2, 3]))
   mean = x.mean(axes)
-  var = (x * x).mean(axes) - mean * mean
-  return (x - mean) / var.adds(1e-9).sqrt()
+  d = x - mean
+  var = (d * d).mean(axes)                   # two-pass: E[x^2]-E[x]^2 cancels to <=0 in fp16 once mean >> std
+  return d / var.adds(1e-4).sqrt()           # eps below fp16's min normal (6.1e-5) flushes to zero on the ANE
 @onnx_op("Hardmax")
 def _hardmax(node, ins, a, i):
   """Hardmax: one-hot of the argmax (lowest index on ties); 2D [C,W] only, axis in {-2,-1,0,1}."""

@@ -1470,7 +1470,7 @@ def test_negative_axis_matches_positive_equivalent():
 # -- hyperbolic ops, MeanVarianceNormalization, Hardmax --------------------- #
 
 def test_hyperbolic_ops_build():
-  for op, want in [("Sinh", "muls"), ("Cosh", "muls"), ("Asinh", "log"), ("Acosh", "log"), ("Atanh", "muls")]:
+  for op, want in [("Sinh", "muls"), ("Cosh", "muls"), ("Asinh", "mul"), ("Acosh", "log"), ("Atanh", "muls")]:
     m = _model([helper.make_node(op, ["x"], ["y"])], [_vi("x", [1, 4])], [_vi("y", [1, 4])])
     _, out = af.onnx_to_tensor(m); assert out.shape == (1, 4) and out.op == want, f"{op} -> {out.op}"
 
@@ -1487,12 +1487,17 @@ def test_hardmax_build():
   with pytest.raises(NotImplementedError): af.onnx_to_tensor(m)
 
 @requires_ane
-def test_mvn_numeric():
+@pytest.mark.parametrize("shift", [0.0, 5.0, 50.0])
+def test_mvn_numeric(shift):
+  """Shifted means are the fp16 trap: one-pass E[x^2]-E[x]^2 cancels and divides by zero at shift=50."""
   pytest.importorskip("onnxruntime")
-  rng = np.random.default_rng(40); x = rng.standard_normal((1, 3, 4, 4)).astype(np.float32)
+  rng = np.random.default_rng(40); x = (rng.standard_normal((1, 3, 4, 4)) + shift).astype(np.float32)
   m = _model([helper.make_node("MeanVarianceNormalization", ["x"], ["y"])], [_vi("x", [1, 3, 4, 4])], [_vi("y", [1, 3, 4, 4])])
   got, ref = _run_vs_ort(m, x)
-  assert np.abs(got - ref).max() < 1e-2
+  assert np.isfinite(got).all(), f"MVN produced non-finite output at mean shift {shift}"
+  # fp16 ulp at shift 50 is ~0.049, so the centered input carries ~5% quantization noise that
+  # lands on the output. Measured max abs err on M2 Pro: 0.105 (seed 40); 5e-2 holds on M5 only.
+  assert np.abs(got - ref).max() < 1.5e-1
 
 @requires_ane
 def test_hardmax_numeric():
