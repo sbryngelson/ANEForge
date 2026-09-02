@@ -529,10 +529,18 @@ __all__ = [
   "eigh", "eigvals", "generalized_eigh", "dominant_eig",
   "svd", "dominant_svd", "svdvals_topk", "randomized_svd", "pca",
   "kron",
+  "polar",
 ]
 
 
 # __main__ - self-test / validation vs numpy/scipy
+
+def _general_square(n, cond, seed):
+  """A general (non-symmetric) n x n matrix with the target condition number: U diag(s) V^T."""
+  rng = np.random.default_rng(seed)
+  U = np.linalg.qr(rng.standard_normal((n, n)))[0]; V = np.linalg.qr(rng.standard_normal((n, n)))[0]
+  return (U * np.geomspace(1.0, cond, n)) @ V.T
+
 
 def _make_spd(n, cond, seed):
   """SPD A with target condition number, fp16-stored (reference solves the fp16-rounded system)."""
@@ -791,6 +799,26 @@ def matrix_power(A, n: int):
   return np.asarray(acc, np.float32)
 
 
+def polar(A):
+  """Polar decomposition A = U @ P, on the ANE.
+
+  U is orthogonal for square A and semi-orthogonal for either rectangular shape (U^T U = I for
+  tall A, U U^T = I for wide A); P is symmetric positive-semidefinite [n,n].
+  Composed from the on-ANE SVD: U_ S V^T -> U = U_ V^T, P = V diag(S) V^T.
+  Oracle: scipy.linalg.polar(A, side='right')."""
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2: raise ValueError(f"polar: expected 2-D; got shape {A16.shape}")
+  m, n = A16.shape
+  U_svd, S, Vt = randomized_svd(A16, k=min(m, n), oversample=5, power_iters=2)
+  V = Vt.T.astype(f16)
+  Umat = _ane_gemm(U_svd.astype(f16), Vt)                        # U_ @ V^T -> [m,n]
+  Sdiag = np.diag(S).astype(f16)
+  Pmat = _ane_gemm(_ane_gemm(V, Sdiag), Vt)                      # V diag(S) V^T -> [n,n]
+  P = np.asarray(Pmat, np.float32)
+  P = 0.5 * (P + P.T)                                            # fp16 GEMMs leave ~1e-4 asymmetry; sym kills it
+  return np.asarray(Umat, np.float32), P
+
+
 def main():
   print("=" * 90)
   print("aneforge.linalg - ITERATIVE linear algebra on the ANE  (matmuls=ANE, RNG/QR/SVD/loop=HOST)")
@@ -901,6 +929,23 @@ def main():
   host_flops = m3 * l * l + l * n3 * min(l, n3)                 # QR + small SVD
   print(f"  FLOP split: ANE matmuls ~{ane_flops/1e6:.1f} MFLOP  vs  host QR/SVD ~{host_flops/1e6:.2f} MFLOP "
         f"(~{ane_flops/host_flops:.0f}x on ANE)")
+  print()
+
+  # ---------------- polar decomposition ------------------------------- #
+  print("-" * 90)
+  print("POLAR DECOMPOSITION  (A = U P, U orthogonal, P SPD)  -  vs scipy.linalg.polar")
+  print("-" * 90)
+  import scipy.linalg
+  for n in (6, 8):
+    # a GENERAL matrix: for symmetric positive-definite input polar is the trivial case (U = I, P = A)
+    A_pol = f16(_general_square(n, 1e1, 80 + n))
+    U, P = polar(A_pol)
+    ref_P = scipy.linalg.polar(A_pol, side="right")[1]
+    recon_err = _relerr(U @ P, A_pol)
+    orth_err = _relerr(U.T @ U, np.eye(n))
+    spd_err = _relerr(P, ref_P)
+    print(f"  n={n}:  recon relerr={recon_err:.3e}  U^T U ~ I relerr={orth_err:.3e}  "
+          f"P vs scipy relerr={spd_err:.3e}")
   print()
 
   # ---------------- verdict ---------------------------------------------- #

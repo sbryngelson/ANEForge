@@ -492,3 +492,52 @@ def test_kron():
     max_err = max(max_err, err)
     assert np.allclose(got16, ref16, atol=5e-4, rtol=0), f"kron({m},{n},{p},{q}) max abs err {err}"
   assert max_err <= 5e-4
+# ----------------------------- polar decomposition ----------------------------- #
+
+@pytest.mark.parametrize("n", [6, 8])
+def test_polar_reconstruction(n):
+  A = f16(_square(n, 1e1, 100 + n))
+  U, P = L.polar(A)
+  assert relerr(U @ P, A) <= 5e-2, f"polar recon: relerr {relerr(U @ P, A)}"
+
+
+@pytest.mark.parametrize("n", [6, 8])
+def test_polar_orthogonality(n):
+  A = f16(_square(n, 1e1, 110 + n))
+  U, _ = L.polar(A)
+  assert relerr(U.T @ U, np.eye(n)) <= 5e-2, f"U^T U ~ I: relerr {relerr(U.T @ U, np.eye(n))}"
+
+
+@pytest.mark.parametrize("n", [6, 8])
+def test_polar_psd(n):
+  A = f16(_square(n, 1e1, 120 + n))
+  _, P = L.polar(A)
+  # P should be symmetric (fp16 randomized SVD introduces ~1e-4 asymmetry)
+  assert relerr(P, P.T) <= 1e-3, f"P not symmetric: relerr {relerr(P, P.T)}"
+  # P should be PSD (all eigenvalues >= 0)
+  eig = np.linalg.eigvalsh(P)
+  assert eig.min() >= -1e-3, f"P has negative eigenvalue: {eig.min()}"
+
+
+def test_polar_matches_scipy():
+  scipy_linalg = pytest.importorskip("scipy.linalg")
+  A = f16(_square(8, 1e1, 130))
+  U, P = L.polar(A)
+  ref_U, ref_P = scipy_linalg.polar(A, side="right")
+  assert relerr(P, ref_P) <= 5e-2, f"P vs scipy: relerr {relerr(P, ref_P)}"
+
+
+@pytest.mark.parametrize("m,n", [(8, 5), (5, 8)])
+def test_polar_rectangular(m, n):
+  """Both rectangular shapes: U is [m,n] semi-orthogonal, P is [n,n], and U P reconstructs A."""
+  A = np.asarray(np.random.default_rng(3).standard_normal((m, n)), f16)
+  U, P = L.polar(A)
+  assert U.shape == (m, n) and P.shape == (n, n)
+  assert relerr(U @ P, A) <= 5e-2, f"polar recon [{m},{n}]: relerr {relerr(U @ P, A)}"
+  I = U.T @ U if m >= n else U @ U.T
+  assert relerr(I, np.eye(I.shape[0])) <= 5e-2, f"U not semi-orthogonal: relerr {relerr(I, np.eye(I.shape[0]))}"
+
+
+def test_polar_rejects():
+  with pytest.raises(ValueError): L.polar(np.zeros(4, f16))              # not 2-D
+  with pytest.raises(ValueError): L.polar(np.zeros((2, 2, 2), f16))
