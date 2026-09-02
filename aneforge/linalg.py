@@ -530,6 +530,7 @@ __all__ = [
   "svd", "dominant_svd", "svdvals_topk", "randomized_svd", "pca",
   "kron",
   "polar",
+  "matrix_rank", "cond",
 ]
 
 
@@ -817,6 +818,50 @@ def polar(A):
   P = np.asarray(Pmat, np.float32)
   P = 0.5 * (P + P.T)                                            # fp16 GEMMs leave ~1e-4 asymmetry; sym kills it
   return np.asarray(Umat, np.float32), P
+# Rank and conditioning both hinge on the SMALLEST singular values, which is exactly where the
+# pure-ANE svd() (Gram matrix + fp16 cyclic-Jacobi eigh) is weakest: on an exactly rank-deficient
+# matrix it leaves the null space at 1e-2..1e-1 of sigma_max, indistinguishable from a real
+# singular value, and no tolerance or sweep count separates them (more sweeps make it worse).
+# The sketch path keeps its matmuls on the ANE but does the QR and the small SVD on the host in
+# float64, which puts that null space at ~1e-5 instead -- a usable gap.  Measured, n=6..8:
+#   exactly rank-3 input   svd() trailing 1.1e-1 / 5.7e-2      randomized_svd() trailing 1.2e-5
+#   cond(A) = 99.8         svd() says 2.03 (silently wrong)    randomized_svd() says 99.81
+_RANK_FLOOR = 1e-5  # measured trailing-sv floor of the sketch path on fp16 input; NOT a machine eps
+
+
+def _svals(A16):
+  """Singular values of A (descending) via the sketch path: ANE matmuls, host float64 QR/SVD."""
+  return randomized_svd(A16, k=min(A16.shape), oversample=5, power_iters=2)[1]
+
+
+def matrix_rank(A, tol=None):
+  """Numerical rank of A by counting singular values above `tol`, on the ANE.
+
+  Default `tol` is max(m, n) * 1e-5 * sigma_max, mirroring numpy's max(m, n) * eps * sigma_max but
+  with the measured floor of this backend in place of a machine epsilon -- the input is fp16, so
+  nothing here resolves a singular value below ~1e-5 of sigma_max.  Pass `tol` explicitly if you
+  know your spectrum.  Returns 0 for a zero matrix.  Oracle: np.linalg.matrix_rank."""
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2: raise ValueError(f"matrix_rank: expected 2-D; got shape {A16.shape}")
+  m, n = A16.shape
+  S = _svals(A16)
+  if S.size == 0: return 0
+  if tol is None:
+    tol = max(m, n) * _RANK_FLOOR * float(S[0])
+  return int(np.sum(S > tol))
+
+
+def cond(A):
+  """2-norm condition number sigma_max / sigma_min via SVD, on the ANE.
+
+  Works for square and rectangular A.  Accurate to cond ~1e3, past which the fp16 input itself
+  stops resolving sigma_min.  Returns inf for a zero or exactly singular matrix.
+  Oracle: np.linalg.cond(A)."""
+  A16 = np.asarray(A, f16)
+  if A16.ndim != 2: raise ValueError(f"cond: expected 2-D; got shape {A16.shape}")
+  S = _svals(A16)
+  if S.size == 0 or float(S[-1]) <= 0.0: return float("inf")
+  return float(S[0]) / float(S[-1])
 
 
 def main():
@@ -832,13 +877,13 @@ def main():
   print("-" * 90)
   print(f"{'cond':>8} | {'CG K=40':>12} | {'CG K=40 +refine2':>18} | {'np.linalg.solve(fp16 sys)':>26}")
   n = 48
-  for cond in (1e1, 1e2, 1e3):
-    A16, b16, xref = _make_spd(n, cond, seed=int(cond) + 11)
+  for cnd in (1e1, 1e2, 1e3):
+    A16, b16, xref = _make_spd(n, cnd, seed=int(cnd) + 11)
     x_cg = conjugate_gradient(A16, b16, iters=40)
     x_cgr = conjugate_gradient(A16, b16, iters=40, refine=2)
     # numpy direct solve of the same fp16 system, as the achievable-floor baseline
     x_np = np.linalg.solve(np.asarray(A16, np.float64), np.asarray(b16, np.float64))
-    print(f"{cond:>8.0e} | {_relerr(x_cg, xref):>12.3e} | {_relerr(x_cgr, xref):>18.3e} | {_relerr(x_np, xref):>26.3e}")
+    print(f"{cnd:>8.0e} | {_relerr(x_cg, xref):>12.3e} | {_relerr(x_cgr, xref):>18.3e} | {_relerr(x_np, xref):>26.3e}")
   print("  reading: CG matches the direct fp16 solve to ~1e-3/1e-2 for cond<=1e2; at cond~1e3 the")
   print("  fp16 iterates OVERFLOW/stall and CG breaks down (relerr ~1, guarded to a finite last")
   print("  iterate, not nan) - the fp16 envelope ceiling. refine helps under-iterated solves but")
@@ -864,11 +909,11 @@ def main():
   print("ITERATIVE REFINEMENT  (sharpen a rough Jacobi solve, n=48)  -  relerr vs np.linalg.solve")
   print("-" * 90)
   print(f"{'cond':>8} | {'rough x0':>12} | {'refine K=3':>12}")
-  for cond in (1e1, 1e2):
-    A16, b16, xref = _make_spd(n, cond, seed=int(cond) + 5)
+  for cnd in (1e1, 1e2):
+    A16, b16, xref = _make_spd(n, cnd, seed=int(cnd) + 5)
     x0 = conjugate_gradient(A16, b16, iters=6)          # deliberately under-iterated
     xr = iterative_refine(A16, b16, x0, iters=3, inner=80)
-    print(f"{cond:>8.0e} | {_relerr(x0, xref):>12.3e} | {_relerr(xr, xref):>12.3e}")
+    print(f"{cnd:>8.0e} | {_relerr(x0, xref):>12.3e} | {_relerr(xr, xref):>12.3e}")
   print("  reading: residual-correction sharpens an under-iterated solve by ~1-2 orders at cond=1e1")
   print("  (1.4e-2 -> 8.5e-4) and ~0.7 order at cond=1e2 (3.3e-1 -> 7.2e-2) - the ~1-order envelope.")
   print()
@@ -878,19 +923,19 @@ def main():
   print("LEAST SQUARES  (overdetermined A [80,24])  -  relerr vs np.linalg.lstsq, swept over cond")
   print("-" * 90)
   print(f"{'cond(A)':>8} | {'CG-normal +refine':>18} | {'np.linalg.lstsq':>16}")
-  for cond in (1e1, 1e2):
-    rng = np.random.default_rng(int(cond) + 99)
+  for cnd in (1e1, 1e2):
+    rng = np.random.default_rng(int(cnd) + 99)
     m2, n2 = 80, 24
     U, _ = np.linalg.qr(rng.standard_normal((m2, n2)))
     V, _ = np.linalg.qr(rng.standard_normal((n2, n2)))
-    s = np.geomspace(1.0, cond, n2)
+    s = np.geomspace(1.0, cnd, n2)
     A = (U * s) @ V.T
     xtrue = rng.standard_normal(n2)
     b = A @ xtrue + 0.01 * rng.standard_normal(m2)
     A16, b16 = f16(A), f16(b)
     x_ls = least_squares(A16, b16, iters=60, refine=2)
     x_ref = np.linalg.lstsq(np.asarray(A16, np.float64), np.asarray(b16, np.float64), rcond=None)[0]
-    print(f"{cond:>8.0e} | {_relerr(x_ls, x_ref):>18.3e} | {0.0:>16.3e}")
+    print(f"{cnd:>8.0e} | {_relerr(x_ls, x_ref):>18.3e} | {0.0:>16.3e}")
   print("  reading: forming A^T A SQUARES cond(A): cond(A)=1e1 -> 1e2 solves fine (4e-3); cond(A)=1e2")
   print("  -> 1e4 is past the fp16 CG ceiling and breaks down (relerr ~1, guarded finite). This is")
   print("  the actual cost of the normal equations in fp16 - a QR-lstsq would avoid the squaring but")
@@ -946,6 +991,22 @@ def main():
     spd_err = _relerr(P, ref_P)
     print(f"  n={n}:  recon relerr={recon_err:.3e}  U^T U ~ I relerr={orth_err:.3e}  "
           f"P vs scipy relerr={spd_err:.3e}")
+  # ---------------- matrix_rank / cond -------------------------------- #
+  print("-" * 90)
+  print("MATRIX_RANK + COND  (well-conditioned and rank-deficient)  -  vs numpy")
+  print("-" * 90)
+  rng = np.random.default_rng(77)
+  # well-conditioned 8x8
+  A_wc = _make_spd(8, 1e1, 88)[0]
+  print(f"  well-cond 8x8:  rank={matrix_rank(A_wc)}  cond={cond(A_wc):.2f}  "
+        f"(numpy rank={np.linalg.matrix_rank(A_wc)}  cond={np.linalg.cond(A_wc):.2f})")
+  # rank-deficient: outer product -> rank 4
+  U4 = np.linalg.qr(rng.standard_normal((8, 4)))[0]
+  A_rd = f16(U4 @ U4.T * 5.0)
+  print(f"  rank-4 8x8:     rank={matrix_rank(A_rd)}  cond={cond(A_rd):.2f}  "
+        f"(numpy rank={np.linalg.matrix_rank(A_rd)}  cond={np.linalg.cond(A_rd):.2f})")
+  # zero matrix
+  print(f"  zero 4x4:       rank={matrix_rank(np.zeros((4, 4), f16))}  cond={cond(np.zeros((4, 4), f16))}")
   print()
 
   # ---------------- verdict ---------------------------------------------- #
