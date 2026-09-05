@@ -83,3 +83,49 @@ def test_erf_is_odd_and_exactly_zero_at_the_origin():
   assert (np.abs(x[0]) < 1e-6).any(), "grid must contain 0"
   assert np.abs(out[0][np.abs(x[0]) < 1e-6]).max() == 0.0
   assert np.abs(out[0] + out[0][::-1]).max() < 1e-3
+
+
+def test_sinh_decomposition_matches_numpy():
+  x = np.linspace(-10.0, 10.0, 128).astype(np.float16).reshape(1, 128)
+  out = _run(special.sinh, x)
+  ref = np.sinh(x.astype(np.float32))
+  assert np.abs(out - ref).max() / (np.abs(ref).max() + 1e-6) < 5e-3
+
+
+def test_cosh_decomposition_matches_numpy():
+  x = np.linspace(-10.0, 10.0, 128).astype(np.float16).reshape(1, 128)
+  out = _run(special.cosh, x)
+  ref = np.cosh(x.astype(np.float32))
+  assert np.abs(out - ref).max() / (np.abs(ref).max() + 1e-6) < 5e-3
+
+
+def test_asinh_decomposition_matches_numpy():
+  x = np.linspace(-10.0, 10.0, 128).astype(np.float16).reshape(1, 128)
+  out = _run(special.asinh, x)
+  ref = np.arcsinh(x.astype(np.float32))
+  assert np.abs(out - ref).max() < 1e-1
+
+
+def test_asinh_is_odd_and_accurate_for_negative_x():
+  """Per-point relative error, which an error-over-max-|ref| metric cannot see: the naive
+  log(x + sqrt(x^2+1)) cancels for x << 0 and is 2.1% off at x=-10."""
+  x = np.array([[-10.0, -6.0, -3.0, -1.0, 1.0, 3.0, 6.0, 10.0]], np.float16)
+  out = _run(special.asinh, x)
+  ref = np.arcsinh(x.astype(np.float32))
+  rel = np.abs(out - ref) / np.abs(ref)
+  assert rel.max() < 5e-3, f"asinh per-point relerr {rel.max():.2%} at x={float(x[0][rel.argmax()])}"
+  assert np.abs(out + out[:, ::-1]).max() < 1e-3, "asinh must be odd"
+
+
+def test_acosh_decomposition_matches_numpy():
+  x = np.linspace(1.0001, 10.0, 128).astype(np.float16).reshape(1, 128)
+  out = _run(special.acosh, x)
+  ref = np.arccosh(x.astype(np.float32))
+  assert np.abs(out - ref).max() < 5e-3
+
+
+def test_atanh_decomposition_matches_numpy():
+  x = np.linspace(-0.99, 0.99, 128).astype(np.float16).reshape(1, 128)
+  out = _run(special.atanh, x)
+  ref = np.arctanh(x.astype(np.float32))
+  assert np.abs(out - ref).max() < 3e-3

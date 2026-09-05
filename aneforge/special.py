@@ -218,8 +218,47 @@ def log_wide(x: Tensor, sqrts: int = 3) -> Tensor:
   return r.log() * float(1 << sqrts)
 
 
+# hyperbolic trig
+
+def sinh(x: Tensor) -> Tensor:
+  """sinh(x) for |x| <= ~10; overflows fp16 near ln(65504) ~ 11 (same wall as softplus).
+
+  Accurate in absolute terms, not relative: e^x - e^-x cancels near the origin, so the relative
+  error reaches ~2.4% for |x| < 0.01 (absolute error stays ~2e-5). Use expm1 if you need the
+  small-argument regime; its Taylor form is only valid for |x| <= ~0.7."""
+  return (x.exp() - (x * -1.0).exp()) * 0.5
+
+
+def cosh(x: Tensor) -> Tensor:
+  """cosh(x) for |x| <= ~10; overflows fp16 near ln(65504) ~ 11 (same wall as softplus)."""
+  return (x.exp() + (x * -1.0).exp()) * 0.5
+
+
+def asinh(x: Tensor) -> Tensor:
+  """asinh(x) for |x| <= ~10; domain is all real x, but fp16 overflows for large |x|.
+
+  Evaluated on |x| and signed back: asinh is odd, and log(x + sqrt(x^2+1)) cancels for x << 0
+  (2.1% relative error at x=-10 in fp16, vs 0.0% for this form)."""
+  return (x.abs() + (x * x).adds(1.0).sqrt()).log() * x.sign()
+
+
+def acosh(x: Tensor) -> Tensor:
+  """acosh(x) for x >= 1; fp16 overflows for large x."""
+  return (x + (x * x).adds(-1.0).sqrt()).log()
+
+
+def atanh(x: Tensor) -> Tensor:
+  """atanh(x) for |x| < 1; singular at |x| == 1.
+
+  Accurate in absolute terms, not relative: (1+x)/(1-x) rounds to ~1 near the origin, so the
+  relative error reaches ~4% for |x| < 0.01 (absolute error stays ~1e-4). log1p fixes the
+  small-argument regime but is only valid for its argument in [-0.5, 1], i.e. |x| <= 1/3."""
+  return ((x.adds(1.0)) / (x * -1.0).adds(1.0)).log() * 0.5
+
+
 __all__ = [
-    "sin", "cos", "erf", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
+    "sin", "cos", "sinh", "cosh", "asinh", "acosh", "atanh",
+    "erf", "erfc", "expm1", "log1p", "gamma", "lgamma", "gamma_via_lgamma",
     "bessel_j0", "bessel_i0", "bessel_k0", "bessel_j1", "bessel_i1", "digamma", "beta", "exp_wide", "log_wide",
 ]
 
