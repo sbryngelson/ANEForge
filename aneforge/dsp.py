@@ -72,8 +72,51 @@ def tukey(M: int, alpha: float = 0.5, sym: bool = False) -> np.ndarray:
   return w[:M].astype(np.float32)
 
 
+def _general_cosine(M: int, a: list[float], sym: bool) -> np.ndarray:
+  """Even cosine-sum window (scipy `general_cosine`): positive coefficients that alternate sign per harmonic. `sym=False` = periodic (STFT) form."""
+  if M == 1: return np.ones(1, np.float32)
+  n = np.arange(M)
+  denom = (M - 1) if sym else M                          # periodic = symmetric on M+1 points, last dropped
+  w = np.zeros(M)
+  for k, ak in enumerate(a):
+    w += ((-1.0) ** k) * ak * np.cos(2.0 * np.pi * k * n / denom)
+  return w.astype(np.float32)
+
+
+def flattop(M: int, sym: bool = False) -> np.ndarray:
+  """Flat top window (5-term cosine sum, minimal scalloping). `sym=False` = periodic (STFT) form."""
+  return _general_cosine(M, [0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368], sym)
+
+
+def blackmanharris(M: int, sym: bool = False) -> np.ndarray:
+  """Minimum 4-term Blackman-Harris window. `sym=False` = periodic (STFT) form."""
+  return _general_cosine(M, [0.35875, 0.48829, 0.14128, 0.01168], sym)
+
+
+def nuttall(M: int, sym: bool = False) -> np.ndarray:
+  """Nuttall window (Nuttall4c). `sym=False` = periodic (STFT) form."""
+  return _general_cosine(M, [0.3635819, 0.4891775, 0.1365995, 0.0106411], sym)
+
+
+def cosine(M: int, sym: bool = False) -> np.ndarray:
+  """Cosine (sine) window sin(pi*(n+0.5)/N). `sym=False` = periodic (STFT) form."""
+  if M == 1: return np.ones(1, np.float32)
+  N = M if sym else M + 1                                # periodic = symmetric on M+1 points, last dropped
+  return np.sin(np.pi * (np.arange(N) + 0.5) / N)[:M].astype(np.float32)
+
+
+def gaussian(M: int, std: float = 7.0, sym: bool = False) -> np.ndarray:
+  """Gaussian window exp(-0.5*((n-(N-1)/2)/std)^2). Default std=7.0. `sym=False` = periodic (STFT) form."""
+  if M == 1: return np.ones(1, np.float32)
+  N = M if sym else M + 1                                # periodic = symmetric on M+1 points, last dropped
+  n = np.arange(N) - (N - 1) / 2.0
+  return np.exp(-n * n / (2.0 * std * std))[:M].astype(np.float32)
+
+
 _WINDOWS = {"hann": hann, "hamming": hamming, "blackman": blackman,
-            "kaiser": kaiser, "bartlett": bartlett, "tukey": tukey}
+            "kaiser": kaiser, "bartlett": bartlett, "tukey": tukey,
+            "flattop": flattop, "blackmanharris": blackmanharris, "nuttall": nuttall,
+            "cosine": cosine, "gaussian": gaussian}
 
 
 def get_window(window, M: int) -> np.ndarray:
@@ -392,7 +435,8 @@ def hilbert(x):
 
 
 __all__ = [
-  "hann", "hamming", "blackman", "kaiser", "bartlett", "tukey", "get_window",
+  "hann", "hamming", "blackman", "kaiser", "bartlett", "tukey",
+  "flattop", "blackmanharris", "nuttall", "cosine", "gaussian", "get_window",
   "sawtooth", "square", "chirp",
   "fir_filter", "fft_convolve", "freq_filter", "stft", "spectrogram",
   "correlate", "autocorrelate", "iir_filter", "hilbert",

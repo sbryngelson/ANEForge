@@ -1,4 +1,4 @@
-"""Window functions (aneforge.dsp kaiser/bartlett/tukey) against scipy.signal.windows. Host-side, no ANE."""
+"""Window functions (aneforge.dsp) against scipy.signal.windows. Host-side, no ANE."""
 import numpy as np
 import pytest
 
@@ -26,8 +26,23 @@ def test_kaiser_matches_scipy(M, sym, beta):
   assert np.allclose(dsp.kaiser(M, beta=beta, sym=sym), sw.kaiser(M, beta=beta, sym=sym), atol=1e-6)
 
 
+@pytest.mark.parametrize("M", [1, 16, 65])
+@pytest.mark.parametrize("sym", [False, True])
+@pytest.mark.parametrize("name", ["flattop", "blackmanharris", "nuttall", "cosine"])
+def test_cosine_family_matches_scipy(M, sym, name):
+  assert np.allclose(getattr(dsp, name)(M, sym=sym), getattr(sw, name)(M, sym=sym), atol=1e-6)
+
+
+@pytest.mark.parametrize("std", [2.0, 7.0])
+@pytest.mark.parametrize("M", [1, 16, 65])
+@pytest.mark.parametrize("sym", [False, True])
+def test_gaussian_matches_scipy(M, sym, std):
+  assert np.allclose(dsp.gaussian(M, std=std, sym=sym), sw.gaussian(M, std=std, sym=sym), atol=1e-6)
+
+
 def test_get_window_resolves_new_names():
-  for name in ("kaiser", "bartlett", "tukey"):
+  for name in ("kaiser", "bartlett", "tukey", "flattop", "blackmanharris",
+               "nuttall", "cosine", "gaussian"):
     w = dsp.get_window(name, 32)
     assert w.shape == (32,) and w.dtype == np.float32
 
