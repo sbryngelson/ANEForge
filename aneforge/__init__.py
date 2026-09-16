@@ -33,7 +33,7 @@ from .autograd import (Adam, adam_step, backward, backward_from, conv2d, conv_pa
 from .streaming import CheckpointedStack
 from .models import (Encoder, Vision, ViT, GPT2, CLIP, Whisper, load, load_resnet, load_resnet18, load_vit,
                     load_gpt2, load_clip, load_whisper, conv_block, cifar_cnn, group_norm_train)
-from .onnx import load_onnx, onnx_to_tensor, onnx_to_features
+from .onnx import load_onnx, onnx_to_tensor, onnx_to_features, coverage_report
 from .llm import LlamaConfig, LlamaPrefill, from_pretrained as load_llm, rope, rope_tables, prefill_block
 from . import moe as moe   # registers the "moe" MLP + Qwen3-MoE adapter into the llm registries
 
@@ -59,7 +59,7 @@ __all__ = [
     "softmax_cross_entropy", "Trainer", "UnrolledTrainer", "adam_step",
     "conv_param", "conv2d", "CheckpointedStack",
     "fft", "linalg", "special", "einsum", "dsp",
-    "load_onnx", "onnx_to_tensor", "onnx_to_features",
+    "load_onnx", "onnx_to_tensor", "onnx_to_features", "coverage_report",
     "LlamaConfig", "LlamaPrefill", "load_llm", "rope", "rope_tables", "prefill_block",
 ]
 

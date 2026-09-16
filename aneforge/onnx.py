@@ -1,5 +1,5 @@
 """Import an ONNX model and run it on the ANE. CNN-classifier op subset; see
-docs. Public: load_onnx / onnx_to_tensor."""
+docs. Public: load_onnx / onnx_to_tensor / onnx_to_features / coverage_report."""
 from __future__ import annotations
 from typing import Callable
 from math import prod
@@ -112,6 +112,11 @@ def onnx_to_tensor(path, approx_resize=False):
     _SCOPES.append(vals)                         # visible to If/Loop subgraphs (ONNX outer-scope names)
     try:
       _run_nodes(g, vals, inits)
+    except NotImplementedError as e:
+      missing = coverage_report(m)               # the first failure reports every op the model needs, not just one
+      if missing:
+        raise NotImplementedError(f"{e}; {_missing_summary(missing)}") from e
+      raise
     finally:
       _SCOPES.pop()
     name = g.output[0].name
@@ -123,6 +128,32 @@ def onnx_to_tensor(path, approx_resize=False):
     _APPROX_RESIZE = prev
 
 _SCOPES: list[dict] = []                         # enclosing-graph value environments, innermost last
+
+
+def coverage_report(model) -> dict[str, int]:
+  """Unsupported ONNX op types with their node counts, walking the graph and any If/Loop subgraphs.
+  `model` is a loaded ModelProto (or a GraphProto). Pure host-side: no compile, no dispatch."""
+  from onnx import AttributeProto
+  counts: dict[str, int] = {}
+  def walk(g):
+    for node in g.node:
+      if node.op_type not in _ONNX:
+        counts[node.op_type] = counts.get(node.op_type, 0) + 1
+      for a in node.attribute:
+        if a.type == AttributeProto.GRAPH:
+          walk(a.g)
+        elif a.type == AttributeProto.GRAPHS:
+          for sub in a.graphs:
+            walk(sub)
+  walk(model.graph if hasattr(model, "graph") else model)
+  return counts
+
+
+def _missing_summary(missing: dict[str, int]) -> str:
+  """'this model needs 2 ops the importer does not have: X (4 nodes), Y' for the import error."""
+  ops = ", ".join(f"{op} ({n} nodes)" if n > 1 else op for op, n in sorted(missing.items()))
+  return f"this model needs {len(missing)} op{'s' if len(missing) != 1 else ''} the importer does not have: {ops}"
+
 
 def _run_nodes(g, vals, inits):
   """Run a (sub)graph's topologically-ordered node list against the value environment `vals`."""
