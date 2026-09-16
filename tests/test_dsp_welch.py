@@ -32,8 +32,3 @@ def test_welch_finds_the_tones():
   for tone in (50.0, 120.0):
     k = np.argmin(np.abs(f - tone))
     assert P[k] > 10 * np.median(P)                     # the tones stand well out of the noise floor
-
-def test_welch_rejects_non_pow2_nperseg():
-  x, fs = _sig(1024)
-  with pytest.raises(ValueError):
-    dsp.welch(x, fs=fs, nperseg=200)

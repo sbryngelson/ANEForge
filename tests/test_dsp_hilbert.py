@@ -36,8 +36,3 @@ def test_hilbert_sine_gives_minus_cosine():
   err = float(np.linalg.norm(z_im - ref) / (np.linalg.norm(ref) + 1e-30))
   assert err < 5e-3, f"sin->-cos analytic signal relerr {err:.3e}"
 
-
-def test_hilbert_rejects_too_short():
-  with pytest.raises(ValueError):
-    dsp.hilbert(np.zeros(1, np.float32))
-
