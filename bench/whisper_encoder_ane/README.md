@@ -91,7 +91,21 @@ These numbers hold end to end inside whisper.cpp: the encoder is wired in as a b
 (mirroring the CoreML seam) and transcribes jfk.wav correctly at the same latency. That
 backend is now upstream -- ggml-org/whisper.cpp#3905, merged 2026-09-18 -- and is enabled
 at runtime by pointing `ANEFORGE_ENCODER` at a compiled encoder bundle and `ANEFORGE_DYLIB`
-at `libane_e5rt_dispatch.dylib`. Reproduce the whisper.cpp side by building with and without
+at `libane_e5rt_dispatch.dylib`. Build the bundle with `export_bundle.py`:
+
+```sh
+PYTHONPATH=. python3 bench/whisper_encoder_ane/export_bundle.py \
+    --model openai/whisper-base --out /tmp/whisper_enc_base
+export ANEFORGE_ENCODER=/tmp/whisper_enc_base
+export ANEFORGE_DYLIB=$PWD/aneforge/_lib/libane_e5rt_dispatch.dylib
+```
+
+It defaults to the trained whisper-tiny checkpoint in the channels-first layout -- the encoder
+these numbers describe. `--model` takes any Whisper repo id from tiny to medium (the dimensions
+come from its config), `--compress int4` matches how medium is benchmarked, and `--random` is a
+no-download smoke test whose bundle does not transcribe. The compiled program is keyed to the OS
+build, so generate it on the machine that will run it. Reproduce the whisper.cpp side by building
+with and without
 `-DWHISPER_COREML=1` (CoreML needs a converted `ggml-<size>-encoder.mlmodelc`), then
 `whisper-bench -m models/ggml-<size>.bin`.
 

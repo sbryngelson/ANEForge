@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Compile and persist the whisper-tiny encoder bundle plus the I/O the standalone C++ runner needs. Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/export_bundle.py"""
+"""Compile and persist a Whisper encoder bundle plus the I/O the standalone C++ runner needs.
+
+The bundle is what whisper.cpp's ANEForge backend loads via ANEFORGE_ENCODER (ggml-org/whisper.cpp#3905).
+Defaults to the trained whisper-tiny checkpoint in the benchmarked channels-first layout.
+Run: PYTHONPATH=. python3 bench/whisper_encoder_ane/export_bundle.py [--model openai/whisper-base]"""
 from __future__ import annotations
 
 import argparse
@@ -27,22 +31,45 @@ def find_composite_bundle(build_dir: Path):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default="/tmp/whisper_enc_bundle", help="bundle + I/O output dir")
+    ap.add_argument("--model", default="openai/whisper-tiny",
+                    help="HF Whisper repo id whose trained encoder weights to compile (tiny..medium)")
+    ap.add_argument("--layout", choices=("cf", "seq"), default="cf",
+                    help="cf = channels-first + query-tiled (the benchmarked fast encoder); "
+                         "seq = the generic [seq,d] build, ~3x slower, kept for comparison")
+    ap.add_argument("--compress", choices=("int4", "int8"), default=None,
+                    help="stream quantized weights (medium is benchmarked at int4)")
+    ap.add_argument("--random", action="store_true",
+                    help="randomly-initialised weights instead of the checkpoint: a no-download smoke "
+                         "test only. The bundle transcribes noise, and ANE latency is weight-dependent, "
+                         "so it is not representative.")
     args = ap.parse_args()
     build_dir = Path(args.out)
     io_dir = build_dir / "io"
     io_dir.mkdir(parents=True, exist_ok=True)
 
-    enc, sd = E.make_encoder()
+    if args.random:
+        enc, sd = E.make_encoder()
+        print("WARNING: --random weights; this bundle does not transcribe and its latency is not representative")
+    else:
+        enc, sd = E.real_encoder(args.model)
+        E.set_dims(enc.config)                       # the builders read module-level dims
+        print(f"model {args.model}: d={E.D} layers={E.LAYERS} heads={E.HEADS} ffn={E.FFN}")
     mel = E.mel_input()
     ref = E.torch_reference(enc, mel)
 
-    net = E.build(sd, attn="mha", build_dir=str(build_dir))
-    out = E.run(net, sd, mel)
+    if args.layout == "cf":
+        net = E.build_cf(sd, build_dir=str(build_dir), compress=args.compress)
+        out = E.run_cf(net, sd, mel)
+    else:
+        net = E.build(sd, attn="mha", build_dir=str(build_dir))
+        out = E.run(net, sd, mel)
 
+    pos = (sd["embed_positions.weight"].T.reshape(1, E.D, 1, E.CTX) if args.layout == "cf"
+           else sd["embed_positions.weight"])
     feed = {(1, E.MELS, 1, E.FRAMES): mel[:, :, None, :].astype(np.float16),
-            (E.CTX, E.D): sd["embed_positions.weight"].astype(np.float16)}
+            tuple(pos.shape): pos.astype(np.float16)}
     for name, shape in net._inputs:
         feed[tuple(shape)].tofile(io_dir / f"{name}.f16")
     ref.astype(np.float32).tofile(io_dir / "ref.f32")
@@ -55,6 +82,11 @@ def main():
         "inputs": [[name, int(np.prod(shape))] for name, shape in net._inputs],
         "output": [net._out_name, int(np.prod(out.shape))],
         "out_shape": list(out.shape),
+        "model": "random-init" if args.random else args.model,
+        "layout": args.layout,
+        "compress": args.compress,
+        "dims": {"D": E.D, "LAYERS": E.LAYERS, "HEADS": E.HEADS, "FFN": E.FFN,
+                 "MELS": E.MELS, "CTX": E.CTX, "FRAMES": E.FRAMES},
     }
     (io_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"cosine (python ANE vs torch): {E.cosine(out, ref):.6f}")

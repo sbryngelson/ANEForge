@@ -25,12 +25,28 @@ def make_encoder(seed: int = 0):
     return enc, sd
 
 
-def real_encoder():
-    """Trained whisper-tiny encoder + numpy state dict (downloads); use for perf numbers since ANE latency is weight-dependent."""
+def real_encoder(model: str = "openai/whisper-tiny"):
+    """Trained Whisper encoder + numpy state dict (downloads); use for perf numbers since ANE latency is weight-dependent.
+
+    Call `set_dims(enc.config)` before building for anything but tiny -- the graph builders read
+    the module-level dimensions."""
     from transformers import WhisperForConditionalGeneration
-    enc = WhisperForConditionalGeneration.from_pretrained("openai/whisper-tiny").eval().model.encoder
+    enc = WhisperForConditionalGeneration.from_pretrained(model).eval().model.encoder
     sd = {k: v.detach().numpy().astype(np.float32) for k, v in enc.state_dict().items()}
     return enc, sd
+
+
+def set_dims(cfg):
+    """Rebind the module dimensions from an HF WhisperConfig, so the builders work for any size.
+
+    D/LAYERS/HEADS/FFN vary across tiny..medium; MELS is 80 and CTX 1500 for all of them (every
+    Whisper size takes the same 30 s context), so q_tiles=3 stays valid."""
+    global D, LAYERS, HEADS, FFN, MELS, CTX, FRAMES
+    D, LAYERS = int(cfg.d_model), int(cfg.encoder_layers)
+    HEADS, FFN = int(cfg.encoder_attention_heads), int(cfg.encoder_ffn_dim)
+    MELS, CTX = int(cfg.num_mel_bins), int(cfg.max_source_positions)
+    FRAMES = CTX * 2
+    return {"D": D, "LAYERS": LAYERS, "HEADS": HEADS, "FFN": FFN, "MELS": MELS, "CTX": CTX, "FRAMES": FRAMES}
 
 
 def torch_reference(enc, mel: np.ndarray) -> np.ndarray:
