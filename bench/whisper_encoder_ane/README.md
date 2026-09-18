@@ -88,8 +88,10 @@ ANEForge streams int4 through the dequant path. The Metal win comes from the que
 -- without it the ANE only ties the GPU.
 
 These numbers hold end to end inside whisper.cpp: the encoder is wired in as a backend
-(mirroring the CoreML seam, in a fork) and transcribes jfk.wav correctly at the same
-latency. Reproduce the whisper.cpp side by building with and without
+(mirroring the CoreML seam) and transcribes jfk.wav correctly at the same latency. That
+backend is now upstream -- ggml-org/whisper.cpp#3905, merged 2026-09-18 -- and is enabled
+at runtime by pointing `ANEFORGE_ENCODER` at a compiled encoder bundle and `ANEFORGE_DYLIB`
+at `libane_e5rt_dispatch.dylib`. Reproduce the whisper.cpp side by building with and without
 `-DWHISPER_COREML=1` (CoreML needs a converted `ggml-<size>-encoder.mlmodelc`), then
 `whisper-bench -m models/ggml-<size>.bin`.
 
@@ -100,7 +102,8 @@ latency. Reproduce the whisper.cpp side by building with and without
 - At seq 1500 the native fused-attention layer (`af.sdpa`) is unreliable, so the encoder
   uses `einsum` attention; query-tiling recovers flash-attention's benefit without it.
 - The fast encoder is wired into whisper.cpp end to end (a backend mirroring the CoreML
-  seam, in a fork) and transcribes correctly, at the same latency in-engine.
+  seam) and transcribes correctly, at the same latency in-engine. Upstream as of
+  ggml-org/whisper.cpp#3905.
 
 ## C++ runner
 

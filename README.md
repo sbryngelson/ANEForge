@@ -38,6 +38,7 @@ private `aned` stack CoreML, MPSGraph, and Espresso use internally. From there:
 - MLPerf, on the engine. The MLPerf reference ResNet-50 runs pure-ANE and passes the upstream MLCommons `submission_checker` (v5.1, all three edge scenarios VALID) at the reference accuracy (fp16 76.44%, equal to fp32); [one command reproduces it](bench/mlperf).
 - LLMs run on the engine. Prefill and KV-cache decode for Llama/Qwen, exact speculative decoding, Mixture-of-Experts from GGUF, and the hybrid Qwen3.5-27B (DeltaNet + attention), decoding end to end on a pure ANE.
 - Speech-to-text on the engine. Whisper's audio encoder and its autoregressive text decoder both run on the ANE with resident-KV-cache decode, matching Hugging Face's greedy transcript.
+- Upstream in whisper.cpp. The encoder is an optional backend in [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp/pull/3905), about 2x faster than CoreML on the same Neural Engine at every size from tiny to medium ([benchmarks](bench/whisper_encoder_ane)).
 - Cross-compilation for chips you don't own. Lower and gate a graph for any of 28 ANE targets (M1-M5) from one machine, and estimate its latency without running it.
 
 ```python
