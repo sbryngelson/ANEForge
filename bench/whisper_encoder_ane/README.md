@@ -100,8 +100,10 @@ export ANEFORGE_ENCODER=/tmp/whisper_enc_base
 export ANEFORGE_DYLIB=$PWD/aneforge/_lib/libane_e5rt_dispatch.dylib
 ```
 
-It defaults to the trained whisper-tiny checkpoint in the channels-first layout -- the encoder
-these numbers describe. `--model` takes any Whisper repo id from tiny to medium (the dimensions
+That writes `model.mil`, `cache/`, and the two files the backend reads at init: `ports.txt`
+(mel, pos and output port names with their element counts) and `pos.f16` (the positional
+embedding, which the backend sets once). It defaults to the trained whisper-tiny checkpoint in
+the channels-first layout -- the encoder these numbers describe. `--model` takes any Whisper repo id from tiny to medium (the dimensions
 come from its config), `--compress int4` matches how medium is benchmarked, and `--random` is a
 no-download smoke test whose bundle does not transcribe. The compiled program is keyed to the OS
 build, so generate it on the machine that will run it. Reproduce the whisper.cpp side by building

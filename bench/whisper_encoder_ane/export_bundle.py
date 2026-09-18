@@ -75,6 +75,19 @@ def main():
     ref.astype(np.float32).tofile(io_dir / "ref.f32")
     out.astype(np.float32).tofile(io_dir / "out_python.f32")
 
+    # What whisper.cpp's ANEForge backend reads from the bundle root (ggml-org/whisper.cpp#3905):
+    # ports.txt is three "name nelems" lines in mel, pos, output order, and pos.f16 is the
+    # positional embedding it sets once at init. Ports are matched by shape, not creation order.
+    mel_shape = (1, E.MELS, 1, E.FRAMES)
+    by_shape = {tuple(shape): name for name, shape in net._inputs}
+    mel_port = by_shape[mel_shape]
+    pos_port = next(n for sh, n in by_shape.items() if sh != mel_shape)
+    (build_dir / "ports.txt").write_text(
+        f"{mel_port} {int(np.prod(mel_shape))}\n"
+        f"{pos_port} {int(pos.size)}\n"
+        f"{net._out_name} {int(np.prod(out.shape))}\n")
+    pos.astype(np.float16).tofile(build_dir / "pos.f16")
+
     composite = find_composite_bundle(build_dir)
     manifest = {
         "build_dir": str(build_dir),
@@ -82,6 +95,8 @@ def main():
         "inputs": [[name, int(np.prod(shape))] for name, shape in net._inputs],
         "output": [net._out_name, int(np.prod(out.shape))],
         "out_shape": list(out.shape),
+        "whispercpp": {"ports_txt": "ports.txt", "pos": "pos.f16",
+                       "env": {"ANEFORGE_ENCODER": str(build_dir)}},
         "model": "random-init" if args.random else args.model,
         "layout": args.layout,
         "compress": args.compress,
