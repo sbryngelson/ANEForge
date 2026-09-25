@@ -245,7 +245,8 @@ PYTHONPATH=. python3 -m pytest tests/ -q
 The manual is hosted at [aneforge.readthedocs.io](https://aneforge.readthedocs.io).
 The API is documented in the module docstrings and demonstrated in [`examples/`](examples/).
 
-The [`examples/README.md`](examples/README.md) catalogue groups the runnable demos by domain:
+The [`examples/README.md`](examples/README.md) catalogue groups the runnable demos by domain;
+a few from each:
 
 | Domain | Demos |
 |--------|-------|
@@ -253,6 +254,8 @@ The [`examples/README.md`](examples/README.md) catalogue groups the runnable dem
 | Vision | `resnet18.py`, `vit.py`, `sd15.py`, `sd_unet.py`, `sd_vae.py`, `superres_espcn.py` |
 | Training on the engine | the `train_*.py` family |
 | Scientific / spectral | `fluid_vorticity.py`, `heat_equation.py`, `poisson_spectral.py`, `nbody.py` |
+| Simulation showpieces | `reaction_diffusion.py`, `game_of_life.py`, `mandelbrot.py`, `lorenz.py` |
+| ONNX and embeddings | `onnx_import.py`, `onnx_finetune.py`, `sentence_transformers_ane.py`, `rag_embeddings.py` |
 
 The reverse engineering ANEForge builds on, the program-container format, the e5rt
 dispatch path, and the engine internals down to the firmware, is collected in the
