@@ -1239,3 +1239,107 @@ def _rnn_h(node, ins, a, i):
       ys[t] = h
     ys_dirs.append(ys); h_dirs.append(h)
   return list(_rnn_assemble(ys_dirs, h_dirs, None))
+
+
+@onnx_op("DFT")
+def _dft_h(node, ins, a, i):
+  """Discrete Fourier Transform on the ANE via matrix-multiplication twiddles. Supports 1D/ND real and complex inputs."""
+  x = ins[0]
+  if not isinstance(x, Tensor): raise NotImplementedError("ONNX DFT: constant input not supported")
+  ndim = len(x.shape)
+  axis = int(a.get("axis", 1))
+  inverse = int(a.get("inverse", 0))
+  onesided = int(a.get("onesided", 0))
+  if axis < 0:
+    axis = axis + (ndim - 1)
+  if axis < 0 or axis >= ndim - 1:
+    raise ValueError(f"ONNX DFT: axis={axis} out of range for rank {ndim}")
+
+  has_complex = (x.shape[-1] == 2)
+  if has_complex:
+    perm_c = [ndim - 1] + list(range(ndim - 1))
+    xt = x.transpose(perm_c)
+    xr = xt.slice_by_size([0] + [0] * (ndim - 1), [1] + list(x.shape[:-1])).squeeze(0)
+    xi = xt.slice_by_size([1] + [0] * (ndim - 1), [1] + list(x.shape[:-1])).squeeze(0)
+  else:
+    xr = x.squeeze(-1) if x.shape[-1] == 1 else x
+    xi = None
+
+  r_ndim = len(xr.shape)
+  perm = list(range(r_ndim))
+  if axis != r_ndim - 1:
+    perm[axis], perm[-1] = perm[-1], perm[axis]
+    xr = xr.transpose(perm)
+    if xi is not None:
+      xi = xi.transpose(perm)
+
+  N = xr.shape[-1]
+  M = N // 2 + 1 if onesided else N
+  n = np.arange(N)
+  k = np.arange(M).reshape(-1, 1)
+  sign = +2j if inverse else -2j
+  scale = (1.0 / N) if inverse else 1.0
+  W = (np.exp(sign * np.pi * k * n / N).T * scale).astype(np.complex64)
+  Wr = np.ascontiguousarray(W.real).astype(np.float32)
+  Wi = np.ascontiguousarray(W.imag).astype(np.float32)
+
+  if xi is None:
+    Yr = xr @ Wr
+    Yi = xr @ Wi
+  else:
+    Yr = (xr @ Wr) - (xi @ Wi)
+    Yi = (xr @ Wi) + (xi @ Wr)
+
+  if axis != r_ndim - 1:
+    Yr = Yr.transpose(perm)
+    Yi = Yi.transpose(perm)
+
+  return _concat([Yr.expand_dims(-1), Yi.expand_dims(-1)], axis=-1)
+
+
+@onnx_op("STFT")
+def _stft_h(node, ins, a, i):
+  """Short-Time Fourier Transform on the ANE via sliding-window unfolding matrix and DFT GEMM."""
+  x = ins[0]
+  if not isinstance(x, Tensor): raise NotImplementedError("ONNX STFT: constant signal not supported")
+  onesided = int(a.get("onesided", 1))
+  step = int(np.asarray(ins[1]).ravel()[0])
+  if len(ins) > 2 and ins[2] is not None:
+    w = np.asarray(ins[2], np.float32).ravel()
+    win_len = w.shape[0]
+  elif len(ins) > 3 and ins[3] is not None:
+    win_len = int(np.asarray(ins[3]).ravel()[0])
+    w = np.ones(win_len, dtype=np.float32)
+  else:
+    raise ValueError("ONNX STFT: either window or frame_length must be provided")
+
+  sig = x.squeeze(-1) if x.shape[-1] == 1 else x
+  if len(sig.shape) == 1:
+    sig = sig.expand_dims(0)
+    has_batch = False
+  else:
+    has_batch = True
+  B, L = sig.shape
+  if L < win_len:
+    raise ValueError(f"ONNX STFT: signal length {L} < frame_length {win_len}")
+  n_frames = (L - win_len) // step + 1
+  n_freq = win_len // 2 + 1 if onesided else win_len
+
+  T = np.zeros((L, n_frames * win_len), dtype=np.float32)
+  for t in range(n_frames):
+    for k in range(win_len):
+      T[t * step + k, t * win_len + k] = w[k]
+
+  n = np.arange(win_len)
+  k = np.arange(n_freq).reshape(-1, 1)
+  W = np.exp(-2j * np.pi * k * n / win_len).T.astype(np.complex64)
+  Wr = np.ascontiguousarray(W.real).astype(np.float32)
+  Wi = np.ascontiguousarray(W.imag).astype(np.float32)
+
+  frames = (sig @ T).reshape(B, n_frames, win_len)
+  Yr = frames @ Wr
+  Yi = frames @ Wi
+  out = _concat([Yr.expand_dims(-1), Yi.expand_dims(-1)], axis=-1)
+  if not has_batch:
+    out = out.squeeze(0)
+  return out
