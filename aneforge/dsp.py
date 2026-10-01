@@ -317,7 +317,7 @@ def _frame(x: np.ndarray, win_len: int, hop: int) -> np.ndarray:
   return x[idx]
 
 
-def stft(x, win=256, hop=None, window: str = "hann"):
+def stft(x, win: int | np.ndarray = 256, hop=None, window: str = "hann"):
   """Short-time Fourier transform: window each frame, FFT, stack. Returns (Zr, Zi), each [n_freq, n_frames] (no 1/sum(win) scaling)."""
   x = np.asarray(x, np.float32).ravel()
   if isinstance(win, (int, np.integer)):
@@ -349,6 +349,52 @@ def spectrogram(x, win=256, hop=None, window: str = "hann", mode: str = "magnitu
   Zr, Zi = stft(x, win=win, hop=hop, window=window)
   p = Zr.astype(np.float32) ** 2 + Zi.astype(np.float32) ** 2
   return p if mode == "power" else np.sqrt(p)
+
+
+def istft(Zr, Zi, win: int | np.ndarray | None = None, hop: int | None = None, window: str = "hann") -> np.ndarray:
+  """Inverse short-time Fourier transform via on-ANE iFFTs and overlap-add with COLA normalization."""
+  Zr = np.asarray(Zr, np.float32)
+  Zi = np.asarray(Zi, np.float32)
+  if Zr.shape != Zi.shape or Zr.ndim != 2:
+    raise ValueError(f"istft: Zr and Zi must be 2D with identical shapes; got {Zr.shape} vs {Zi.shape}")
+  n_freq, n_frames = Zr.shape
+  if win is None:
+    win_len = (n_freq - 1) * 2
+    w = get_window(window, win_len)
+  elif isinstance(win, (int, np.integer)):
+    win_len = int(win)
+    w = get_window(window, win_len)
+  else:
+    w = np.asarray(win, np.float32).ravel()
+    win_len = w.shape[0]
+  hop_step = win_len // 4 if hop is None else int(hop)
+  N = _next_fft_size(win_len)
+  iplan = ifft_plan(N)
+
+  out_len = (n_frames - 1) * hop_step + win_len
+  x = np.zeros(out_len, np.float64)
+  w_env = np.zeros(out_len, np.float64)
+  w64 = w.astype(np.float64)
+  w_sq = w64 ** 2
+
+  for t in range(n_frames):
+    Yr = np.zeros(N, np.float32)
+    Yi = np.zeros(N, np.float32)
+    Yr[:n_freq] = Zr[:, t]
+    Yi[:n_freq] = Zi[:, t]
+    if N > 2:
+      Yr[n_freq:] = Zr[1:n_freq - 1, t][::-1]
+      Yi[n_freq:] = -Zi[1:n_freq - 1, t][::-1]
+
+    fr = _ifft_real_scaled(Yr, Yi, N, iplan)[:win_len]
+    start = t * hop_step
+    end = start + win_len
+    x[start:end] += fr * w64
+    w_env[start:end] += w_sq
+
+  mask = w_env > 1e-10
+  x[mask] /= w_env[mask]
+  return x.astype(np.float32)
 
 
 # correlation - convolution without the kernel flip
@@ -438,7 +484,7 @@ __all__ = [
   "hann", "hamming", "blackman", "kaiser", "bartlett", "tukey",
   "flattop", "blackmanharris", "nuttall", "cosine", "gaussian", "get_window",
   "sawtooth", "square", "chirp",
-  "fir_filter", "fft_convolve", "freq_filter", "stft", "spectrogram",
+  "fir_filter", "fft_convolve", "freq_filter", "stft", "istft", "spectrogram",
   "correlate", "autocorrelate", "iir_filter", "hilbert",
 ]
 
@@ -568,6 +614,10 @@ def _selftest():
     spec = spectrogram(sx, win=win_len, hop=hop, window="hann", mode="power")
     record("spectrogram (power)",
            _relerr(spec[:, :m], (mag_ref[:, :m]) ** 2), "GOOD", "vs |scipy stft|^2")
+    rec = istft(Zr, Zi, win=win_len, hop=hop, window="hann")
+    interior = slice(win_len, min(len(sx), len(rec)) - win_len)
+    record("istft round-trip (win=256)", _relerr(rec[interior], sx[interior]),
+           "GOOD", "stft -> istft overlap-add reconstruction")
 
   # ---- correlate / autocorrelate vs np.correlate ---------------------------- #
   ca = rng.standard_normal(128).astype(np.float32)
