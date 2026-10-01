@@ -440,13 +440,14 @@ __all__ = [
   "sawtooth", "square", "chirp",
   "fir_filter", "fft_convolve", "freq_filter", "stft", "spectrogram",
   "correlate", "autocorrelate", "iir_filter", "hilbert",
+  "welch", "periodogram", "csd", "coherence",
 ]
 
 
 # self-test / validation vs scipy.signal / numpy
 
 def _relerr(y, ref):
-  y = np.asarray(y, np.float64); ref = np.asarray(ref, np.float64)
+  y = np.asarray(y); ref = np.asarray(ref)
   d = np.linalg.norm(y - ref)
   n = np.linalg.norm(ref)
   return float(d / (n + 1e-30))
@@ -473,6 +474,90 @@ def welch(x, fs: float = 1.0, nperseg: int = 256, noverlap=None, window: str = "
   P[1:-1 if nperseg % 2 == 0 else None] *= 2.0             # one-sided: double all but DC (and Nyquist if present)
   f = np.arange(P.shape[0], dtype=np.float64) * (fs / nperseg)
   return f, P.astype(np.float32)
+
+
+def periodogram(x, fs: float = 1.0, window: str = "boxcar", nfft: int | None = None,
+                scaling: str = "density"):
+  """Periodogram power spectral density from the on-ANE FFT (single-segment special case of Welch).
+
+  Matches `scipy.signal.periodogram(..., detrend=False)`.
+  Returns (f, Pxx).
+  """
+  x = np.asarray(x, np.float32).ravel()
+  L = x.shape[0]
+  N = L if nfft is None else int(nfft)
+  if N & (N - 1) or N < 2:
+    raise ValueError("periodogram: N must be a power of two >= 2 (the staged on-ANE FFT pads to one, which would shift the bins)")
+  if isinstance(window, str):
+    w = get_window(window, L)
+  else:
+    w = np.asarray(window, np.float32).ravel()
+  xw = x * w
+  if N > L:
+    xw = np.pad(xw, (0, N - L))
+  elif N < L:
+    xw = xw[:N]
+    w = w[:N]
+  plan = fft_plan(N)
+  Fr, Fi = plan(xw, np.zeros(N, np.float32))
+  n_freq = N // 2 + 1
+  Xr = Fr[:n_freq].astype(np.float64)
+  Xi = Fi[:n_freq].astype(np.float64)
+  P = Xr ** 2 + Xi ** 2
+  if scaling == "density":
+    P /= fs * float(np.sum(w.astype(np.float64) ** 2))
+  elif scaling == "spectrum":
+    P /= float(np.sum(w.astype(np.float64))) ** 2
+  else:
+    raise ValueError(f"periodogram: scaling={scaling!r} (use 'density' or 'spectrum')")
+  P[1:-1 if N % 2 == 0 else None] *= 2.0
+  f = np.arange(n_freq, dtype=np.float64) * (fs / N)
+  return f, P.astype(np.float32)
+
+
+def csd(x, y, fs: float = 1.0, window: str = "hann", nperseg: int = 256, noverlap=None,
+        scaling: str = "density"):
+  """Cross-spectral density from on-ANE `stft`s: window, segment, average conj(X) * Y, normalize.
+
+  Matches `scipy.signal.csd(..., detrend=False)`.
+  Returns (f, Pxy) where Pxy is complex64.
+  """
+  if nperseg & (nperseg - 1):
+    raise ValueError("csd: nperseg must be a power of two (the staged on-ANE FFT pads to one, which would shift the bins)")
+  if noverlap is None: noverlap = nperseg // 2
+  w = get_window(window, nperseg)
+  Xr, Xi = stft(x, win=nperseg, hop=nperseg - noverlap, window=window)
+  Yr, Yi = stft(y, win=nperseg, hop=nperseg - noverlap, window=window)
+  m = min(Xr.shape[1], Yr.shape[1])
+  xr, xi = Xr[:, :m].astype(np.float64), Xi[:, :m].astype(np.float64)
+  yr, yi = Yr[:, :m].astype(np.float64), Yi[:, :m].astype(np.float64)
+  Pxy_r = (xr * yr + xi * yi).mean(axis=1)
+  Pxy_i = (xr * yi - xi * yr).mean(axis=1)
+  if scaling == "density":
+    scale = fs * float(np.sum(w.astype(np.float64) ** 2))
+  elif scaling == "spectrum":
+    scale = float(np.sum(w.astype(np.float64))) ** 2
+  else:
+    raise ValueError(f"csd: scaling={scaling!r} (use 'density' or 'spectrum')")
+  Pxy_r /= scale
+  Pxy_i /= scale
+  Pxy_r[1:-1 if nperseg % 2 == 0 else None] *= 2.0
+  Pxy_i[1:-1 if nperseg % 2 == 0 else None] *= 2.0
+  f = np.arange(Pxy_r.shape[0], dtype=np.float64) * (fs / nperseg)
+  return f, (Pxy_r + 1j * Pxy_i).astype(np.complex64)
+
+
+def coherence(x, y, fs: float = 1.0, window: str = "hann", nperseg: int = 256, noverlap=None):
+  """Magnitude-squared coherence Cxy = |Pxy|^2 / (Pxx * Pyy) on the ANE.
+
+  Matches `scipy.signal.coherence(..., detrend=False)`.
+  Returns (f, Cxy).
+  """
+  f, Pxy = csd(x, y, fs=fs, window=window, nperseg=nperseg, noverlap=noverlap)
+  _, Pxx = welch(x, fs=fs, window=window, nperseg=nperseg, noverlap=noverlap)
+  _, Pyy = welch(y, fs=fs, window=window, nperseg=nperseg, noverlap=noverlap)
+  Cxy = (np.abs(Pxy) ** 2) / (Pxx.astype(np.float64) * Pyy.astype(np.float64) + 1e-30)
+  return f, np.clip(Cxy, 0.0, 1.0).astype(np.float32)
 
 
 def _selftest():
@@ -625,6 +710,20 @@ def _selftest():
       err = _relerr(y_iir, ref_iir)
       note = f"truncated IR n_taps={nt} (shorter unroll = more truncation tail)"
       record(f"iir_filter(peakQ30,n_taps={nt})", err, "ARCH-LIMITED", note)
+
+  # ---- periodogram / csd / coherence vs scipy.signal ----------------------- #
+  if have_scipy:
+    px = rng.standard_normal(256).astype(np.float32)
+    py = rng.standard_normal(256).astype(np.float32)
+    _, P_ane = periodogram(px, fs=100.0, window="hann")
+    _, P_ref = ss.periodogram(px, fs=100.0, window="hann", detrend=False)
+    record("periodogram(N=256,hann)", _relerr(P_ane, P_ref), "GOOD", "vs scipy.signal.periodogram")
+    _, Pxy_ane = csd(px, py, fs=100.0, nperseg=128)
+    _, Pxy_ref = ss.csd(px, py, fs=100.0, nperseg=128, detrend=False)
+    record("csd(N=256,nperseg=128)", _relerr(Pxy_ane, Pxy_ref), "GOOD", "vs scipy.signal.csd")
+    _, Cxy_ane = coherence(px, py, fs=100.0, nperseg=128)
+    _, Cxy_ref = ss.coherence(px, py, fs=100.0, nperseg=128, detrend=False)
+    record("coherence(N=256,nperseg=128)", _relerr(Cxy_ane, Cxy_ref), "GOOD", "vs scipy.signal.coherence")
 
   # ---- verdict -------------------------------------------------------------- #
   good = [r for r in rows if r[2] == "GOOD"]
