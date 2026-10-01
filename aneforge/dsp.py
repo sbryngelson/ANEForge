@@ -434,12 +434,38 @@ def hilbert(x):
   return y_re.astype(np.float32), y_im.astype(np.float32)
 
 
+def detrend(x, type: str = "linear", axis: int = -1) -> np.ndarray:  # noqa: A002
+  """Remove linear or constant trend along `axis` from `x`. Matches scipy.signal.detrend."""
+  if type not in ("linear", "constant", "l", "c"):
+    raise ValueError(f"detrend: type must be 'linear' or 'constant'; got {type!r}")
+  arr = np.asarray(x)
+  if arr.dtype.kind not in ("f", "c"):
+    arr = arr.astype(np.float64)
+  if arr.size == 0:
+    return arr.copy()
+  if type in ("constant", "c"):
+    return arr - np.mean(arr, axis=axis, keepdims=True)
+  N = arr.shape[axis]
+  if N <= 1:
+    return np.zeros_like(arr)
+  arr_moved = np.moveaxis(arr, axis, -1)
+  orig_dtype = arr.dtype
+  y = arr_moved.astype(np.float64)
+  t = np.arange(N, dtype=np.float64) - (N - 1) * 0.5
+  t_var = N * (N * N - 1.0) / 12.0
+  y_mean = np.mean(y, axis=-1, keepdims=True)
+  slope = np.sum((y - y_mean) * t, axis=-1, keepdims=True) / t_var
+  trend = slope * t + y_mean
+  res = np.moveaxis(y - trend, -1, axis)
+  return res.astype(orig_dtype)
+
+
 __all__ = [
   "hann", "hamming", "blackman", "kaiser", "bartlett", "tukey",
   "flattop", "blackmanharris", "nuttall", "cosine", "gaussian", "get_window",
   "sawtooth", "square", "chirp",
   "fir_filter", "fft_convolve", "freq_filter", "stft", "spectrogram",
-  "correlate", "autocorrelate", "iir_filter", "hilbert",
+  "correlate", "autocorrelate", "iir_filter", "hilbert", "detrend",
 ]
 
 
@@ -625,6 +651,14 @@ def _selftest():
       err = _relerr(y_iir, ref_iir)
       note = f"truncated IR n_taps={nt} (shorter unroll = more truncation tail)"
       record(f"iir_filter(peakQ30,n_taps={nt})", err, "ARCH-LIMITED", note)
+
+  # ---- detrend vs scipy.signal.detrend ------------------------------------- #
+  if have_scipy:
+    dx = rng.standard_normal((16, 256)).astype(np.float32) + 0.5 * np.arange(256, dtype=np.float32)
+    record("detrend(linear 2D)", _relerr(detrend(dx, type="linear"), ss.detrend(dx, type="linear")),
+           "GOOD", "vs scipy.signal.detrend linear")
+    record("detrend(constant 2D)", _relerr(detrend(dx, type="constant"), ss.detrend(dx, type="constant")),
+           "GOOD", "vs scipy.signal.detrend constant")
 
   # ---- verdict -------------------------------------------------------------- #
   good = [r for r in rows if r[2] == "GOOD"]
