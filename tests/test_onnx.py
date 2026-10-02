@@ -1525,3 +1525,75 @@ def test_hyperbolic_numeric():
     got, ref = _run_vs_ort(m, x)
     err = np.abs(got - ref).max() / (np.abs(ref).max() + 1e-6)
     assert err < tol, f"{op}: relerr {err:.2e}"
+
+
+# -- transforms / spectral: DFT and STFT ------------------------------------ #
+
+def test_dft_build():
+  # Real input
+  m = _model([helper.make_node("DFT", ["x"], ["y"], axis=1)], [_vi("x", [1, 8, 1])], [_vi("y", [1, 8, 2])], opset=17)
+  _, out = af.onnx_to_tensor(m)
+  assert out.shape == (1, 8, 2) and out.op == "concat"
+
+  # Complex input
+  m = _model([helper.make_node("DFT", ["x"], ["y"], axis=1)], [_vi("x", [1, 8, 2])], [_vi("y", [1, 8, 2])], opset=17)
+  _, out = af.onnx_to_tensor(m)
+  assert out.shape == (1, 8, 2) and out.op == "concat"
+
+  # Onesided real
+  m = _model([helper.make_node("DFT", ["x"], ["y"], axis=1, onesided=1)], [_vi("x", [1, 8, 1])], [_vi("y", [1, 5, 2])], opset=17)
+  _, out = af.onnx_to_tensor(m)
+  assert out.shape == (1, 5, 2) and out.op == "concat"
+
+
+def test_stft_build():
+  step = onnx.numpy_helper.from_array(np.array([16], np.int64), "step")
+  flen = onnx.numpy_helper.from_array(np.array([64], np.int64), "flen")
+  n = helper.make_node("STFT", ["x", "step", "", "flen"], ["y"], onesided=1)
+  m = _model([n], [_vi("x", [1, 256, 1])], [_vi("y", [1, 13, 33, 2])], inits=[step, flen], opset=17)
+  _, out = af.onnx_to_tensor(m)
+  assert out.shape == (1, 13, 33, 2) and out.op == "concat"
+
+
+@requires_ane
+def test_dft_numeric():
+  pytest.importorskip("onnxruntime")
+  x_real = np.arange(16, dtype=np.float32).reshape(1, 16, 1)
+  x_cplx = np.stack([x_real[:, :, 0], x_real[:, :, 0] * 0.5], axis=-1)
+
+  # 1. Real forward DFT
+  m = _model([helper.make_node("DFT", ["x"], ["y"], axis=1, inverse=0, onesided=0)],
+             [_vi("x", [1, 16, 1])], [_vi("y", [1, 16, 2])], opset=17)
+  got, ref = _run_vs_ort(m, x_real)
+  assert np.allclose(got, ref, atol=2e-2)
+
+  # 2. Real onesided DFT
+  m = _model([helper.make_node("DFT", ["x"], ["y"], axis=1, inverse=0, onesided=1)],
+             [_vi("x", [1, 16, 1])], [_vi("y", [1, 9, 2])], opset=17)
+  got, ref = _run_vs_ort(m, x_real)
+  assert np.allclose(got, ref, atol=2e-2)
+
+  # 3. Complex forward DFT
+  m = _model([helper.make_node("DFT", ["x"], ["y"], axis=1, inverse=0, onesided=0)],
+             [_vi("x", [1, 16, 2])], [_vi("y", [1, 16, 2])], opset=17)
+  got, ref = _run_vs_ort(m, x_cplx)
+  assert np.allclose(got, ref, atol=2e-2)
+
+  # 4. Complex inverse DFT
+  m = _model([helper.make_node("DFT", ["x"], ["y"], axis=1, inverse=1, onesided=0)],
+             [_vi("x", [1, 16, 2])], [_vi("y", [1, 16, 2])], opset=17)
+  got, ref = _run_vs_ort(m, x_cplx)
+  assert np.allclose(got, ref, atol=2e-2)
+
+
+@requires_ane
+def test_stft_numeric():
+  pytest.importorskip("onnxruntime")
+  x = np.random.default_rng(0).standard_normal((1, 256, 1)).astype(np.float32)
+  step = onnx.numpy_helper.from_array(np.array([16], np.int64), "step")
+  w = onnx.numpy_helper.from_array(np.hanning(64).astype(np.float32), "w")
+  n = helper.make_node("STFT", ["x", "step", "w"], ["y"], onesided=1)
+  m = _model([n], [_vi("x", [1, 256, 1])], [_vi("y", [1, 13, 33, 2])], inits=[step, w], opset=17)
+  got, ref = _run_vs_ort(m, x)
+  assert np.allclose(got, ref, atol=2e-2)
+
