@@ -354,7 +354,13 @@ static int compile_and_build_op(const char *mil_path, const char *cache_dir,
   err = e5rt_e5_compiler_options_create(&options);
   if (err || !options) goto fail;
   e5rt_e5_compiler_options_set_compute_device_types_mask(options, device_mask);
-  e5rt_e5_compiler_options_set_force_recompilation(options, 1);
+  // Reuse the compiled bundle the previous compile wrote at `cache_dir` (the caller
+  // content-addresses that location, so a hit matches this exact MIL + weights and
+  // cannot be stale). ANEFORGE_FORCE_RECOMPILE=1 restores always-recompile.
+  {
+    const char *force = getenv("ANEFORGE_FORCE_RECOMPILE");
+    e5rt_e5_compiler_options_set_force_recompilation(options, (force && *force == '1') ? 1 : 0);
+  }
   e5rt_e5_compiler_options_set_segmenter(options, "graph");
   // opt-in per-TD profiling (firmware perf events), gated by ANEFORGE_PROFILE=1
   if (getenv("ANEFORGE_PROFILE") && e5rt_e5_compiler_options_set_enable_profiling)
