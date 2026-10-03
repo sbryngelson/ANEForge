@@ -205,5 +205,28 @@
     "slice_x16_cliff": "exact (no clamp)",
     "reduce_exact_sum": "<= 2048",
     "timestamp_utc": "2026-08-01T16:39:18Z"
+  },
+  {
+    "chip": "Apple M6",
+    "model_identifier": "Mac18,5",
+    "hardware_hash": "2bd3d20a7d10",
+    "p_cores": 2,
+    "e_cores": 4,
+    "gpu_cores": 12,
+    "ram_gb": 16,
+    "macos_version": "27.0.1",
+    "macos_build": "26A434",
+    "aneforge_version": "0.4.1.dev39",
+    "power": "ac",
+    "contributor": "751K",
+    "peak_fp16_gemm_tflops": 10.77,
+    "bandwidth_gbps": 18.93,
+    "ridge_flop_per_byte": 569.0,
+    "peak_perf_per_w_gflops": null,
+    "decode_tok_s": 509.0,
+    "matmul_inf_cliff": "~32759",
+    "slice_x16_cliff": "exact (no clamp)",
+    "reduce_exact_sum": "<= 2048",
+    "timestamp_utc": "2026-10-03T15:49:20Z"
   }
 ]
