@@ -321,6 +321,20 @@ def _rated_tops(chip: str | None) -> float | None:
     return None
 
 
+def _cpu_levels() -> list[dict] | None:
+    """Every CPU performance level, fastest first, on chips with more than two.
+
+    p_cores / e_cores read hw.perflevel0 and hw.perflevel1, which covers the
+    two-level chips (P + E, or M5 Pro's Super + Performance) but drops the third
+    level of an M6 (2 Super + 4 Performance + 6 Efficiency). Recorded only past
+    two levels, so the hardware_hash of every two-level machine is unchanged."""
+    n = _int("hw.nperflevels") or 0
+    if n <= 2:
+        return None
+    return [{"name": _sysctl(f"hw.perflevel{i}.name"), "cores": _int(f"hw.perflevel{i}.physicalcpu")}
+            for i in range(n)]
+
+
 def fingerprint() -> dict:
     """Full machine fingerprint: hardware identity + hardware_hash + environment + run_id."""
     chip = _sysctl("machdep.cpu.brand_string")
@@ -337,6 +351,9 @@ def fingerprint() -> dict:
         "ram_bytes": memsize,
         "ane_rated_tops": _rated_tops(chip),
     }
+    levels = _cpu_levels()
+    if levels:
+        hardware["cpu_levels"] = levels                     # M6: Super / Performance / Efficiency
     hardware_hash = hashlib.sha256(
         json.dumps(hardware, sort_keys=True).encode()
     ).hexdigest()[:12]

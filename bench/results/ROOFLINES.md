@@ -9,7 +9,7 @@ Thanks to [@Rayan-and-beyond](https://github.com/Rayan-and-beyond), [@axiom-of-c
 
 ## Machines
 
-| Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |
+| Chip | Model | CPU cores | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Apple M1 | MacBookAir10,1 | 4+4 | 7 | 8 GB unified | 15.6.1 (24G90) | ac | caeef8edf13b | [@Rayan-and-beyond](https://github.com/Rayan-and-beyond) | 1 |
 | Apple M1 | MacBookPro17,1 | 4+4 | 8 | 16 GB unified | 26.5.2 (25F84) | ac | 263e02ff1898 | [@diegobauavi](https://github.com/diegobauavi) | 1 |

@@ -176,7 +176,7 @@ def render(reports: list[dict]) -> str:
     lines += [
         "## Machines",
         "",
-        "| Chip | Model | CPU (P+E) | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |",
+        "| Chip | Model | CPU cores | GPU | Memory | macOS | Power | Code (main merge-base) | By | Runs |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for _, g in sorted(groups.items(), key=lambda kv: str(kv[1]["latest"]["machine"]["hardware"].get("chip"))):
@@ -198,9 +198,12 @@ def render(reports: list[dict]) -> str:
         # credit the most recent submission that named a contributor
         handle = next((r.get("contributor") for r in reversed(g["submissions"]) if r.get("contributor")), None)
         by = f"[@{handle}](https://github.com/{handle})" if handle else "-"
+        levels = hw.get("cpu_levels")
+        cpu = ("+".join(str(lv.get("cores", "?")) for lv in levels) if levels
+               else f"{hw.get('p_cores','?')}+{hw.get('e_cores','?')}")
         lines.append(
             f"| {hw.get('chip','?')} | {hw.get('model_identifier','?')} "
-            f"| {hw.get('p_cores','?')}+{hw.get('e_cores','?')} | {hw.get('gpu_cores','?')} "
+            f"| {cpu} | {hw.get('gpu_cores','?')} "
             f"| {mem} | {env.get('macos_version','?')} ({env.get('macos_build','?')}) "
             f"| {power} | {code} | {by} | {len(g['submissions'])} |"
         )
@@ -344,6 +347,8 @@ def build_headline_json(reports: list[dict]) -> list[dict]:
             "reduce_exact_sum": reduce_cell,
             "timestamp_utc": env.get("timestamp_utc"),
         })
+        if hw.get("cpu_levels"):
+            rows[-1]["cpu_levels"] = hw["cpu_levels"]
     return rows
 
 
