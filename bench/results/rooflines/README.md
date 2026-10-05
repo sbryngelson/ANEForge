@@ -5,7 +5,10 @@ machines. The aggregate view is [`../ROOFLINES.md`](../ROOFLINES.md) (generated)
 
 ## Submit your machine (PR)
 
-1. Run the suite from a clean checkout of `main`:
+1. Run the suite from a clean checkout of `main`. From a fork, first fetch the
+   canonical repo (`git remote add upstream https://github.com/sbryngelson/ANEForge.git`
+   once, then `git fetch upstream`): the "Code" column is the merge-base with the
+   canonical `main`, found by remote URL, so a stale or missing ref misreports it.
 
    ```bash
    PYTHONPATH=. python3 bench/roofline_suite.py            # numeric cliffs only (fast, no sudo)
