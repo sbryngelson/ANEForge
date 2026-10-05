@@ -33,3 +33,15 @@ def pytest_collection_modifyitems(items):
   for item in items:
     if "requires_ane" in item.keywords:
       item.add_marker(skip)
+
+
+def pytest_collection_finish(session):
+  """Fail fast if collection loaded MLX into the main process. --forked runs each test in a
+  fork of this process, and with mlx.core already imported the forked children segfault on
+  macOS (signal 11 in unrelated tests; seen with the rail test in #294). CI has no MLX, so
+  only a local Mac with it installed would hit this. Import MLX inside the test instead."""
+  if session.config.getoption("forked", default=False) and "mlx.core" in sys.modules:
+    raise pytest.UsageError(
+      "a test module imported mlx.core at import time; with --forked that makes later tests "
+      "segfault. Import mlx (or a bench module that imports it, e.g. device_compare) inside "
+      "the test function instead.")
