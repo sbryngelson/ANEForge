@@ -72,6 +72,7 @@
   nav a sup{font-size:.6em; color:var(--faint); margin-left:1px}
   .navsep{width:1px; height:15px; background:var(--line)}
   @media(max-width:680px){nav a.hide{display:none} .navsep{display:none}}
+  @media(max-width:760px){nav a.hide-md{display:none}}
 
   .hero{padding:74px 0 60px; border-bottom:1px solid var(--line)}
   .hero .label{display:block; margin-bottom:20px}
@@ -118,8 +119,7 @@
   .door .k{font-family:var(--mono); font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; color:var(--sea)}
   .door h3{font-size:1.12rem; font-weight:600; margin:9px 0 8px}
   .door p{color:var(--soft); font-size:.9rem}
-  .door a.go{font-family:var(--mono); font-size:.8rem; display:inline-block; margin-top:14px}
-  .door a.go + a.go{margin-left:20px}
+  .door a.go{font-family:var(--mono); font-size:.8rem; display:inline-block; margin-top:14px; margin-right:20px}
 
   .caps{margin-top:30px; columns:2; column-gap:40px}   /* balanced columns: items pack, no row-height coupling */
   .cap{break-inside:avoid; margin-bottom:24px}
@@ -180,6 +180,7 @@
       <a href="https://arxiv.org/abs/2606.17090" class="hide">Paper<sup>&#8599;</sup></a>
       <a href="https://aneforge.readthedocs.io" class="hide">Docs<sup>&#8599;</sup></a>
       <a href="https://ane-guide.readthedocs.io" class="hide">Guide<sup>&#8599;</sup></a>
+      <a href="https://huggingface.co/spaces/aneforge/ane-leaderboard" class="hide hide-md">Leaderboard<sup>&#8599;</sup></a>
     </nav>
   </div>
 </header>
@@ -356,6 +357,7 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
           <p>The Python package. Build a graph, compile it to one ANE program, then run or train it. It handles quantized weights, native attention, resident state, and cross-compilation for 28 targets.</p>
           <a class="go" href="https://github.com/sbryngelson/ANEForge">GitHub →</a>
           <a class="go" href="https://aneforge.readthedocs.io">Docs →</a>
+          <a class="go" href="https://huggingface.co/spaces/aneforge/ane-leaderboard">Leaderboard →</a>
         </div>
         <div class="door">
           <div class="k">arXiv · preprint</div>
@@ -395,6 +397,7 @@ vec = <span class="af">enc</span>(tokens)                 <span class="c"># cosi
         <a href="https://github.com/sbryngelson/ANEForge">GitHub repository</a>
         <a href="https://aneforge.readthedocs.io">Documentation</a>
         <a href="https://doi.org/10.5281/zenodo.20672609">Zenodo archive</a>
+        <a href="https://huggingface.co/spaces/aneforge/ane-leaderboard">ANE leaderboard</a>
       </div>
       <div class="col" style="max-width:none">
         <h5>Read</h5>
