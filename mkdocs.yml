@@ -85,6 +85,7 @@ nav:
       - ONNX import: onnx.md
       - LLMs (decode, MoE, speculative): llm.md
       - MLPerf (ResNet-50 on the ANE): mlperf.md
+      - Hardware results (ANE leaderboard): rooflines.md
   - API reference:
       - Overview: api/index.md
       - Graph & operators: api/graph.md

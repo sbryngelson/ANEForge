@@ -9,6 +9,7 @@
 [![ANE guide](https://img.shields.io/badge/ANE%20guide-arXiv%202606.22283-b31b1b.svg)](https://arxiv.org/abs/2606.22283)
 [![Zenodo](https://zenodo.org/badge/DOI/10.5281/zenodo.20672609.svg)](https://doi.org/10.5281/zenodo.20672609)
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-aneforge-ffce1c.svg)](https://huggingface.co/aneforge)
+[![ANE leaderboard](https://img.shields.io/badge/ANE%20leaderboard-per--chip%20results-ffce1c.svg)](https://huggingface.co/spaces/aneforge/ane-leaderboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e6b69.svg)](LICENSE)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-macOS%2014%2B-b84310.svg)](#install)
 

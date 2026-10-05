@@ -36,6 +36,8 @@ These docs cover how to install, call, train, target, and extend the frontend.
 - [Capabilities](capabilities.md) - operator coverage, dtype matrix, known limits.
 - [Op catalog](op-catalog.md) - every native MIL op x device (M1-M5), generated from
   the package's `_op_catalog.py` (the runtime `af.op_info` data); the exhaustive Y/~/N table.
+- [Hardware results](rooflines.md) - measured peak GEMM, bandwidth, perf/W, decode, and
+  numeric cliffs per Mac, contributed by users; the ANE leaderboard.
 
 ### Contribute
 
@@ -55,6 +57,7 @@ These docs cover how to install, call, train, target, and extend the frontend.
 | How do I estimate latency without the hardware? | [aneforge-api: cost estimation](aneforge-api.md#cost-estimation-measurement-free), [cross-chip](cross-chip.md) |
 | How do I shrink weights (int4 / sparse)? | [aneforge-api: weight compression](aneforge-api.md#weight-compression) |
 | What ops are supported? | [capabilities](capabilities.md), [op-catalog](op-catalog.md) |
+| How fast is the ANE on my chip? | [hardware results](rooflines.md) |
 | What's "Path A"? | [glossary](glossary.md), [dispatch](dispatch.md) |
 | How do I write a MIL program? | [mil-primer](mil-primer.md) |
 | Why fp16? | [faq](faq.md), [capabilities](capabilities.md) |
