@@ -89,3 +89,20 @@ def test_moe_prefill_matches_huggingface():  # definitive: ANE MoE model (adapte
   ane = np.asarray(LlamaPrefill(cfg, weights, ane_lm_head=False).prefill(toks)).ravel().astype(np.float32)
   cos = float(ane @ ref / (np.linalg.norm(ane) * np.linalg.norm(ref) + 1e-9))
   assert cos > 0.99 and int(ane.argmax()) == int(ref.argmax()), f"ANE MoE vs HF cosine={cos}, argmax {ane.argmax()} vs {ref.argmax()}"
+
+
+@requires_ane
+def test_topk_gate_exact_ties_select_exactly_k():  # exact fp16 ties must not activate more than k experts
+  from aneforge.moe import _topk_gate
+  rows = np.array([[0.2, 0.2, 0.2, 0.1, 0.1, 0.1, 0.05, 0.05],     # 3-way tie at the max, k=2 -> experts 0,1
+                   [0.3, 0.2, 0.2, 0.2, 0.05, 0.03, 0.01, 0.01],    # tie at the k-th slot -> experts 0,1
+                   [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2],        # tie among the top two -> experts 6,7
+                   [0.4, 0.3, 0.1, 0.1, 0.05, 0.03, 0.01, 0.01]], np.float16)   # no tie -> experts 0,1
+  T, E, k = rows.shape[0], rows.shape[1], 2
+  x = af.input((T, E)); got = np.asarray(af.compile(_topk_gate(x, k, E, T))(rows)).astype(np.float32)
+  want = [[0, 1], [0, 1], [6, 7], [0, 1]]
+  for t in range(T):
+    nz = sorted(np.flatnonzero(got[t]).tolist())
+    assert nz == want[t], f"row {t}: selected {nz}, expected exactly {want[t]}"
+    assert np.allclose(got[t, nz], rows[t, nz].astype(np.float32)), f"row {t}: gate values changed"
+
