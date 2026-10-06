@@ -15,17 +15,25 @@ from . import llm
 from .llm import LayerSpec, LlamaConfig
 
 _MAX_DIM = 65536          # ANE per-op dimension cap; the all-expert gate/up matmul tiles under it
+_MAX_EXPERTS = 2049       # top-k carries expert indices as fp16 integers: 0..2048 are exact
 
 
 def _topk_gate(probs, k, E, T):
   """probs [T,E] masked to the top-k per row (0 elsewhere), WITHOUT the native `topk`/`sort` ops -- those are
   graph cuts that don't compose (two MoE layers in one program fail to compile). Peel the row-max k times with
-  `amax`+`select` instead; exact for distinct logits. Caller renormalizes."""
+  `amax`+`select`. Exactly k experts per row: on an exact (fp16) tie the LOWEST tied index wins each round and only
+  that one expert is removed, so ties never activate more than k. Caller renormalizes. Expert indices are fp16
+  integers, exact only through 2048, so the exactly-k guarantee holds for E <= 2049; larger E is rejected."""
+  if not 1 <= k <= E <= _MAX_EXPERTS:
+    raise ValueError(f"moe top-k: need 1 <= k <= E <= {_MAX_EXPERTS} (fp16 expert indices); got k={k}, E={E}")
   neg = _const(np.full((T, E), -3.0e4, np.float16)); one = _const(np.ones((T, E), np.float16))
+  ar = _const(np.tile(np.arange(E, dtype=np.float16), (T, 1))); big = _const(np.full((T, E), 4096.0, np.float16))
   chosen = _const(np.zeros((T, E), np.float16)); rem = probs
   for _ in range(k):
-    hit = rem.greater_equal(rem.amax([1]).reshape(T, 1))         # this round's row-max position
-    chosen = select(hit, one, chosen); rem = select(hit, neg, rem)   # mark it, then drop it for the next round
+    hit = rem.greater_equal(rem.amax([1]).reshape(T, 1))         # this round's row-max position(s)
+    first = (select(hit, ar, big) * -1.0).amax([1]).reshape(T, 1) * -1.0   # lowest tied index (amin via -amax)
+    pick = ar.equal(first)                                         # exactly one expert per row
+    chosen = select(pick, one, chosen); rem = select(pick, neg, rem)   # mark it, then drop it for the next round
   return probs * chosen
 
 
