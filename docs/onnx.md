@@ -56,6 +56,7 @@ outside this set, so an unsupported model fails loudly with the offending op nam
 | Misc | `Softmax`, `LogSoftmax`, `Constant`, `ConstantOfShape`, `Range`, `EyeLike`, `Identity`, `Dropout` (inference no-op), `Cast` (import-level), `OneHot` (constant depth/values) |
 | Control flow | `If` (constant condition), `Loop` (static trip count, unrolled) |
 | Recurrent | `LSTM`, `GRU`, `RNN` (unrolled; forward/reverse/bidirectional, default activations) |
+| Transforms / Spectral | `DFT` (opset 17), `STFT` (opset 17) |
 
 Export at `opset_version=13` with constant folding on (the default), which resolves the
 `Shape`/`Gather`/dynamic-`Reshape` plumbing into static initializers before import.
