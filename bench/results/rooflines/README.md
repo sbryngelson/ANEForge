@@ -33,15 +33,15 @@ machines. The aggregate view is [`../ROOFLINES.md`](../ROOFLINES.md) (generated)
    default) and you are credited in the table with a link to your profile. If your
    git email is a generic one, add `--contributor <your-gh-handle>` to be credited.
 
-2. Regenerate the table and open a PR with both files:
+2. Regenerate the table and open a PR with all three files:
 
    ```bash
-   python3 bench/aggregate_rooflines.py                    # updates ../ROOFLINES.md
-   git add bench/results/rooflines/roofline-*.json bench/results/ROOFLINES.md
+   python3 bench/aggregate_rooflines.py                    # updates ../ROOFLINES.md and ../rooflines.json
+   git add bench/results/rooflines/roofline-*.json bench/results/ROOFLINES.md bench/results/rooflines.json
    ```
 
-CI runs `aggregate_rooflines.py --check` and fails the PR if `ROOFLINES.md` was
-not regenerated, so the table can never drift from the data.
+CI runs `aggregate_rooflines.py --check` and fails the PR if `ROOFLINES.md` or
+`rooflines.json` was not regenerated, so the table can never drift from the data.
 
 ## What each file records
 
