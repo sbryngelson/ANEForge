@@ -151,13 +151,16 @@ jobs:
   macos:
     name: macOS build + smoke (${{ matrix.os }}, no ANE)
     runs-on: ${{ matrix.os }}
+    env:
+      # GitHub retired the hosted macos-14 image, so the oldest supported release
+      # (README: macOS 14+) is covered by compiling for it on newer images instead.
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     strategy:
       fail-fast: false   # one OS image breaking must not mask the others' status
       matrix:
-        # macos-14 = oldest supported (README: macOS 14+); macos-15 = current; macos-latest
-        # auto-tracks the newest hosted image, so a future macOS/Xcode bump is caught by the
-        # weekly run without editing this list. latest may alias 15 today; the overlap is cheap.
-        os: [macos-14, macos-15, macos-latest]
+        # macos-15 = oldest hosted image; macos-latest auto-tracks the newest, so a future
+        # macOS/Xcode bump is caught by the weekly run without editing this list.
+        os: [macos-15, macos-latest]
     steps:
       - uses: actions/checkout@v7
         with:
