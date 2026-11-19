@@ -24,6 +24,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare as dc  # noqa: E402
 import _ane_rail  # noqa: E402
+from aggregate_rooflines import IDLE_BUSY_MW  # noqa: E402
 
 HAVE_ANE, HAVE_MLX, HAVE_TV, HAVE_HF = dc.HAVE_ANE, dc.HAVE_MLX, dc.HAVE_TV, dc.HAVE_HF
 HAVE_SUDO = dc.HAVE_SUDO
@@ -50,6 +51,8 @@ PM_INTERVAL_MS = 500
 RESULTS: dict[str, dict] = {}
 IDLE: dict[str, float] = {}   # per-rail idle mW, sampled once at start
 IDLE_PKG = 0.0                # total-package idle mW
+IDLE_BUSY = False             # set by sample_idle(): the baseline stayed above IDLE_BUSY_MW
+IDLE_SETTLE_S = 20.0          # wait this long before re-sampling a busy baseline
 
 # SMC rail PP0b (bench/_ane_rail.py, #289): sampled beside powermetrics, and the ANE power
 # source when powermetrics has none (Apple M6). None without an SMC rail (e.g. CI).
@@ -86,9 +89,12 @@ def _parse_pm_per_sample(txt: str) -> tuple[dict[str, list[float]], list[float]]
     return per, pkg
 
 
-def sample_idle(seconds: float) -> None:
-    """Sample a no-workload idle baseline (per rail) ONCE. Stores median mW/rail."""
-    global IDLE_PKG, PM_HAS_ANE, PM_HAS_CPU
+def sample_idle(seconds: float, retries: int = 2) -> None:
+    """Sample a no-workload idle baseline (per rail). Stores median mW/rail.
+
+    A baseline above IDLE_BUSY_MW is a busy machine: it is re-sampled up to `retries`
+    times after a settle, and if it stays busy every measure_energy() row is flagged."""
+    global IDLE_PKG, PM_HAS_ANE, PM_HAS_CPU, IDLE_BUSY
     if not HAVE_SUDO:
         return
     samples = max(20, int(seconds / (PM_INTERVAL_MS / 1000.0)) + 5)
@@ -109,6 +115,15 @@ def sample_idle(seconds: float) -> None:
     IDLE_PKG = float(np.median(pkg)) if pkg else sum(IDLE.values())
     PM_HAS_ANE = bool(per.get("ane"))
     PM_HAS_CPU = any(x > 0 for x in per.get("cpu", []))
+    IDLE_BUSY = IDLE_PKG > IDLE_BUSY_MW
+    if IDLE_BUSY:
+        print(f" WARNING: idle baseline {IDLE_PKG / 1000.0:.1f} W (> {IDLE_BUSY_MW / 1000.0:.0f} W): the machine "
+              "is not idle, so every perf/W would come out too high. Close other apps and let "
+              "indexing/backups finish." + (f" Re-sampling in {IDLE_SETTLE_S:.0f} s." if retries > 0 else ""),
+              flush=True)
+        if retries > 0:
+            time.sleep(IDLE_SETTLE_S)
+            sample_idle(seconds, retries - 1)
 
 
 def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None:
@@ -167,10 +182,19 @@ def measure_energy(run_once, *, tag: str, window: float = WINDOW) -> dict | None
         if cv > 35.0:
             flags.append(f"loaded-package CV {cv:.0f}% (>35%) - sub-ms op vs sampler, "
                          f"low confidence")
+        # each rail's active term is clipped at 0 on its own, so a rail that drew less than
+        # at idle leaves the package below the sum of its rails: the baseline was not idle
+        parts = sum(v for v in rail_active.values() if v == v)
+        if out["active_pkg_W"] * 1000.0 < 0.8 * parts - 100.0:
+            flags.append(f"active package {out['active_pkg_W']:.2f} W is below its rails "
+                         f"({parts / 1000.0:.2f} W) - a rail drew less than at idle, perf/W too high")
     else:
         out["active_pkg_W"] = float("nan")
         out["active_pkg_cv_pct"] = float("nan")
         flags.append("no powermetrics samples parsed")
+    if IDLE_BUSY:
+        flags.append(f"idle baseline {IDLE_PKG / 1000.0:.1f} W (> {IDLE_BUSY_MW / 1000.0:.0f} W) - "
+                     "the machine was not idle, perf/W too high")
 
     if ns and ns < 12:
         flags.append(f"only {ns} pm samples - short window, treat as indicative")

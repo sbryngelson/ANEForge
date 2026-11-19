@@ -66,3 +66,9 @@ and show in the table. For the performance rooflines, a battery run in **High
 Power** mode is close to AC over the short bench windows; Automatic or Low Power
 on battery will throttle, so those rows are labelled accordingly. The numeric
 cliffs are clock-independent and comparable regardless of power state.
+
+Run `--perf` on a **quiet machine**: close other apps and let indexing and backups
+finish. Every watt figure is the loaded draw minus an idle baseline sampled at the
+start, so a busy baseline makes perf/W too high. The suite warns and re-samples when
+the idle package is above 5 W, flags the rows if it stays there, and the table shows
+`busy idle` in place of that submission's perf/W.

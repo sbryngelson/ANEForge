@@ -40,6 +40,12 @@ CANONICAL_DECODE_CONFIG = {"d_model": 1024, "n_layers": 4, "n_heads": 16,
                            "d_head": 64, "d_ff": 4096, "vocab": 32000, "s_kv": 128}
 
 
+# an idle package baseline above this is a machine that was not idle (clean submissions
+# sit at 0.03-2.7 W; the two busy ones seen read 7.7 and 9.1 W). Active power is the loaded
+# draw minus the baseline, so a busy baseline understates it and inflates perf/W (#304).
+IDLE_BUSY_MW = 5000.0
+
+
 def _load() -> list[dict]:
     reports = []
     for p in sorted(ROOFLINES_DIR.glob("roofline-*.json")):
@@ -112,7 +118,7 @@ def _perf_headline(report: dict) -> dict:
     the headline still fills instead of showing three blanks."""
     h: dict = {"gemm_tflops": None, "bw_gbps": None, "ridge": None,
                "perf_per_w": None, "decode_tok_s": None, "decode_blocked": False,
-               "decode_offconfig": False}
+               "decode_offconfig": False, "perf_per_w_busy_idle": False}
     ra = _perf_summary(report, "roofline_analysis.py")
     if ra:
         ceil = ra.get("ceilings") or {}
@@ -124,6 +130,9 @@ def _perf_headline(report: dict) -> dict:
     sat = _perf_summary(report, "device_saturation_sweep.py")
     gane = (((sat or {}).get("peaks") or {}).get("gemm") or {}).get("ANE") or {}
     h["perf_per_w"] = gane.get("peak_perf_per_W")
+    idle = ((sat or {}).get("meta") or {}).get("idle_pkg_mW")
+    if h["perf_per_w"] is not None and isinstance(idle, (int, float)) and idle > IDLE_BUSY_MW:
+        h["perf_per_w"], h["perf_per_w_busy_idle"] = None, True
     # where its ANE power came from (#289); submissions from before the field are powermetrics
     h["perf_per_w_source"] = (report.get("ane_power_source")
                               or ((sat or {}).get("meta") or {}).get("ane_power_source"))
@@ -242,6 +251,7 @@ def render(reports: list[dict]) -> str:
     perf_rows = []
     any_decode_blocked = False
     any_rail = False
+    any_busy_idle = False
     offconfig_chips = []
     for _, g in sorted(groups.items(), key=lambda kv: str(kv[1]["latest"]["machine"]["hardware"].get("chip"))):
         # use the most recent submission that carries perf data
@@ -268,6 +278,9 @@ def render(reports: list[dict]) -> str:
         if h["perf_per_w"] is not None and h.get("perf_per_w_source") == "smc_pp0b":
             ppw += " (rail)"
             any_rail = True
+        if h.get("perf_per_w_busy_idle"):
+            ppw = "busy idle"
+            any_busy_idle = True
         perf_rows.append(
             f"| {hw.get('chip','?')} | {hw.get('model_identifier','?')} "
             f"| {_c(h['gemm_tflops'], '.1f')} | {_c(h['bw_gbps'], '.2g')} "
@@ -299,6 +312,14 @@ def render(reports: list[dict]) -> str:
                 "(`bench/_ane_rail.py`, #289). That is a measured rail rather than powermetrics' "
                 "model estimate, so it is not the same measurement as the other rows; "
                 "compare it with them loosely._",
+                "",
+            ]
+        if any_busy_idle:
+            lines += [
+                f"_`busy idle` perf/W: the run's idle package baseline was above {IDLE_BUSY_MW / 1000.0:.0f} W, "
+                "so the machine was not idle when it was sampled. Active power is the loaded draw minus "
+                "that baseline, which makes the perf/W too high; it is withheld until the machine is "
+                "re-run quiet. Throughput columns are unaffected._",
                 "",
             ]
         if any_decode_blocked:
@@ -368,6 +389,8 @@ def build_headline_json(reports: list[dict]) -> list[dict]:
             rows[-1]["cpu_levels"] = hw["cpu_levels"]
         if h.get("perf_per_w_source"):
             rows[-1]["peak_perf_per_w_source"] = h["perf_per_w_source"]
+        if h.get("perf_per_w_busy_idle"):
+            rows[-1]["peak_perf_per_w_withheld"] = "busy_idle"
     return rows
 
 
