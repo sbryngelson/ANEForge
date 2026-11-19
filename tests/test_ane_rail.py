@@ -1,6 +1,7 @@
 """Off-device tests for the SMC-rail ANE power fallback (bench/_ane_rail.py, issue #289):
 the estimator math, how measure_energy() picks the source and builds the package, and the
-aggregator's marking. powermetrics and the rail are faked; no SMC, IOReport or ANE needed."""
+aggregator's marking, plus the busy-idle guard (#304) in both. powermetrics and the rail
+are faked; no SMC, IOReport or ANE needed."""
 import math
 import os
 import sys
@@ -101,9 +102,20 @@ def test_measure_energy_source_and_package(monkeypatch):
   assert math.isclose(e["active_pkg_W"], (e["ane_active_mW"] + e["cpu_active_mW"]) / 1e3)
 
 
-def _report(source):
+def test_busy_idle_is_flagged(monkeypatch):
+  import device_compare_wattcomplete as wc
+  # quiet baseline: no flag, and the package sits at or above its rails
+  assert not _measure(monkeypatch, _pm(0, 400), _pm(3000, 2900))["flags"]
+  assert not wc.IDLE_BUSY
+  # 8 W of CPU at "idle" that is gone under load: the package (0.5 W) lands below the ANE (3 W)
+  e = _measure(monkeypatch, _pm(0, 8000), _pm(3000, 5500))
+  assert wc.IDLE_BUSY and math.isclose(e["active_pkg_W"], 0.5)
+  assert any("idle baseline 8.0 W" in f for f in e["flags"]) and any("below its rails" in f for f in e["flags"])
+
+
+def _report(source, idle_pkg_mW=300.0):
   sat = {"peaks": {"gemm": {"ANE": {"peak_gflops": 10000.0, "peak_perf_per_W": 1234.0}}},
-         "meta": {"ane_power_source": source}}
+         "meta": {"ane_power_source": source, "idle_pkg_mW": idle_pkg_mW}}
   return {"machine": {"hardware": {"chip": "Apple M6", "model_identifier": "Mac18,5"},
                       "hardware_hash": "x" + str(source), "environment": {"power": {"source": "ac"}}},
           "perf_rooflines": [{"script": "device_saturation_sweep.py", "returncode": 0, "summary": sat}]}
@@ -113,3 +125,12 @@ def test_aggregator_marks_rail_perf_per_w():
   assert "1234 (rail)" in agg.render([_report("smc_pp0b")])
   assert "1234 (rail)" not in agg.render([_report("powermetrics")])
   assert agg.build_headline_json([_report("smc_pp0b")])[0]["peak_perf_per_w_source"] == "smc_pp0b"
+
+
+def test_aggregator_withholds_busy_idle_perf_per_w():
+  busy = _report("powermetrics", idle_pkg_mW=7698.5)
+  md = agg.render([busy])
+  assert "| busy idle |" in md and "1234" not in md and "| 10.0 |" in md   # throughput stays
+  row = agg.build_headline_json([busy])[0]
+  assert row["peak_perf_per_w_gflops"] is None and row["peak_perf_per_w_withheld"] == "busy_idle"
+  assert "busy idle" not in agg.render([_report("powermetrics")])
