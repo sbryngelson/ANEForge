@@ -34,6 +34,14 @@ def test_estimator():
   assert dip["ane_active_mW"] == 0.0 and not any("does not carry" in f for f in dip["flags"])
 
 
+def test_split_clusters():
+  # an M5 Pro has no EACC: its other clusters are MACC0/MACC1. The GPU channels are not CPU.
+  m5pro = {"MACC0": 26.0, "MACC0 SRAM": 3.0, "MACC1": 24.0, "MACC1 SRAM": 3.0,
+           "PACC": 38.0, "PACC SRAM": 4.5, "AGX": 4.0, "AGX AFR": 2.0}
+  assert r.split_clusters(m5pro) == (42.5, 56.0)
+  assert r.split_clusters({"PACC": 3.0, "PACC SRAM": 0.5, "EACC": 1.0, "EACC SRAM": 0.25}) == (3.5, 1.25)
+
+
 class _FakePM:
   """Stands in for `sudo powermetrics`: writes a canned log, then exits after a few polls."""
   text = ""
