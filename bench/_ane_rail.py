@@ -46,8 +46,9 @@ MIN_UPDATES = 8
 # the cluster; further below, PP0b is not feeding that cluster on this machine (a Mac16,9
 # read -12 to -29 W, #304) and the ANE term is not a measurement
 RAIL_DEFICIT_W = 3.0
-# the IOReport group holding the per-cluster Energy histograms: "PMP" through macOS 27.0,
-# "PMP0" on macOS 27.2
+# the IOReport group holding the per-cluster Energy histograms: "PMP" on M4, M5 and M6
+# (macOS 27.0); on an M5 Pro "PMP" has no channels (macOS 27.0.1, #295) and the group is
+# "PMP0" (seen on macOS 27.2.1)
 PMP_GROUPS = ("PMP", "PMP0")
 
 
