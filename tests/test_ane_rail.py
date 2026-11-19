@@ -25,6 +25,12 @@ def test_estimator():
   held = [_s(v) for v in [5.0] * 4 + [5.2] * 4 + [4.9] * 4]
   assert r.rail_updates([s["pp0b"] for s in held]) == 3
   assert any("PP0b updates" in f for f in r.summarize(held, idle)["flags"])
+  # a rail that does not feed the cluster (Mac16,9, #304) stays flat while the cluster loads:
+  # no ANE power from it, where a 1.5 W dip under its idle offset is still a reading
+  off = r.summarize([_s(1.4, 14.0)] * 20, idle)
+  assert math.isnan(off["ane_active_mW"]) and any("does not carry" in f for f in off["flags"])
+  dip = r.summarize([_s(0.8, 2.9)] * 20, idle)
+  assert dip["ane_active_mW"] == 0.0 and not any("does not carry" in f for f in dip["flags"])
 
 
 class _FakePM:

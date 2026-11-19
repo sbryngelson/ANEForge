@@ -31,6 +31,13 @@ SAMPLE_S = 0.25   # sampler period; PP0b itself updates about once a second
 # fewer distinct PP0b readings than this is flagged: on an M4 under a steady ANE GEMM,
 # an 8-reading window's median was within 3-6% of a 90 s window's (2.5 s: up to 76%)
 MIN_UPDATES = 8
+# the rail-minus-cluster term may dip 1-2 W below its idle value when other threads load
+# the cluster; further below, PP0b is not feeding that cluster on this machine (a Mac16,9
+# read -12 to -29 W, #304) and the ANE term is not a measurement
+RAIL_DEFICIT_W = 3.0
+# the IOReport group holding the per-cluster Energy histograms: "PMP" through macOS 27.0,
+# "PMP0" on macOS 27.2
+PMP_GROUPS = ("PMP", "PMP0")
 
 
 # estimator (pure, off-device testable)
@@ -68,6 +75,11 @@ def summarize(loaded: list[dict], idle: list[dict]) -> dict:
         flags.append(f"only {out['n_rail_updates']} PP0b updates - short window, treat as indicative")
     if out["ane_cv_pct"] > 35.0:
         flags.append(f"rail CV {out['ane_cv_pct']:.0f}% (>35%) - low confidence")
+    deficit = _median([ane(s) for s in idle]) - _median(raw)
+    if deficit > RAIL_DEFICIT_W:
+        out["ane_active_mW"] = float("nan")
+        flags.append(f"PP0b reads {deficit:.1f} W below its CPU cluster vs idle - the rail does "
+                     "not carry that cluster on this machine, no ANE power from it")
     out["flags"] = flags
     return out
 
@@ -179,14 +191,18 @@ class _Energy:
         ior.IOReportStateGetResidency.argtypes = [vp, ctypes.c_int32]
         self._cf, self._ior = cf, ior
         self._channels_key = self._cfstr("IOReportChannels")
-        chans = ior.IOReportCopyChannelsInGroup(self._cfstr("PMP"), self._cfstr("Energy"), 0, 0, 0)
-        if not chans:
-            raise OSError("no IOReport PMP/Energy group")
-        self._subbed = vp()
-        self._sub = ior.IOReportCreateSubscription(None, chans, ctypes.byref(self._subbed), 0, None)
-        cf.CFRelease(chans)
-        if not self._sub or not self._subbed:
-            raise OSError("IOReport PMP/Energy subscription refused")
+        self._sub = None
+        for group in PMP_GROUPS:   # an absent group still returns a (channel-less) dict; subscribing fails
+            chans = ior.IOReportCopyChannelsInGroup(self._cfstr(group), self._cfstr("Energy"), 0, 0, 0)
+            if not chans:
+                continue
+            self._subbed = vp()
+            self._sub = ior.IOReportCreateSubscription(None, chans, ctypes.byref(self._subbed), 0, None)
+            cf.CFRelease(chans)
+            if self._sub and self._subbed:
+                break
+        else:
+            raise OSError("no IOReport PMP/Energy group, or its subscription was refused")
         self._prev = ior.IOReportCreateSamples(self._sub, self._subbed, None)
 
     def _cfstr(self, s: str):
