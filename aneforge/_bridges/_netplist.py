@@ -8,6 +8,7 @@ import json
 import plistlib
 import struct
 import subprocess
+import tempfile
 from pathlib import Path
 
 _INVOKERS_DIR = Path(__file__).resolve().parents[1] / "_invokers"     # aneforge/_invokers/
@@ -32,8 +33,53 @@ def ensure_invoker(name: str) -> Path:
   return binp
 
 
+# set once verifyBundleAtPath rejects a bundle with several weight files (macOS 27.2, #286):
+# every later multi-file bundle in this process is merged before its first attempt
+_MERGE_WEIGHTS = False
+_WEIGHT_REFS = (("ConstantIndex", "ConstantByteOffset"), ("KernelIndex", "KernelOffset"))
+
+
+def merge_weights(net_plist, weights, outdir: Path) -> tuple[Path, list[Path]]:
+  """Rewrite a bundle whose constants span weights.0..N as one weights.0 under `outdir`: the files are concatenated (each padded to 64 B) and every Constant/Kernel reference becomes index 0 plus its file's base offset."""
+  pl = plistlib.loads(Path(net_plist).read_bytes())
+  blob, base = b"", {}
+  for w in sorted(weights, key=lambda w: int(Path(w).suffix[1:])):
+    base[int(Path(w).suffix[1:])] = len(blob)
+    data = Path(w).read_bytes()
+    blob += data + b"\0" * (-len(data) % 64)
+
+  def walk(o):
+    if isinstance(o, dict):
+      for index_key, offset_key in _WEIGHT_REFS:
+        if index_key in o: o[offset_key], o[index_key] = o.get(offset_key, 0) + base[o[index_key]], 0
+      if isinstance(o.get("Weights"), list): o["Weights"] = ["weights.0"]
+      for v in o.values(): walk(v)
+    elif isinstance(o, list):
+      for v in o: walk(v)
+  walk(pl)
+  outdir.mkdir(parents=True, exist_ok=True)
+  (outdir / "net.plist").write_bytes(plistlib.dumps(pl))
+  (outdir / "weights.0").write_bytes(blob)
+  return outdir / "net.plist", [outdir / "weights.0"]
+
+
 def invoke_netplist(invoker, net_plist, *, weights=(), inputs=(), outputs=(), repeats: int | None = 1, warmup=None, extra=()):
-  """Shared Path-A dispatch: build the invoker command and run it. `inputs`/`outputs` are (name, path) pairs; `repeats`/`warmup` omitted when None (rank_invoker rejects them). Raises on non-zero rc or non-ok status; returns the status dict."""
+  """Shared Path-A dispatch: build the invoker command and run it. `inputs`/`outputs` are (name, path) pairs; `repeats`/`warmup` omitted when None (rank_invoker rejects them). Raises on non-zero rc or non-ok status; returns the status dict. macOS 27.2 rejects a bundle with two or more weight files (#286), so such a bundle is retried as one merged weights.0."""
+  global _MERGE_WEIGHTS
+  kw = {"inputs": inputs, "outputs": outputs, "repeats": repeats, "warmup": warmup, "extra": extra}
+  weights = list(weights)
+  if len(weights) < 2: return _invoke(invoker, net_plist, weights, **kw)
+  if not _MERGE_WEIGHTS:
+    try:
+      return _invoke(invoker, net_plist, weights, **kw)
+    except RuntimeError as e:
+      if "verifyBundleAtPath" not in str(e): raise
+      _MERGE_WEIGHTS = True
+  with tempfile.TemporaryDirectory(prefix="ane_merged_") as d:
+    return _invoke(invoker, *merge_weights(net_plist, weights, Path(d)), **kw)
+
+
+def _invoke(invoker, net_plist, weights, *, inputs, outputs, repeats, warmup, extra):
   cmd = [str(invoker), "--net-plist", str(net_plist)]
   for w in weights: cmd += ["--weights", str(w)]
   for name, path in inputs: cmd += ["--input", f"{name}={path}"]
