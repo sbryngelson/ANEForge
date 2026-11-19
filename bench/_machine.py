@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import subprocess
 import time
@@ -399,6 +400,18 @@ def fingerprint() -> dict:
         "environment": environment,
         "run_id": uuid.uuid4().hex[:8],                     # unique per submission
     }
+
+
+def json_safe(o):
+    """o with every NaN/inf float replaced by None. json.dumps writes them as bare NaN /
+    Infinity, which is not JSON: jq and JavaScript's JSON.parse reject the whole file."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [json_safe(v) for v in o]
+    return o
 
 
 def chip_slug(fp: dict) -> str:

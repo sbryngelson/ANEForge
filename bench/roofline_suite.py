@@ -231,7 +231,7 @@ def main():
 
     out = Path(args.out) if args.out else ROOFLINES_DIR / _machine.result_filename(fp)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, indent=2))
+    out.write_text(json.dumps(_machine.json_safe(report), indent=2, allow_nan=False))
     print(f"\nwrote merged report -> {out}")
     print("to publish: commit this file and run `python3 bench/aggregate_rooflines.py`, then open a PR")
 

@@ -16,6 +16,17 @@ The SMC updates PP0b about once a second, so a window needs many seconds. The id
 offset holds while only the calling thread runs and shifts 1-2 W when other threads
 load the same cluster.
 
+The other CPU clusters (EACC; MACC0/MACC1 on an M5 Pro) are not on PP0b: with every
+core of an M5 Pro busy, PP0b read 43 W beside 43 W of PACC and 57 W of MACC. They
+count toward CPU power only.
+
+The histograms are coarse and their state names are the bins' upper edges: on an M5 Pro
+(macOS 27.2) a cluster has 2 W bins and its SRAM 0.25 W bins, and an idle cluster sits
+wholly in the first, "2W". Against PP0b with the ANE idle, PACC read 2.8 W high at idle,
+1.8-2.5 W high with one or two busy cores and 0.6 W low with four to six, so the
+idle-subtracted ANE term of a CPU-only load came out 0.2-3.3 W, not 0. Read a
+rail-sourced ANE power on such a chip as good to a couple of watts.
+
 Run standalone to print a second of readings:
   python3 bench/_ane_rail.py
 """
@@ -48,6 +59,13 @@ def _median(v: list[float]) -> float:
 def rail_updates(pp0b: list[float]) -> int:
     """Distinct readings: the SMC holds PP0b between updates, so the sampler sees runs."""
     return sum(1 for i, x in enumerate(pp0b) if i == 0 or x != pp0b[i - 1])
+
+
+def split_clusters(e: dict[str, float]) -> tuple[float, float]:
+    """(pacc, eacc) W from IOReport channel -> W: the cluster PP0b feeds, with its SRAM,
+    and the CPU clusters it does not (EACC*, and MACC* where the chip has them)."""
+    return (sum(v for k, v in e.items() if k.startswith("PACC")),
+            sum(v for k, v in e.items() if k.startswith(("EACC", "MACC"))))
 
 
 def summarize(loaded: list[dict], idle: list[dict]) -> dict:
@@ -266,10 +284,8 @@ class RailSampler:
         w = self._smc.read_float(RAIL_KEY)
         if w is None:
             return None
-        e = self._energy.sample()
-        return {"pp0b": w,
-                "pacc": sum(v for k, v in e.items() if k.startswith("PACC")),   # cluster + its SRAM
-                "eacc": sum(v for k, v in e.items() if k.startswith("EACC"))}
+        pacc, eacc = split_clusters(self._energy.sample())
+        return {"pp0b": w, "pacc": pacc, "eacc": eacc}
 
     def _loop(self):
         while not self._stop.wait(SAMPLE_S):
