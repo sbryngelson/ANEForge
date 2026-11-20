@@ -36,10 +36,11 @@ def test_estimator():
 
 def test_split_clusters():
   # an M5 Pro has no EACC: its other clusters are MACC0/MACC1. The GPU channels are not CPU.
+  # SRAM is on its own rail (PP7b), so PACC SRAM counts as CPU power, not against PP0b.
   m5pro = {"MACC0": 26.0, "MACC0 SRAM": 3.0, "MACC1": 24.0, "MACC1 SRAM": 3.0,
            "PACC": 38.0, "PACC SRAM": 4.5, "AGX": 4.0, "AGX AFR": 2.0}
-  assert r.split_clusters(m5pro) == (42.5, 56.0)
-  assert r.split_clusters({"PACC": 3.0, "PACC SRAM": 0.5, "EACC": 1.0, "EACC SRAM": 0.25}) == (3.5, 1.25)
+  assert r.split_clusters(m5pro) == (38.0, 60.5)
+  assert r.split_clusters({"PACC0": 3.0, "PACC0 SRAM": 0.5, "EACC0": 1.0, "EACC0 SRAM": 0.25}) == (3.0, 1.75)
 
 
 def test_rail_clusters():

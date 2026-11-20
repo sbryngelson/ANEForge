@@ -20,6 +20,20 @@ The other CPU clusters (EACC; MACC0/MACC1 on an M5 Pro) are not on PP0b: with ev
 core of an M5 Pro busy, PP0b read 43 W beside 43 W of PACC and 57 W of MACC. They
 count toward CPU power only.
 
+Nor is the cluster's SRAM (the "PACC0 SRAM" channel). The CPU clusters' DVFS tables in
+the device tree (pmgr voltage-states1/5) each come with a separate -sram voltage table,
+and IOReport SoC Stats / Events has VDD_CPU_SRAM_VOLTAGE_CHANGE_COMPLETION: the SRAM is
+its own voltage domain. Its rail is SMC PP7b, which follows PACC0 SRAM across ALU-,
+L1-, L2- and DRAM-bound loads on 1-6 threads (dPP7b = 0.67 dSRAM + 0.45 W on an M4,
+0.42 dSRAM + 0.07 W on an M6, rms under 0.1 W) and not the ANE (+0.33 W under a GEMM
+that adds 9 W to PP0b). So only the cluster's cores are subtracted from PP0b; the SRAM
+counts toward CPU power. The ANE's own DVFS tables (voltage-states8/29) have no -sram
+table, so its SRAM is taken to be on PP0b with it.
+
+PACC0 is a model estimate and its error depends on the load, not only on its size: with
+1-6 busy threads it read 2-5 W above PP0b on an L1-resident loop and 0.5-1.8 W below it
+on DRAM streaming (M4, M6). With only the calling thread busy that stays within ~1 W.
+
 The histograms are coarse and their state names are the bins' upper edges: on an M5 Pro
 (macOS 27.2) a cluster has 2 W bins and its SRAM 0.25 W bins, and an idle cluster sits
 wholly in the first, "2W". Against PP0b with the ANE idle, PACC read 2.8 W high at idle,
@@ -52,7 +66,10 @@ busy (ANE idle), and the summary shows which channel rises together with PP0b:
 """
 from __future__ import annotations
 
+import argparse
 import ctypes
+import multiprocessing
+import os
 import statistics
 import sys
 import threading
@@ -87,10 +104,12 @@ def rail_updates(pp0b: list[float]) -> int:
 
 
 def split_clusters(e: dict[str, float]) -> tuple[float, float]:
-    """(pacc, eacc) W from IOReport channel -> W: the cluster PP0b feeds, with its SRAM,
-    and the CPU clusters it does not (EACC*, and MACC* where the chip has them)."""
-    return (sum(v for k, v in e.items() if k.startswith("PACC")),
-            sum(v for k, v in e.items() if k.startswith(("EACC", "MACC"))))
+    """(pacc, eacc) W from IOReport channel -> W: the cores of the cluster PP0b feeds, and
+    the CPU power it does not carry: the other clusters (EACC*, MACC* where the chip has
+    them) and every cluster's SRAM, which is on its own rail (VDD_CPU_SRAM, see above)."""
+    return (sum(v for k, v in e.items() if k.startswith("PACC") and not k.endswith(" SRAM")),
+            sum(v for k, v in e.items() if k.startswith(("EACC", "MACC"))
+                or (k.startswith("PACC") and k.endswith(" SRAM"))))
 
 
 def rail_clusters(channels) -> list[str]:
@@ -389,9 +408,6 @@ def _burn():   # one busy CPU core, run in a child process (no GIL sharing with 
 
 
 def main(argv=None):
-    import argparse
-    import multiprocessing
-    import os
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--seconds", type=float, default=6.0, help="run length (default 6)")
     ap.add_argument("--load", action="store_true",
