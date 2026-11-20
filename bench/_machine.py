@@ -414,6 +414,12 @@ def json_safe(o):
     return o
 
 
+def dumps_strict(o, **kw) -> str:
+    """json.dumps(o, **kw) as strict JSON. The round trip lets `default=` handlers (numpy
+    scalars and the like) run first, so a NaN they produce is nulled too."""
+    return json.dumps(json_safe(json.loads(json.dumps(o, **kw))), indent=kw.get("indent"), allow_nan=False)
+
+
 def chip_slug(fp: dict) -> str:
     """Filesystem-safe short chip tag, e.g. 'apple-m5-pro'."""
     chip = (fp["hardware"].get("chip") or "unknown").lower()

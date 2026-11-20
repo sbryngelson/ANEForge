@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -20,6 +19,7 @@ import numpy as np
 # Reuse the wattcomplete energy harness + device_compare timing/precision helpers.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare as dc          # noqa: E402
+import _machine  # noqa: E402
 import device_compare_wattcomplete as wc  # noqa: E402
 
 HAVE_ANE, HAVE_MLX, HAVE_SUDO = dc.HAVE_ANE, dc.HAVE_MLX, dc.HAVE_SUDO
@@ -479,7 +479,7 @@ def main() -> int:
     summary = analyze_and_print()
 
     out = Path(__file__).resolve().parent / "results" / "device_serving_sweep_results.json"
-    out.write_text(json.dumps({
+    out.write_text(_machine.dumps_strict({
         "backends": {"ane": HAVE_ANE, "mlx": HAVE_MLX, "sudo": HAVE_SUDO},
         "window_s": wc.WINDOW, "pm_interval_ms": wc.PM_INTERVAL_MS, "batches": batches,
         "idle_mW": wc.IDLE, "idle_pkg_mW": wc.IDLE_PKG,

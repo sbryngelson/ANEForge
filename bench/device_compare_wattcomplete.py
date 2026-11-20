@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import subprocess
@@ -23,6 +22,7 @@ import numpy as np
 # Reuse the sibling harness's helpers + workload math so we don't duplicate it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare as dc  # noqa: E402
+import _machine  # noqa: E402
 import _ane_rail  # noqa: E402
 from aggregate_rooflines import IDLE_BUSY_MW  # noqa: E402
 
@@ -803,7 +803,7 @@ def main() -> int:
     print_tables()
 
     out = Path(__file__).resolve().parent / "results" / "device_compare_wattcomplete_results.json"
-    out.write_text(json.dumps({
+    out.write_text(_machine.dumps_strict({
         "backends": {"ane": HAVE_ANE, "mlx": HAVE_MLX, "torchvision": HAVE_TV,
                      "transformers": HAVE_HF, "sudo": HAVE_SUDO},
         "window_s": WINDOW, "pm_interval_ms": PM_INTERVAL_MS,
