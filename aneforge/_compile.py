@@ -595,13 +595,19 @@ def _e_slice_by_size(em, t, n, s):
   if len(b) < 2 or b[-1] == 0 or not _route_width_slices(): return emit(n, s[0], b, sz, t.shape)
   # A nonzero last-axis begin is a special offset path on the ANE, not a plain copy: pre-A16 it
   # saturates above 4094, and two such slices at different offsets feeding matmuls returned the
-  # wrong column or failed to compile on an M5 Pro under macOS 27.2 (#310). Swap the last two axes,
-  # slice with a zero last-axis begin, and swap back.
+  # wrong column or failed to compile on an M5 Pro under macOS 27.2 (#310). Take every other axis
+  # first (last-axis begin 0), then swap the last two axes, take the last-axis window with a zero
+  # last-axis begin, and swap back. Two steps, because swapping alone would move a nonzero begin
+  # on the second-to-last axis into the last position.
+  src, x = list(t.srcs[0].shape), s[0]
+  if any(b[:-1]) or sz[:-1] != src[:-1]:
+    emit(f"{n}_o", x, [*b[:-1], 0], [*sz[:-1], src[-1]], [*sz[:-1], src[-1]])
+    x = f"{n}_o"
   sw = lambda v: [*v[:-2], v[-1], v[-2]]
-  perm, src = sw(list(range(len(b)))), list(t.srcs[0].shape)
+  perm = sw(list(range(len(b))))
   em.line(f'tensor<int32, [{len(perm)}]> {n}_p = const()[name = string("{n}_p"), val = tensor<int32, [{len(perm)}]>({perm})];')
-  em.line(f'{em.ty(sw(src))} {n}_ti = transpose(perm = {n}_p, x = {s[0]})[name = string("{n}_ti")];')
-  emit(f"{n}_ts", f"{n}_ti", sw(b), sw(sz), sw(sz))
+  em.line(f'{em.ty(sw([*sz[:-1], src[-1]]))} {n}_ti = transpose(perm = {n}_p, x = {x})[name = string("{n}_ti")];')
+  emit(f"{n}_ts", f"{n}_ti", [*[0] * (len(b) - 2), b[-1], 0], sw(sz), sw(sz))
   em.line(f'{em.ty(t.shape)} {n} = transpose(perm = {n}_p, x = {n}_ts)[name = string("{n}")];')
 
 
