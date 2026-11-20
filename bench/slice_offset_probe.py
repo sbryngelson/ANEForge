@@ -16,11 +16,17 @@ Each cell is two stages on an [n,n] input A with the identity fed as a second in
     swap+elim   the swap, then one LU elimination step at column k1
   stage 2       (M @ e_k2) e_k2^T                      column k2 of the stage-1 result, in place
 
-and is checked against the same arithmetic in numpy. `width` builds e_k as the last-axis-offset
-slice, `routed` as the transposed row slice. One compile per fresh process, breaker disabled.
+and is checked against the same arithmetic in numpy. Each cell is built three ways:
+
+  raw       e_k as the last-axis-offset slice, emitted as written (ANEFORGE_ROUTE_WIDTH_SLICES=0)
+  default   the same graph through the library's default lowering, which routes such a slice
+  routed    e_k routed by hand in the graph (transposed row slice)
+
+`raw` is the hazard; `default` shows whether the lowering removes it. One compile per fresh
+process, breaker disabled.
 
   python bench/slice_offset_probe.py               # the table
-  python bench/slice_offset_probe.py --one swap+elim 3 1 width
+  python bench/slice_offset_probe.py --one swap+elim 3 1 raw
 """
 from __future__ import annotations
 
@@ -32,7 +38,7 @@ from bench._probe import probe_isolated
 
 N = 8
 STAGES = ("touch", "swap", "swap+elim")
-FORMS = ("width", "routed")
+FORMS = ("raw", "default", "routed")
 # (k1, k2): a nonzero k1 followed by a different k2 is what fails; (0, 1) and equal columns are controls
 PAIRS = ((0, 1), (1, 0), (3, 1), (2, 6), (3, 3))
 TOL = 0.03
@@ -42,6 +48,7 @@ def _attempt(stage: str, k1: int, k2: int, form: str) -> str:
   """One compile+dispatch; 'OK', 'C-FAIL <Err>', or 'D-FAIL wrong(<max abs err>)' / 'D-FAIL <Err>'."""
   import os
   os.environ["ANEFORGE_DISABLE_COMPILE_BREAKER"] = "1"
+  os.environ["ANEFORGE_ROUTE_WIDTH_SLICES"] = "0" if form == "raw" else "1"
   import warnings
 
   import numpy as np
@@ -116,15 +123,15 @@ def main() -> int:
     return 0
 
   print(f"{_chip()}  n={N}   (C-FAIL=compile, D-FAIL wrong(e)=max abs error e vs numpy)\n")
-  print(f"  {'stage 1':<10} {'k1':>2} {'k2':>2}   {'width':<20} {'routed':<20}")
-  bad = 0
+  print(f"  {'stage 1':<10} {'k1':>2} {'k2':>2}   " + " ".join(f"{f:<20}" for f in FORMS))
+  bad = [0] * len(FORMS)
   for stage in STAGES:
     for k1, k2 in PAIRS:
-      w, r = _isolated(stage, k1, k2, "width"), _isolated(stage, k1, k2, "routed")
-      bad += w != "OK"
-      print(f"  {stage:<10} {k1:>2} {k2:>2}   {w:<20} {r:<20}", flush=True)
-  print(f"\n{bad} width-offset cell(s) not OK. `routed` keeps every last-axis begin at 0. See issue #310; "
-        "please report the chip, macOS version and commit with the table.")
+      res = [_isolated(stage, k1, k2, f) for f in FORMS]
+      bad = [b + (r != "OK") for b, r in zip(bad, res)]
+      print(f"  {stage:<10} {k1:>2} {k2:>2}   " + " ".join(f"{r:<20}" for r in res), flush=True)
+  print("\nnot OK: " + ", ".join(f"{f} {b}" for f, b in zip(FORMS, bad)) + ". See issue #310; please report "
+        "the chip, macOS version and commit with the table.")
   return 0
 
 
