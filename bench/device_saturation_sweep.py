@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -21,6 +20,7 @@ import numpy as np
 
 # Reuse the watt-complete power harness + device_compare latency/relerr helpers.
 import device_compare as dc            # noqa: E402
+import _machine  # noqa: E402
 import device_compare_wattcomplete as wc  # noqa: E402
 
 HAVE_ANE, HAVE_MLX, HAVE_SUDO = dc.HAVE_ANE, dc.HAVE_MLX, dc.HAVE_SUDO
@@ -386,7 +386,7 @@ def main():
         "ane_power_source": wc.ane_power_source() if do_power else None,
     }
     out = Path(__file__).resolve().parent / "results" / "device_saturation_sweep_results.json"
-    out.write_text(json.dumps(RESULTS, indent=2, default=lambda o: None))
+    out.write_text(_machine.dumps_strict(RESULTS, indent=2, default=lambda o: None))
     print(f"\nwrote {out}")
     return 0
 

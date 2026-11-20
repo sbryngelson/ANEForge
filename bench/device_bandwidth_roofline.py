@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -19,6 +18,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare as dc            # noqa: E402
+import _machine  # noqa: E402
 import device_compare_wattcomplete as wc  # noqa: E402  (energy harness + idle sampling)
 
 HAVE_ANE, HAVE_MLX, HAVE_SUDO = dc.HAVE_ANE, dc.HAVE_MLX, dc.HAVE_SUDO
@@ -404,7 +404,7 @@ def main() -> int:
     build_coverage()
 
     out = Path(__file__).resolve().parent / "results" / "device_bandwidth_roofline_results.json"
-    out.write_text(json.dumps({
+    out.write_text(_machine.dumps_strict({
         "backends": {"ane": HAVE_ANE, "mlx": HAVE_MLX, "sudo": HAVE_SUDO},
         "window_s": wc.WINDOW, "pm_interval_ms": wc.PM_INTERVAL_MS,
         "sizes": sizes,

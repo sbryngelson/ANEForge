@@ -554,7 +554,8 @@ def main():
                  "fp16_bytes": FP16, "cpu_fp32_bytes": FP32},
     }
     outp = TOOLS / "roofline_analysis_results.json"
-    outp.write_text(json.dumps(results, indent=2, default=lambda o: None))
+    import _machine   # sibling module; this script runs with bench/ as sys.path[0]
+    outp.write_text(_machine.dumps_strict(results, indent=2, default=lambda o: None))
     print(f"\nwrote {outp}")
     return 0
 

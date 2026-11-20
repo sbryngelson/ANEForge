@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -21,6 +20,7 @@ import numpy as np
 # Reuse the wattcomplete power harness (measure_energy/sample_idle).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import device_compare_wattcomplete as wc  # noqa: E402
+import _machine  # noqa: E402
 import device_compare as dc                # noqa: E402
 
 HAVE_ANE, HAVE_MLX, HAVE_SUDO = dc.HAVE_ANE, dc.HAVE_MLX, dc.HAVE_SUDO
@@ -424,7 +424,7 @@ def main():
             results["rows"].append(r); _print_row(r)
 
     out_path = Path(__file__).resolve().parent / "results" / "decode_measurement_results.json"
-    out_path.write_text(json.dumps(results, indent=2, default=float))
+    out_path.write_text(_machine.dumps_strict(results, indent=2, default=float))
     print(f"\nwrote {out_path}")
     _verdict(results, cfg, args.batch)
 
