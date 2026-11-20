@@ -456,7 +456,9 @@ def lu_pivoted(A):
   arcr = arc.transpose([1, 0]); M = At; P = In
   half = (arc * 0.0).adds(0.5); onerow = (arcr * 0.0).adds(1.0); zerorow = arcr * 0.0
   for k in range(n):
-    ek = In.slice_by_size([0, k], [n, 1]); ekr = ek.transpose([1, 0])
+    # e_k as a ROW of the identity, transposed: a width-offset slice ([0, k]) here loses its
+    # offset on the ANE under macOS 27.2 (M @ e_k returns column 0), see #310
+    ekr = In.slice_by_size([k, 0], [1, n]); ek = ekr.transpose([1, 0])
     kc = (arc * 0.0).adds(float(k))
     excl = af.select(kc.greater(arc), (arc * 0.0).adds(1e4), arc * 0.0)   # exclude rows < k
     idx = ((M @ ek).abs() - excl).argmax(axis=0)                          # pivot row (bridge op)
