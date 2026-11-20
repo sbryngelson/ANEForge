@@ -95,7 +95,17 @@ def slice_saturation():
         out = af.crop(af.input(x.shape), 0, 0, 1, 0)  # left=1: nonzero width begin-offset
         return np.isfinite(_dispatch(out, x)).all()
 
-    r = _bisect_cliff(finite_at, 3000.0, 60000.0)
+    # the compiler routes a width-offset slice off the last axis by default (#310); this metric is
+    # the hardware's own offset path, so emit the slice as written while measuring it
+    prev = os.environ.get("ANEFORGE_ROUTE_WIDTH_SLICES")
+    os.environ["ANEFORGE_ROUTE_WIDTH_SLICES"] = "0"
+    try:
+        r = _bisect_cliff(finite_at, 3000.0, 60000.0)
+    finally:
+        if prev is None:
+            del os.environ["ANEFORGE_ROUTE_WIDTH_SLICES"]
+        else:
+            os.environ["ANEFORGE_ROUTE_WIDTH_SLICES"] = prev
     r.update({"expected_pre_a16": 4094,
               "interpretation": "None == exact (A16/M5); a number == the pre-A16 clamp"})
     return {"metric": "sliced_value_inf_cliff", **r}

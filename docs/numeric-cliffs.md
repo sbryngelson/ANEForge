@@ -48,6 +48,16 @@ graph intended for both older and newer chips should follow the pre-A16 limit.
 The [cross-chip deployment guide](cross-chip.md#the-h13-slice-saturation-warning)
 describes the corresponding compile-time warning.
 
+The compiler now moves the offset for you: a `slice_by_size` with a nonzero last-axis
+begin is lowered as transpose, slice, transpose, so the emitted slice has a zero
+last-axis begin. That was added for a different failure of the same path (two such
+slices at different offsets feeding matmuls returned the wrong column, or failed to
+compile, on an M5 Pro under macOS 27.2). It has not been confirmed on pre-A16 hardware
+that the rewrite also removes the saturation, so the warning stays. Set
+`ANEFORGE_ROUTE_WIDTH_SLICES=0` to emit such a slice as written;
+`bench/numeric_cliffs.py` does that to keep measuring the hardware path, and
+`bench/slice_offset_probe.py` compares the two.
+
 ## Integer reduction exactness
 
 Fp16 represents every integer only through 2048. Above that point its spacing

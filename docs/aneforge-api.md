@@ -297,6 +297,19 @@ selection in the autotuner is always by on-device measurement.
 
 ---
 
+## Width-offset slice routing
+
+A `slice_by_size` (and so a `crop`, a static gather, or any helper built on them) with a
+nonzero begin on the last axis is lowered as transpose, slice, transpose: the last two
+axes are swapped, the slice is taken with a zero last-axis begin, and they are swapped
+back. The result is the same tensor. A nonzero last-axis begin is a special offset path
+on the ANE: it saturates above 4094 on pre-A16 parts, and under macOS 27.2 two such
+slices at different offsets could return the wrong column or fail to compile.
+
+- `ANEFORGE_ROUTE_WIDTH_SLICES=0` - emit such slices as written (read at compile time).
+
+Rank-1 slices and slices whose last-axis begin is 0 are emitted as written either way.
+
 ## Compile-failure backoff guard
 
 As a backstop for the autotuner's burst of variant compiles, ANEForge

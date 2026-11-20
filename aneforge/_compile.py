@@ -579,12 +579,36 @@ def _e_flatten2d(em, t, n, s):
   em.line(f'{em.ty(t.shape)} {n} = flatten2d(axis = {n}_ax, x = {s[0]})[name = string("{n}")];')
 
 
+def _route_width_slices() -> bool:
+  """Lower a last-axis-offset slice off the last axis (default). ANEFORGE_ROUTE_WIDTH_SLICES=0 emits it as written, for probes."""
+  return os.environ.get("ANEFORGE_ROUTE_WIDTH_SLICES", "1") != "0"
+
+
 @op("slice_by_size")
 def _e_slice_by_size(em, t, n, s):
   b, sz = list(t.attrs["begin"]), list(t.attrs["size"])
-  em.line(f'tensor<int32, [{len(b)}]> {n}_b = const()[name = string("{n}_b"), val = tensor<int32, [{len(b)}]>({b})];')
-  em.line(f'tensor<int32, [{len(sz)}]> {n}_sz = const()[name = string("{n}_sz"), val = tensor<int32, [{len(sz)}]>({sz})];')
-  em.line(f'{em.ty(t.shape)} {n} = slice_by_size(begin = {n}_b, size = {n}_sz, x = {s[0]})[name = string("{n}")];')
+
+  def emit(out, x, b, sz, shape):
+    em.line(f'tensor<int32, [{len(b)}]> {out}_b = const()[name = string("{out}_b"), val = tensor<int32, [{len(b)}]>({b})];')
+    em.line(f'tensor<int32, [{len(sz)}]> {out}_sz = const()[name = string("{out}_sz"), val = tensor<int32, [{len(sz)}]>({sz})];')
+    em.line(f'{em.ty(shape)} {out} = slice_by_size(begin = {out}_b, size = {out}_sz, x = {x})[name = string("{out}")];')
+  if len(b) < 2 or b[-1] == 0 or not _route_width_slices(): return emit(n, s[0], b, sz, t.shape)
+  # A nonzero last-axis begin is a special offset path on the ANE, not a plain copy: pre-A16 it
+  # saturates above 4094, and two such slices at different offsets feeding matmuls returned the
+  # wrong column or failed to compile on an M5 Pro under macOS 27.2 (#310). Take every other axis
+  # first (last-axis begin 0), then swap the last two axes, take the last-axis window with a zero
+  # last-axis begin, and swap back. Two steps, because swapping alone would move a nonzero begin
+  # on the second-to-last axis into the last position.
+  src, x = list(t.srcs[0].shape), s[0]
+  if any(b[:-1]) or sz[:-1] != src[:-1]:
+    emit(f"{n}_o", x, [*b[:-1], 0], [*sz[:-1], src[-1]], [*sz[:-1], src[-1]])
+    x = f"{n}_o"
+  sw = lambda v: [*v[:-2], v[-1], v[-2]]
+  perm = sw(list(range(len(b))))
+  em.line(f'tensor<int32, [{len(perm)}]> {n}_p = const()[name = string("{n}_p"), val = tensor<int32, [{len(perm)}]>({perm})];')
+  em.line(f'{em.ty(sw([*sz[:-1], src[-1]]))} {n}_ti = transpose(perm = {n}_p, x = {x})[name = string("{n}_ti")];')
+  emit(f"{n}_ts", f"{n}_ti", [*[0] * (len(b) - 2), b[-1], 0], sw(sz), sw(sz))
+  em.line(f'{em.ty(t.shape)} {n} = transpose(perm = {n}_p, x = {n}_ts)[name = string("{n}")];')
 
 
 @op("stack")
