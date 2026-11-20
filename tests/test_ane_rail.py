@@ -42,6 +42,49 @@ def test_split_clusters():
   assert r.split_clusters({"PACC": 3.0, "PACC SRAM": 0.5, "EACC": 1.0, "EACC SRAM": 0.25}) == (3.5, 1.25)
 
 
+def test_rail_clusters():
+  assert r.rail_clusters(["EACC0", "EACC0 SRAM", "PACC0", "PACC0 SRAM", "AGX"]) == ["PACC0"]   # M4/M6
+  assert r.rail_clusters(["MACC0", "MACC1", "PACC", "PACC SRAM", "AGX"]) == ["PACC"]          # M5 Pro
+  assert r.rail_clusters(["PACC0", "PACC0 SRAM", "PACC1", "PACC1 SRAM"]) == ["PACC0", "PACC1"]
+  assert r.rail_clusters(["AGX"]) == []
+
+
+def test_create_needs_one_pacc_cluster(monkeypatch):
+  class Smc:
+    def read_float(self, key):
+      return 1.0
+
+  chans = {"one": ["EACC0", "PACC0", "PACC0 SRAM"], "two": ["PACC0", "PACC0 SRAM", "PACC1", "PACC1 SRAM"]}
+
+  def energy(kind):
+    return type("E", (), {"channels": chans[kind], "states": {}})
+
+  monkeypatch.setattr(r.sys, "platform", "darwin")
+  monkeypatch.setattr(r, "_Smc", Smc)
+  monkeypatch.setattr(r, "_Energy", energy("one"))
+  assert r.RailSampler.create() is not None
+  # several PACC clusters (a Max): no sampler for the benchmark, but the printout still gets one
+  monkeypatch.setattr(r, "_Energy", energy("two"))
+  assert r.RailSampler.create() is None
+  assert r.RailSampler.create(any_clusters=True) is not None
+
+
+def test_summarize_records_channels():
+  ch_idle = {"PACC0": 1.0, "PACC0 SRAM": 0.125, "EACC0": 0.3}
+  idle = [dict(_s(0.8), ch=ch_idle)] * 10
+  loaded = [dict(_s(6.8, 3.4), ch={"PACC0": 3.0 + 0.1 * (i % 3), "PACC0 SRAM": 0.4, "EACC0": 0.3})
+            for i in range(10)]
+  out = r.summarize(loaded, idle)
+  assert out["channels_idle_W"] == ch_idle
+  assert out["channels_loaded_W"] == {"EACC0": 0.3, "PACC0": 3.1, "PACC0 SRAM": 0.4}
+  assert "channels_loaded_W" not in r.summarize([_s(6.8)] * 10, [_s(0.8)] * 10)   # older samples: no "ch"
+
+
+def test_bins():
+  assert r._bins([f"{i}W" for i in range(1, 33)]) == "32 x 1 W (to 32W)"
+  assert r._bins([f"{0.125 * i:.3f}W" for i in range(1, 33)]) == "32 x 0.125 W (to 4.000W)"
+
+
 class _FakePM:
   """Stands in for `sudo powermetrics`: writes a canned log, then exits after a few polls."""
   text = ""
