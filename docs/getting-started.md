@@ -6,7 +6,7 @@ minutes.
 ## Prerequisites
 
 - Apple Silicon Mac (verified on M5 Pro and M1 Max; other Apple Silicon should work).
-- macOS 14+ (verified on 26.5).
+- macOS 14+ (verified on 26.5, and on 27.2 with an M5 Pro; see the [FAQ](faq.md#what-macos-versions-are-supported) for 27.2).
 - Xcode command-line tools (`xcode-select --install`).
 - Python 3.10+ with `numpy`.
 
