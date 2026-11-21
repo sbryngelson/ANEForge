@@ -36,11 +36,14 @@ def test_estimator():
 
 def test_split_clusters():
   # an M5 Pro has no EACC: its other clusters are MACC0/MACC1. The GPU channels are not CPU.
-  # SRAM is on its own rail (PP7b), so PACC SRAM counts as CPU power, not against PP0b.
+  # Its PACC SRAM stays in the PP0b term (not a checked chip: PP7b reads 0 there)
   m5pro = {"MACC0": 26.0, "MACC0 SRAM": 3.0, "MACC1": 24.0, "MACC1 SRAM": 3.0,
            "PACC": 38.0, "PACC SRAM": 4.5, "AGX": 4.0, "AGX AFR": 2.0}
-  assert r.split_clusters(m5pro) == (38.0, 60.5)
-  assert r.split_clusters({"PACC0": 3.0, "PACC0 SRAM": 0.5, "EACC0": 1.0, "EACC0 SRAM": 0.25}) == (3.0, 1.75)
+  assert r.split_clusters(m5pro) == (42.5, 56.0)
+  # on an M4/M5/M6 the CPU SRAM is on PP7b: PACC SRAM counts as CPU power, not against PP0b
+  m6 = {"PACC0": 3.0, "PACC0 SRAM": 0.5, "EACC0": 1.0, "EACC0 SRAM": 0.25, "AGX": 2.0}
+  assert r.split_clusters(m6) == (3.5, 1.25)
+  assert r.split_clusters(m6, sram_off_rail=True) == (3.0, 1.75)
 
 
 def test_rail_clusters():
@@ -63,7 +66,12 @@ def test_create_needs_one_pacc_cluster(monkeypatch):
   monkeypatch.setattr(r.sys, "platform", "darwin")
   monkeypatch.setattr(r, "_Smc", Smc)
   monkeypatch.setattr(r, "_Energy", energy("one"))
-  assert r.RailSampler.create() is not None
+  monkeypatch.setattr(r, "_chip", lambda: "Apple M6")
+  assert r.RailSampler.create().sram_off_rail
+  # the SRAM rule is per chip, matched on the whole name: an M5 Pro keeps its SRAM on PP0b
+  for chip in ("Apple M5 Pro", "Apple M3", ""):
+    monkeypatch.setattr(r, "_chip", lambda chip=chip: chip)
+    assert not r.RailSampler.create().sram_off_rail
   # several PACC clusters (a Max): no sampler for the benchmark, but the printout still gets one
   monkeypatch.setattr(r, "_Energy", energy("two"))
   assert r.RailSampler.create() is None

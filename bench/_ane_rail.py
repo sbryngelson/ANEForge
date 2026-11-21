@@ -20,15 +20,19 @@ The other CPU clusters (EACC; MACC0/MACC1 on an M5 Pro) are not on PP0b: with ev
 core of an M5 Pro busy, PP0b read 43 W beside 43 W of PACC and 57 W of MACC. They
 count toward CPU power only.
 
-Nor is the cluster's SRAM (the "PACC0 SRAM" channel). The CPU clusters' DVFS tables in
-the device tree (pmgr voltage-states1/5) each come with a separate -sram voltage table,
-and IOReport SoC Stats / Events has VDD_CPU_SRAM_VOLTAGE_CHANGE_COMPLETION: the SRAM is
-its own voltage domain. Its rail is SMC PP7b, which follows PACC0 SRAM across ALU-,
-L1-, L2- and DRAM-bound loads on 1-6 threads (dPP7b = 0.67 dSRAM + 0.45 W on an M4,
-0.42 dSRAM + 0.07 W on an M6, rms under 0.1 W) and not the ANE (+0.33 W under a GEMM
-that adds 9 W to PP0b). So only the cluster's cores are subtracted from PP0b; the SRAM
+On an M4, M5 or M6 (SRAM_OFF_RAIL_CHIPS) nor is the cluster's SRAM (the "PACC0 SRAM"
+channel). The CPU clusters' DVFS tables in the device tree (pmgr voltage-states1/5) each
+come with a separate -sram voltage table, and IOReport SoC Stats / Events has
+VDD_CPU_SRAM_VOLTAGE_CHANGE_COMPLETION: the CPU SRAM is its own voltage domain. Its rail
+is SMC PP7b, which follows the PACC0 SRAM and EACC0 SRAM channels across ALU-, L1-, L2-
+and DRAM-bound loads on 1 to all cores (dPP7b = a dPACC0_SRAM + c dEACC0_SRAM + b:
+a 0.68, c 1.09 on an M4 (Mac16,12); 0.67, 1.04 on an M5 (Mac17,3); 0.42, 0.54 on an M6
+(Mac18,5); rms 0.06-0.13 W) and not the ANE (+0.33 W under a GEMM that adds 9 W to PP0b,
+M6). So on those chips only the cluster's cores are subtracted from PP0b and the SRAM
 counts toward CPU power. The ANE's own DVFS tables (voltage-states8/29) have no -sram
-table, so its SRAM is taken to be on PP0b with it.
+table, so its SRAM is taken to be on PP0b with it. On an M5 Pro PP7b reads 0 under load
+and PP0b follows PACC plus its SRAM, so there, and on any chip not yet checked, the SRAM
+channel stays in the PP0b term.
 
 PACC0 is a model estimate and its error depends on the load, not only on its size: with
 1-6 busy threads it read 2-5 W above PP0b on an L1-resident loop and 0.5-1.8 W below it
@@ -40,8 +44,8 @@ wholly in the first, "2W". Against PP0b with the ANE idle, PACC read 2.8 W high 
 1.8-2.5 W high with one or two busy cores and 0.6 W low with four to six, so the
 idle-subtracted ANE term of a CPU-only load came out 0.2-3.3 W, not 0. Read a
 rail-sourced ANE power on such a chip as good to a couple of watts. On an M4 (Mac16,12)
-and an M6 (Mac18,5), both macOS 27.2.1, the bins are finer: PACC0 1 W, PACC0 SRAM
-0.125 W, EACC0 0.25 W. An idle PACC0 still sits in its first bin, reading 1 W.
+and an M6 (Mac18,5), both macOS 27.2.1, and an M5 (Mac17,3, macOS 27.2) the bins are
+finer: PACC0 1 W, PACC0 SRAM 0.125 W, EACC0 0.25 W. An idle PACC0 still sits in its first bin, reading 1 W.
 
 The rail is used only on a chip with exactly one PACC cluster (its SRAM channel aside),
 where the PACC term is the one cluster PP0b feeds. A chip with several (e.g. the two P
@@ -50,7 +54,7 @@ the standalone printout below shows which cluster shares PP0b there.
 
 Checked on (the PACC cluster on PP0b):
   M4      Mac16,12  macOS 27.0.1 and 27.2.1, group PMP, PACC0 (the 4 P cores)
-  M5                macOS 27.0.0   group PMP,  PACC0 (the 4 Super cores)
+  M5      Mac17,3   macOS 27.2 (and an M5 on 27.0.0), group PMP, PACC0 (the 4 Super cores)
   M6      Mac18,5   macOS 27.0.1 and 27.2.1, group PMP, PACC0 (2 Super + 4 Performance)
   M5 Pro  Mac17,8   group PMP0 (macOS 27.2.1; PMP has no channels, also on 27.0.1),
                     PACC; PP0b does not carry MACC0/MACC1
@@ -93,6 +97,10 @@ RAIL_DEFICIT_W = 3.0
 # (macOS 27.0); on an M5 Pro "PMP" has no channels (macOS 27.0.1, #295) and the group is
 # "PMP0" (seen on macOS 27.2.1)
 PMP_GROUPS = ("PMP", "PMP0")
+# chips (machdep.cpu.brand_string, matched exactly) whose CPU SRAM is on SMC PP7b, so PP0b
+# carries only the PACC cores (see above). Elsewhere, e.g. the M5 Pro, where PP7b reads 0
+# and PP0b follows PACC plus its SRAM, the SRAM channel stays in the PP0b term
+SRAM_OFF_RAIL_CHIPS = ("Apple M4", "Apple M5", "Apple M6")
 
 
 # estimator (pure, off-device testable)
@@ -105,13 +113,14 @@ def rail_updates(pp0b: list[float]) -> int:
     return sum(1 for i, x in enumerate(pp0b) if i == 0 or x != pp0b[i - 1])
 
 
-def split_clusters(e: dict[str, float]) -> tuple[float, float]:
-    """(pacc, eacc) W from IOReport channel -> W: the cores of the cluster PP0b feeds, and
-    the CPU power it does not carry: the other clusters (EACC*, MACC* where the chip has
-    them) and every cluster's SRAM, which is on its own rail (VDD_CPU_SRAM, see above)."""
-    return (sum(v for k, v in e.items() if k.startswith("PACC") and not k.endswith(" SRAM")),
-            sum(v for k, v in e.items() if k.startswith(("EACC", "MACC"))
-                or (k.startswith("PACC") and k.endswith(" SRAM"))))
+def split_clusters(e: dict[str, float], sram_off_rail: bool = False) -> tuple[float, float]:
+    """(pacc, eacc) W from IOReport channel -> W: the cluster PP0b feeds, and the CPU power
+    it does not carry (EACC*, and MACC* where the chip has them). With sram_off_rail (a chip
+    in SRAM_OFF_RAIL_CHIPS) the PACC SRAM channel is on PP7b, so it moves to the second term."""
+    def on_rail(k):
+        return k.startswith("PACC") and not (sram_off_rail and k.endswith(" SRAM"))
+    return (sum(v for k, v in e.items() if on_rail(k)),
+            sum(v for k, v in e.items() if k.startswith(("PACC", "EACC", "MACC")) and not on_rail(k)))
 
 
 def rail_clusters(channels) -> list[str]:
@@ -165,6 +174,23 @@ def summarize(loaded: list[dict], idle: list[dict]) -> dict:
         out["channels_idle_W"] = _channel_medians(idle)
     out["flags"] = flags
     return out
+
+
+def _chip() -> str:
+    """machdep.cpu.brand_string, e.g. "Apple M6" or "Apple M5 Pro"; "" if unreadable."""
+    try:
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        libc.sysctlbyname.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                      ctypes.c_void_p, ctypes.c_size_t]
+        size = ctypes.c_size_t(0)
+        if libc.sysctlbyname(b"machdep.cpu.brand_string", None, ctypes.byref(size), None, 0) != 0:
+            return ""
+        buf = ctypes.create_string_buffer(size.value)
+        if libc.sysctlbyname(b"machdep.cpu.brand_string", buf, ctypes.byref(size), None, 0) != 0:
+            return ""
+        return buf.value.decode(errors="replace")
+    except (OSError, AttributeError):
+        return ""
 
 
 # SMC (AppleSMC user client); the struct layout must match the kernel's (80 bytes)
@@ -338,8 +364,8 @@ class RailSampler:
     """PP0b + the CPU-cluster power, sampled every SAMPLE_S on a background thread:
     start() before the window, stop() after it returns the samples."""
 
-    def __init__(self, smc: _Smc, energy: _Energy):
-        self._smc, self._energy = smc, energy
+    def __init__(self, smc: _Smc, energy: _Energy, sram_off_rail: bool = False):
+        self._smc, self._energy, self.sram_off_rail = smc, energy, sram_off_rail
         self._samples: list[dict] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -365,14 +391,14 @@ class RailSampler:
             return None
         if not any_clusters and len(rail_clusters(energy.channels)) != 1:
             return None
-        return cls(smc, energy)
+        return cls(smc, energy, _chip() in SRAM_OFF_RAIL_CHIPS)
 
     def _read(self) -> dict | None:
         w = self._smc.read_float(RAIL_KEY)
         if w is None:
             return None
         ch = self._energy.sample()
-        pacc, eacc = split_clusters(ch)
+        pacc, eacc = split_clusters(ch, self.sram_off_rail)
         return {"pp0b": w, "pacc": pacc, "eacc": eacc, "ch": ch}
 
     def _loop(self):
@@ -427,6 +453,8 @@ def main(argv=None):
     print(f"IOReport {s._energy.group}/Energy: {', '.join(s.channels)}")
     print(f"PACC clusters: {', '.join(clusters) or 'none'} -> the benchmark "
           + ("uses the rail" if used else "does not use the rail (needs exactly one)"))
+    print(f"{_chip() or 'unknown chip'}: PACC SRAM "
+          + ("on PP7b, not subtracted from PP0b" if s.sram_off_rail else "counted as on PP0b (not a checked chip)"))
     s.start()
     half = a.seconds / 2 if a.load else a.seconds
     threading.Event().wait(half)
