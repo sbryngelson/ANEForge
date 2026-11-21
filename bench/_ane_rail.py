@@ -78,7 +78,9 @@ RAIL_KEY = "PP0b"
 # sampler period: PP0b updates every 1.00 s (M4 and M6, under load), so a faster sampler only
 # repeats readings and costs GIL time in the timed loop. Just under 1 s, with ~13 ms of
 # work per wake-up, every update is still seen and a 10 s window has ~11 samples; at
-# exactly 1 s the work pushes the period past the update interval (~9 samples per 10 s)
+# exactly 1 s the work pushes the period past the update interval (~9 samples per 10 s).
+# A 2 s --quick window (rail beside powermetrics) gets only 2 samples and is flagged by
+# MIN_UPDATES; at 0.25 s its 8 samples held only 2-3 distinct PP0b readings anyway
 SAMPLE_S = 0.9
 # fewer distinct PP0b readings than this is flagged: on an M4 under a steady ANE GEMM,
 # an 8-reading window's median was within 3-6% of a 90 s window's (2.5 s: up to 76%)
@@ -119,8 +121,11 @@ def rail_clusters(channels) -> list[str]:
 
 
 def _channel_medians(samples: list[dict]) -> dict[str, float]:
-    names = sorted({k for s in samples for k in s.get("ch", {})})
-    return {k: round(_median([s["ch"][k] for s in samples if k in s.get("ch", {})]), 4) for k in names}
+    """Window median W per channel. A powered-down cluster has no residency, so its channel
+    is missing from that sample: count it as 0 W, or a mostly-off cluster reads high."""
+    chs = [s["ch"] for s in samples if "ch" in s]
+    names = sorted({k for c in chs for k in c})
+    return {k: round(_median([c.get(k, 0.0) for c in chs]), 4) for k in names}
 
 
 def summarize(loaded: list[dict], idle: list[dict]) -> dict:

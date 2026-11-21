@@ -79,6 +79,10 @@ def test_summarize_records_channels():
   assert out["channels_idle_W"] == ch_idle
   assert out["channels_loaded_W"] == {"EACC0": 0.3, "PACC0": 3.1, "PACC0 SRAM": 0.4}
   assert "channels_loaded_W" not in r.summarize([_s(6.8)] * 10, [_s(0.8)] * 10)   # older samples: no "ch"
+  # a powered-down cluster has no residency, so its channel is missing from those samples:
+  # MACC1 off for 7 of 10 samples counts as 0 W there (median 0), not as the median of 20 W
+  part = [dict(_s(6.8), ch={"PACC": 3.0, **({"MACC1": 20.0} if i >= 7 else {})}) for i in range(10)]
+  assert r.summarize(part, idle)["channels_loaded_W"]["MACC1"] == 0.0
 
 
 def test_bins():
