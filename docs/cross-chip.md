@@ -123,6 +123,11 @@ begin, or an offset on any other axis, takes a clean route. The value threshold 
 runtime property, so `compile(target='h13')` warns about such a slice rather than
 blocking it. A14+ takes the clean route and no warning fires.
 
+The compiler lowers a slice with a nonzero last-axis begin off the last axis by default
+(see [Width-offset slice routing](aneforge-api.md#width-offset-slice-routing)), which
+should avoid this route. That has not been confirmed on an A13/A14 machine, so the
+warning still fires.
+
 ### e5rt TargetArchitecture and the silent-fallback gotcha
 
 Cross-compilation is separable from device-load: the e5rt compiler honors

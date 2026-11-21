@@ -1118,7 +1118,9 @@ def _warn_h13_slice_saturation(out: Tensor, family: int) -> None:
   import warnings
 
   from . import _targets as TG
-  if int(family) >= int(TG.Family.A16):       # A16+ (M5/M4) is unaffected
+  # A16+ (M5/M4) shows neither mode below. Its own failure of this path (wrong column or a
+  # compile error, macOS 27.2, #310) is avoided by the routed lowering in _e_slice_by_size.
+  if int(family) >= int(TG.Family.A16):
     return
   sat_family = int(family) <= int(TG.Family.A14)   # saturation measured on A13 + A14
   for t in _topo(out):

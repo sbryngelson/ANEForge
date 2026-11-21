@@ -2,7 +2,7 @@
 
 ## "Will this work on my machine?"
 
-Verified on M5 Pro and M1 Max (macOS 26.5). Should work on any Apple Silicon
+Verified on M5 Pro and M1 Max (macOS 26.5), and on M5 Pro under macOS 27.2. Should work on any Apple Silicon
 Mac (M1, M2, M3, M4, M5 - all variants) running macOS 14+. ANEForge
 maps each M-generation to a compiler family `M(n) = H(n+12)` (M1 = H13,
 M5 = H17), and the three silicon-measured chips (M1, M2, M5) carry these ANE core counts:
@@ -155,8 +155,9 @@ per-call cost breakdown and dispatch paths, see [dispatch.md](dispatch.md).
 
 ## "What macOS versions are supported?"
 
-Verified on macOS 26.5 (M5 Pro). Likely works on macOS 14+ but exact API
-shapes change between versions:
+Verified on macOS 26.5 (M5 Pro) and macOS 27.2.1 (M5 Pro: the full on-device test suite
+and the corpus are green). Likely works on macOS 14+ but exact API shapes change between
+versions:
 
 - Pre-14: `MLComputePlan` doesn't exist, so the routing-truth audit
   oracle won't work, but other features should.
@@ -164,6 +165,29 @@ shapes change between versions:
   `_async_submit` deprecated). The wrapper handles both.
 
 Bug reports with `sw_vers` output appreciated.
+
+### macOS 27.2
+
+Two things changed under ANEForge in macOS 27.2. Both are handled on current `main` and in
+releases after v0.4.0; v0.4.0 and earlier are affected, so upgrade if you are on 27.2.
+
+- **Bridge programs with two or more weight files are rejected.** The native bridges
+  (scaled-dot-product attention and the other netplist ops) wrote an empty `weights.0`
+  plus a constant in `weights.1`, and the framework now fails such a bundle with
+  `verifyBundleAtPath: invalid model`. The dispatcher retries with the files merged into
+  one, so this needs nothing from you. Symptom on an old version: `af.sdpa`, causal
+  decoder blocks and fused ONNX attention fail to compile.
+- **A slice offset on the last axis can lose its offset.** Two `slice_by_size` (or `crop`,
+  or static gather) calls at different last-axis offsets, feeding matmuls in one fused
+  program, returned the wrong column or failed to compile on an M5 Pro, while the same
+  program was correct on the CPU and GPU backends. The compiler now lowers such a slice
+  off the last axis (see [Width-offset slice routing](aneforge-api.md#width-offset-slice-routing)).
+  Symptom on an old version: `linalg.lu_pivoted`, `det`, `slogdet`, `solve` and `inv`
+  return wrong or non-finite results. `python bench/slice_offset_probe.py` shows whether a
+  machine has the underlying behaviour.
+
+Both were seen on M4 Pro and M5 Pro (the first) or M5 Pro only (the second); other chips
+on 27.2 have not been checked for either.
 
 ## "What if Apple changes the private API?"
 
